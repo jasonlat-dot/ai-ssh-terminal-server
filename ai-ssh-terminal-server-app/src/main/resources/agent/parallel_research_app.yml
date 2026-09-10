@@ -1,0 +1,128 @@
+ai:
+  agent:
+    config:
+      tables:
+        testAgent02:
+          app-name: ResearchAndSynthesisPipeline
+          agent-definition:
+            agent-id: 100002
+            agent-name: 测试智能体02
+            agent-desc: 并行研究并汇总的智能体管道
+          module:
+            # 不能为空
+            ai-api:
+              base-url: https://open.bigmodel.cn/api/paas/
+              api-key: ${glm.api-key}
+              completions-path: v4/chat/completions
+              embeddings-path: v4/embeddings
+            # 不能为空
+            chat-model:
+              model: glm-4.7-flash
+              # tool-mcp-list 可选参数
+              tool-mcp-list:
+                - sse:
+                    name: baidu-search
+                    base-uri: http://appbuilder.baidu.com
+                    sse-endpoint: /v2/ai_search/mcp/sse?api_key=${baidu.api-key}
+                    request-timeout: 300000
+            llm-agents:
+              - name: RenewableEnergyResearcher
+                ai-api:
+                  api-key: 242234771dd941379f67a52f8ac5a63a.64S1Yv17xk9KtsJG
+                  base-url: https://open.bigmodel.cn/api/paas/
+                  completions-path: v4/chat/completions
+                  embeddings-path: v4/embeddings
+                description: Researches renewable energy sources.
+                instruction: |
+                  You are an AI Research Assistant specializing in energy.
+                  Research the latest advancements in 'renewable energy sources'.
+                  Use the Google Search tool provided.
+                  Summarize your key findings concisely (1-2 sentences).
+                  Output *only* the summary.
+                output-key: renewable_energy_result
+              - name: EVResearcher
+                ai-api:
+                  api-key: 242234771dd941379f67a52f8ac5a63a.64S1Yv17xk9KtsJG
+                  base-url: https://open.bigmodel.cn/api/paas/
+                  completions-path: v4/chat/completions
+                  embeddings-path: v4/embeddings
+                description: Researches electric vehicle technology.
+                instruction: |
+                  You are an AI Research Assistant specializing in transportation.
+                  Research the latest developments in 'electric vehicle technology'.
+                  Use the Google Search tool provided.
+                  Summarize your key findings concisely (1-2 sentences).
+                  Output *only* the summary.
+                output-key: ev_technology_result
+              - name: CarbonCaptureResearcher
+                ai-api:
+                  api-key: 242234771dd941379f67a52f8ac5a63a.64S1Yv17xk9KtsJG
+                  base-url: https://open.bigmodel.cn/api/paas/
+                  completions-path: v4/chat/completions
+                  embeddings-path: v4/embeddings
+                description: Researches carbon capture methods.
+                instruction: |
+                  You are an AI Research Assistant specializing in climate solutions.
+                  Research the current state of 'carbon capture methods'.
+                  Use the Google Search tool provided.
+                  Summarize your key findings concisely (1-2 sentences).
+                  Output *only* the summary.
+                output-key: carbon_capture_result
+              - name: SynthesisAgent
+                ai-api:
+                  api-key: 242234771dd941379f67a52f8ac5a63a.64S1Yv17xk9KtsJG
+                  base-url: https://open.bigmodel.cn/api/paas/
+                  completions-path: v4/chat/completions
+                  embeddings-path: v4/embeddings
+                description: Combines research findings into a structured report.
+                instruction: |
+                  You are an AI Assistant responsible for combining research findings into a structured report.
+                  Your primary task is to synthesize the following research summaries, clearly attributing findings to their source areas. Structure your response using headings for each topic. Ensure the report is coherent and integrates the key points smoothly.
+                  **Crucially: Your entire response MUST be grounded *exclusively* on the information provided in the 'Input Summaries' below. Do NOT add any external knowledge, facts, or details not present in these specific summaries.**
+                  **Input Summaries:**
+
+                  *   **Renewable Energy:**
+                      {renewable_energy_result}
+
+                  *   **Electric Vehicles:**
+                      {ev_technology_result}
+
+                  *   **Carbon Capture:**
+                      {carbon_capture_result}
+
+                  **Output Format:**
+
+                  ## Summary of Recent Sustainable Technology Advancements
+
+                  ### Renewable Energy Findings
+                  (Based on RenewableEnergyResearcher's findings)
+                  [Synthesize and elaborate *only* on the renewable energy input summary provided above.]
+
+                  ### Electric Vehicle Findings
+                  (Based on EVResearcher's findings)
+                  [Synthesize and elaborate *only* on the EV input summary provided above.]
+
+                  ### Carbon Capture Findings
+                  (Based on CarbonCaptureResearcher's findings)
+                  [Synthesize and elaborate *only* on the carbon capture input summary provided above.]
+
+                  ### Overall Conclusion
+                  [Provide a brief (1-2 sentence) concluding statement that connects *only* the findings presented above.]
+
+                  Output *only* the structured report following this format. Do not include introductory or concluding phrases outside this structure, and strictly adhere to using only the provided input summary content.
+            agent-workflows:
+              - type: parallel
+                name: ParallelWebResearchAgent
+                description: Runs multiple research agents in parallel to gather information.
+                sub-agents:
+                  - RenewableEnergyResearcher
+                  - EVResearcher
+                  - CarbonCaptureResearcher
+              - type: sequential
+                name: ResearchAndSynthesisPipeline
+                description: Coordinates parallel research and synthesizes the results.
+                sub-agents:
+                  - ParallelWebResearchAgent
+                  - SynthesisAgent
+            runner:
+              agent-name: ResearchAndSynthesisPipeline

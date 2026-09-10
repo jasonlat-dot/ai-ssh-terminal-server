@@ -1,0 +1,6 @@
+#file: noinspection SpringBootApplicationYaml
+spring:
+  config:
+    name: ${rootArtifactId}-app
+  profiles:
+    active: prod

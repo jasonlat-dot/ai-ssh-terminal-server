@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.jasonlat.ai</groupId>
+        <artifactId>ai-ssh-terminal-server</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ai-ssh-terminal-server-infrastructure</artifactId>
+
+    <dependencies>
+
+
+        <dependency>
+            <groupId>org.freemarker</groupId>
+            <artifactId>freemarker</artifactId>
+            <version>2.3.34</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>cn.bugstack.middleware</groupId>-->
+<!--            <artifactId>db-router-spring-boot-starter</artifactId>-->
+<!--        </dependency>-->
+
+        <!-- 系统模块 -->
+        <dependency>
+            <groupId>com.jasonlat.ai</groupId>
+            <artifactId>ai-ssh-terminal-server-domain</artifactId>
+        </dependency>
+
+
+    </dependencies>
+
+    <build>
+        <finalName>ai-ssh-terminal-server-infrastructure</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-archetype-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>create-from-project</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

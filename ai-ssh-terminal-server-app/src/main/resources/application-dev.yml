@@ -1,0 +1,45 @@
+#file: noinspection SpringBootApplicationYaml
+#file: noinspection SpringBootApplicationYaml
+server:
+  port: 8888
+  tomcat:
+    threads:
+      max: 200        # 设定处理客户请求的线程的最大数目，决定了服务器可以同时响应客户请求的数,默认200
+      min-spare: 50   # 初始化线程数,最小空闲线程数,默认是10
+    accept-count: 10  # 等待队列长度
+  servlet:
+    context-path: /api/${app.config.api-version}
+
+# 应用配置 app.config.api-version
+app:
+  config:
+    # 版本，方便通过接口版本升级
+    api-version: v1
+    # 跨域，开发阶段可以设置为 * 不限制
+    cross-origin: '*'
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+
+spring:
+  config:
+    # 配置自定义的 agent yml配置文件
+    import:
+      - classpath:agent/test-agent.yml
+      - classpath:agent/only-agent.yml
+      - classpath:agent/parallel_research_app.yml
+
+  # 日志
+logging:
+  level:
+    root: info
+  config: classpath:logback-spring.xml
