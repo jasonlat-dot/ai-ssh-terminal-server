@@ -87,6 +87,12 @@
         </dependency>
         <!-- spring ai & google adk end -->
 
+        <!-- SSH 连接库 -->
+        <dependency>
+            <groupId>com.jcraft</groupId>
+            <artifactId>jsch</artifactId>
+        </dependency>
+
 <!--        自定义 jar start -->
         <dependency>
             <groupId>com.jasonlat.dot</groupId>
