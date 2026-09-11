@@ -38,3 +38,4 @@ build/
 .DS_Store
 /data/
 /.idea/
+/ai-ssh-terminal-server-app/src/main/resources/application-sit.yml

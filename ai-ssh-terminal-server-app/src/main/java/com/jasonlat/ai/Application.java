@@ -9,13 +9,14 @@ import org.springframework.beans.factory.annotation.Configurable;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Slf4j
 @Configurable
 @EnableScheduling
 @SpringBootApplication
+@MapperScan("com.jasonlat.ai.infrastructure.dao")
 //@ComponentScan(basePackages = {"com.jasonlat.ai"})
 public class Application {
 

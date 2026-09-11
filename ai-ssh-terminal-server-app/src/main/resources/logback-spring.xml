@@ -14,9 +14,9 @@
 
     <!-- 全彩色：无重复、无黄、无灰、无白 -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>info</level>
-        </filter>
+        <!--        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">-->
+        <!--            <level>info</level>-->
+        <!--        </filter>-->
         <encoder>
             <pattern>%clr(%d{yy-MM-dd.HH:mm:ss.SSS}){blue} %clr(%-5p) %clr([%-16t]){cyan} %clr(%-22c{0}){magenta} %clr(%X{ServiceId}){green} %clr(-%X{trace-id}){bright_pink} %clr(%m){purple}%n</pattern>
             <charset>UTF-8</charset>
@@ -49,9 +49,9 @@
             <maxHistory>7</maxHistory>
             <totalSizeCap>5GB</totalSizeCap>
         </rollingPolicy>
-        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>WARN</level>
-        </filter>
+        <!--        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">-->
+        <!--            <level>WARN</level>-->
+        <!--        </filter>-->
     </appender>
 
     <appender name="ASYNC_FILE_INFO" class="ch.qos.logback.classic.AsyncAppender">

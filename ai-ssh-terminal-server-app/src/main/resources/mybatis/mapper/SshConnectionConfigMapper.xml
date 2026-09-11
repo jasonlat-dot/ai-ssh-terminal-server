@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jasonlat.ai.infrastructure.dao.ISshConnectionConfigDAO">
+
+    <resultMap id="SshConnectionConfigMap" type="com.jasonlat.ai.infrastructure.dao.po.SshConnectionConfigPO" autoMapping="false">
+        <id column="id" property="id"/>
+        <result column="connection_id" property="connectionId"/>
+        <result column="connect_timeout" property="connectTimeout"/>
+        <result column="keepalive_interval" property="keepaliveInterval"/>
+        <result column="startup_command" property="startupCommand"/>
+        <result column="compression" property="compression"/>
+        <result column="strict_host_key_check" property="strictHostKeyCheck"/>
+        <result column="known_hosts" property="knownHosts"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="BaseColumns">
+        id,
+        connection_id,
+        connect_timeout,
+        keepalive_interval,
+        startup_command,
+        compression,
+        strict_host_key_check,
+        known_hosts,
+        updated_at
+    </sql>
+
+    <!--
+        完整保存配置：
+        1. connection_id 必须有唯一约束。
+        2. 可空字段传入 null 时，会覆盖为 NULL。
+        3. updated_at 表示最近一次保存时间，由数据库生成。
+        4. 不修改业务关联键 connection_id 和自增主键 id。
+    -->
+    <insert id="insertOrUpdate" parameterType="com.jasonlat.ai.infrastructure.dao.po.SshConnectionConfigPO">
+        INSERT INTO ssh_connection_config (
+            connection_id,
+            connect_timeout,
+            keepalive_interval,
+            startup_command,
+            compression,
+            strict_host_key_check,
+            known_hosts,
+            updated_at
+        )
+        VALUES (
+                   #{connectionId,jdbcType=VARCHAR},
+                   #{connectTimeout,jdbcType=INTEGER},
+                   #{keepaliveInterval,jdbcType=INTEGER},
+                   #{startupCommand,jdbcType=VARCHAR},
+                   #{compression,jdbcType=INTEGER},
+                   #{strictHostKeyCheck,jdbcType=INTEGER},
+                   #{knownHosts,jdbcType=LONGVARCHAR},
+                   CURRENT_TIMESTAMP(6)
+               )
+        ON DUPLICATE KEY UPDATE
+        <trim suffixOverrides=",">
+            <if test="connectTimeout != null">
+                connect_timeout = #{connectTimeout,jdbcType=INTEGER},
+            </if>
+            <if test="keepaliveInterval != null">
+                keepalive_interval = #{keepaliveInterval,jdbcType=INTEGER},
+            </if>
+            <if test="startupCommand != null">
+                startup_command = #{startupCommand,jdbcType=VARCHAR},
+            </if>
+            <if test="compression != null">
+                compression = #{compression,jdbcType=INTEGER},
+            </if>
+            <if test="strictHostKeyCheck != null">
+                strict_host_key_check = #{strictHostKeyCheck,jdbcType=INTEGER},
+            </if>
+            <if test="knownHosts != null">
+                known_hosts = #{knownHosts,jdbcType=LONGVARCHAR},
+            </if>
+            updated_at = CURRENT_TIMESTAMP(6)
+        </trim>
+    </insert>
+
+    <select id="queryByConnectionId"
+            resultMap="SshConnectionConfigMap"
+            useCache="false">
+        SELECT
+        <include refid="BaseColumns"/>
+        FROM ssh_connection_config
+        WHERE connection_id = #{connectionId,jdbcType=VARCHAR}
+    </select>
+
+</mapper>

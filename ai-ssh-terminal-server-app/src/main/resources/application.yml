@@ -3,4 +3,4 @@ spring:
   config:
     name: ${rootArtifactId}-app
   profiles:
-    active: prod
+    active: sit

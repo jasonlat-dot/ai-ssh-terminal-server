@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jasonlat.ai.infrastructure.dao.ISshConnectionDAO">
+
+    <resultMap id="SshConnectionMap" type="com.jasonlat.ai.infrastructure.dao.po.SshConnectionPO" autoMapping="false">
+        <id column="id" property="id"/>
+        <result column="connection_id" property="connectionId"/>
+        <result column="connection_name" property="connectionName"/>
+        <result column="host" property="host"/>
+        <result column="port" property="port"/>
+        <result column="username" property="username"/>
+        <result column="auth_type" property="authType"/>
+        <result column="encrypted" property="encrypted"/>
+        <result column="status" property="status"/>
+        <result column="user_id" property="userId"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="deleted" property="deleted"/>
+    </resultMap>
+
+    <!-- 仅实际建立 SSH 连接等后端流程需要读取凭据 -->
+    <resultMap id="SshConnectionCredentialsMap" type="com.jasonlat.ai.infrastructure.dao.po.SshConnectionPO" extends="SshConnectionMap" autoMapping="false">
+        <result column="password" property="password"/>
+        <result column="private_key" property="privateKey"/>
+    </resultMap>
+
+    <sql id="BaseColumns">
+        id,
+        connection_id,
+        connection_name,
+        host,
+        port,
+        username,
+        auth_type,
+        encrypted,
+        status,
+        user_id,
+        created_at,
+        updated_at,
+        deleted
+    </sql>
+
+    <!--
+        新增前由业务层完成必填校验、默认值填充和凭据加密。
+        初始状态固定为未连接、未删除。
+    -->
+    <insert id="insert"
+            parameterType="com.jasonlat.ai.infrastructure.dao.po.SshConnectionPO"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+        INSERT INTO ssh_connection (
+            connection_id,
+            connection_name,
+            host,
+            port,
+            username,
+            auth_type,
+            password,
+            private_key,
+            encrypted,
+            status,
+            user_id,
+            created_at,
+            updated_at,
+            deleted
+        )
+        VALUES (
+                   #{connectionId,jdbcType=VARCHAR},
+                   #{connectionName,jdbcType=VARCHAR},
+                   #{host,jdbcType=VARCHAR},
+                   #{port,jdbcType=INTEGER},
+                   #{username,jdbcType=VARCHAR},
+                   #{authType,jdbcType=INTEGER},
+                   #{password,jdbcType=VARCHAR},
+                   #{privateKey,jdbcType=LONGVARCHAR},
+                   #{encrypted,jdbcType=INTEGER},
+                   0,
+                   #{userId,jdbcType=VARCHAR},
+                   CURRENT_TIMESTAMP(6),
+                   CURRENT_TIMESTAMP(6),
+                   0
+               )
+    </insert>
+
+
+    <update id="update" parameterType="com.jasonlat.ai.infrastructure.dao.po.SshConnectionPO">
+        UPDATE ssh_connection
+        <set>
+            <if test="connectionName != null">
+                connection_name = #{connectionName,jdbcType=VARCHAR},
+            </if>
+            <if test="host != null">
+                host = #{host,jdbcType=VARCHAR},
+            </if>
+            <if test="port != null">
+                port = #{port,jdbcType=INTEGER},
+            </if>
+            <if test="username != null and username != ''">
+                username = #{username,jdbcType=VARCHAR},
+            </if>
+            <if test="status != null">
+                status = #{status,jdbcType=INTEGER},
+            </if>
+            <if test="authType != null">
+                auth_type = #{authType, jdbcType=INTEGER},
+            </if>
+            <if test="privateKey != null and privateKey != ''">
+                private_key = #{privateKey, jdbcType=VARCHAR},
+            </if>
+            <if test="password != null and password != ''">
+                password = #{password},
+            </if>
+            <if test="encrypted != null">
+                encrypted = #{encrypted, jdbcType=INTEGER},
+            </if>
+            updated_at = CURRENT_TIMESTAMP(6)
+        </set>
+        WHERE connection_id = #{connectionId,jdbcType=VARCHAR} AND deleted = 0
+    </update>
+
+
+    <!-- 重复删除不会再次修改记录 -->
+    <update id="delete">
+        UPDATE ssh_connection
+        SET deleted = 1,
+            updated_at = CURRENT_TIMESTAMP(6)
+        WHERE connection_id = #{connectionId,jdbcType=VARCHAR} AND deleted = 0
+    </update>
+
+    <!-- 包含加密凭据，仅供后端使用，不直接返回给前端 -->
+    <select id="queryByConnectionId" resultMap="SshConnectionCredentialsMap" useCache="false">
+        SELECT
+            <include refid="BaseColumns"/>,`password`,private_key
+        FROM ssh_connection
+        WHERE connection_id = #{connectionId,jdbcType=VARCHAR}
+        AND deleted = 0
+    </select>
+
+    <!-- 列表不读取凭据；增加 id 排序，保证同一创建时间下顺序确定 -->
+    <select id="queryListByUserId" resultMap="SshConnectionMap" useCache="false">
+        SELECT
+            <include refid="BaseColumns"/>
+        FROM ssh_connection
+        WHERE user_id = #{userId,jdbcType=VARCHAR}
+        AND deleted = 0
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+</mapper>

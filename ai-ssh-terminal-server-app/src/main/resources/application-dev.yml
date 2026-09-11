@@ -29,17 +29,42 @@ thread:
         block-queue-size: 5000
         policy: CallerRunsPolicy
 
-
 spring:
   config:
     # 配置自定义的 agent yml配置文件
     import:
-      - classpath:agent/test-agent.yml
+      #      - classpath:agent/test-agent.yml
       - classpath:agent/only-agent.yml
-      - classpath:agent/parallel_research_app.yml
+      #      - classpath:agent/parallel_research_app.yml
+  datasource:
+    username: root
+    password: 123456
+    url: jdbc:mysql://192.168.3.16:13306/ssh_terminal?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.zaxxer.hikari.HikariDataSource
+    hikari:
+      pool-name: Retail_HikariCP
+      minimum-idle: 15 #最小空闲连接数量
+      idle-timeout: 180000 #空闲连接存活最大时间，默认600000（10分钟）
+      maximum-pool-size: 25 #连接池最大连接数，默认是10
+      auto-commit: true  #此属性控制从池返回的连接的默认自动提交行为,默认值：true
+      max-lifetime: 1800000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
+      connection-timeout: 30000 #数据库连接超时时间,默认30秒，即30000
+      connection-test-query: SELECT 1
+
+# mybatis plus 配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    #    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  mapper-locations: classpath:mybatis/mapper/*.xml
+
+
 
   # 日志
 logging:
   level:
     root: info
+    com.jasonlat.ai.infrastructure.dao: OFF # OFF: 禁止打印数据库日志, DEBUG：打印 SQL 和参数， TRACE：打印 SQL、参数和结果集
   config: classpath:logback-spring.xml
