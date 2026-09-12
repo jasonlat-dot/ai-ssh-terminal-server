@@ -11,20 +11,17 @@ public enum ResponseCode {
 
     SUCCESS("SUCCESS_0000", "成功"),
     UN_ERROR("ERROR_0001", "未知失败"),
-    ILLEGAL_PARAMETER("ERROR_0002", "非法参数"),
     SERVER_ERROR("ERROR_SERVER_0500", "服务器内部错误"),
     CACHE_CODE_ILLEGAL("ERROR_0003", "验证码过期或错误"),
     ACCOUNT_EXIST_ERROR("ERROR_0004", "账号已存在"),
     REGISTER_FAILED_ERROR("ERROR_0005", "注册失败，请重试"),
     RE_PASSWORD_NOT_EQUAL("ERROR_0006", "两次输入密码不一致"),
     RE_PASSWORD_FORMAT_ERROR("ERROR_0007", "密码格式错误"),
-    ORDER_PAY_SUCCESS("SUCCESS_0008", "订单已支付"),
-    ORDER_PAY_FAILED("ERROR_0009", "订单支付失败"),
-    ORDER_PAY_ILLEGAL("ERROR_0010", "订单不存在"),
-    PRODUCT_STOCK_ERROR("ERR_BIZ_005", "商品库存不足"),
     PRODUCT_STATE_ERROR("ERR_BIZ_003", "商品已下架（非open状态）"),
     NOT_SUPPORT_METHOD("SERVER_ERROR_001", "不支持的请求方法"),
     AGENT_NOT_FOUND("SERVER_ERROR_002", "Agent not found"),
+    ILLEGAL_PARAMETER("S0002", "非法参数"),
+    CONNECTION_NOT_FOUND("S0001", "连接不存在"),
     /**
      * 用户端错误
      */
