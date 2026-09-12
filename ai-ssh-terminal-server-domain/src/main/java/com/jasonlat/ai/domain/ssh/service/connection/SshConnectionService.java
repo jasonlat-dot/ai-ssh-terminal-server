@@ -1,10 +1,11 @@
-package com.jasonlat.ai.domain.ssh.service;
+package com.jasonlat.ai.domain.ssh.service.connection;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
+import com.jasonlat.ai.domain.ssh.service.ISshConnectionService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
@@ -19,12 +20,12 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
-public class SshConnectionDomainService implements ISshConnectionDomainService {
+public class SshConnectionService implements ISshConnectionService {
 
     private final ISshConnectionRepository repository;
     private final ISshSessionPort sshSessionPort;
 
-    public SshConnectionDomainService(ISshConnectionRepository repository, ISshSessionPort sshSessionPort) {
+    public SshConnectionService(ISshConnectionRepository repository, ISshSessionPort sshSessionPort) {
         this.repository = repository;
         this.sshSessionPort = sshSessionPort;
     }

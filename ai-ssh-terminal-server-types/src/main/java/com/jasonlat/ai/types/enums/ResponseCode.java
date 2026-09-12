@@ -22,6 +22,7 @@ public enum ResponseCode {
     AGENT_NOT_FOUND("SERVER_ERROR_002", "Agent not found"),
     ILLEGAL_PARAMETER("S0002", "非法参数"),
     CONNECTION_NOT_FOUND("S0001", "连接不存在"),
+    TERMINAL_SESSION_NOT_FOUNT("S0003", "终端会话不存在或已关闭"),
     /**
      * 用户端错误
      */

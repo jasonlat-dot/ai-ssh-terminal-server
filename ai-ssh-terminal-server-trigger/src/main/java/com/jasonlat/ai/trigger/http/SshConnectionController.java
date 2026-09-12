@@ -5,8 +5,7 @@ import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.AuthTypeEnum;
 import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
-import com.jasonlat.ai.domain.ssh.service.ISshConnectionDomainService;
-import com.jasonlat.ai.trigger.api.ISshConnectionService;
+import com.jasonlat.ai.domain.ssh.service.ISshConnectionService;
 import com.jasonlat.ai.trigger.api.dto.SshConnectionRequestDTO;
 import com.jasonlat.ai.trigger.api.dto.SshConnectionResponseDTO;
 import com.jasonlat.ai.trigger.api.response.Response;
@@ -26,12 +25,12 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/ssh")
 @CrossOrigin(origins = "*")
-public class SshConnectionController implements ISshConnectionService {
+public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISshConnectionService {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Resource
-    private ISshConnectionDomainService sshConnectionDomainService;
+    private ISshConnectionService sshConnectionDomainService;
 
     @RequestMapping(value = "create_connection", method = RequestMethod.POST)
     @Override

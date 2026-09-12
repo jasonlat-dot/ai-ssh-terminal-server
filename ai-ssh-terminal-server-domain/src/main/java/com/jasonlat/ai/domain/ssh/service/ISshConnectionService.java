@@ -5,7 +5,7 @@ import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 
 import java.util.List;
 
-public interface ISshConnectionDomainService {
+public interface ISshConnectionService {
 
 
     /**
