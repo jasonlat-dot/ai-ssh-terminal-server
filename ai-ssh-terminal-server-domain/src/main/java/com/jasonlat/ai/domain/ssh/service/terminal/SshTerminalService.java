@@ -3,6 +3,7 @@ package com.jasonlat.ai.domain.ssh.service.terminal;
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -77,7 +79,7 @@ public class SshTerminalService implements ISshTerminalService {
         // 1. 校验会话
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭");
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
 
         // 2. 写入命令
@@ -99,7 +101,7 @@ public class SshTerminalService implements ISshTerminalService {
 
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭");
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
 
         terminalSessionService.resize(sessionId, cols, rows);
@@ -140,10 +142,19 @@ public class SshTerminalService implements ISshTerminalService {
     }
 
     @Override
+    public CompletableFuture<TerminalReadResult> readTerminalAsync(String sessionId) {
+        TerminalSessionEntity entity = sessionCache.get(sessionId);
+        if (entity == null || !entity.isActive()) {
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+        }
+        return terminalSessionService.readAsync(sessionId);
+    }
+
+    @Override
     public void writeTerminal(String sessionId, String input) {
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭");
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
         terminalSessionService.write(sessionId, input);
         entity.touch();

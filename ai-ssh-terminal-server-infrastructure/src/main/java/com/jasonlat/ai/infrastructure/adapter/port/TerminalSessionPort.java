@@ -1,6 +1,9 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.types.enums.ResponseCode;
+import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.Session;
 import lombok.extern.slf4j.Slf4j;
@@ -9,305 +12,560 @@ import org.springframework.stereotype.Component;
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 
 /**
  * 终端会话管理器
- * 基础设施层实现，管理 Shell 通道的创建、读写、关闭
  */
 @Slf4j
 @Component
-public class TerminalSessionPort implements ITerminalSessionPort {
+public class TerminalSessionPort extends TerminalSessionPortSupport implements ITerminalSessionPort  {
 
     /**
-     * Must match the browser terminal emulator. Full-screen applications such as as Vim use
-     * the terminfo smcup/rmcup capabilities to enter and leave the alternate screen buffer.
-     * Without an explicit type JSch falls back to vt100 on some versions, which can leave
-     * Vim's filler rows in the normal scrollback and overwrite the preceding shell history.
+     * PTY 类型。
+     * 浏览器一般使用 xterm.js，因此这里使用 xterm-256color。
+     * 对 Vim、top、htop、less 等全屏终端程序非常重要。
      */
     private static final String PTY_TYPE = "xterm-256color";
+
+    /**
+     * 缓冲区溢出后给前端的提示。
+     */
+    private static final String BUFFER_OVERFLOW_MESSAGE = "\u001b[0m\r\n" + "\u001b[33m" + "[终端输出过快，部分较早的输出已被丢弃]" + "\u001b[0m\r\n";
+
+    /**
+     * SSH Channel 正常/异常断开提示。
+     */
+    private static final String DISCONNECTED_MESSAGE = "\u001b[0m\r\n" + "\u001b[31m" + "[SSH 连接已断开]" + "\u001b[0m\r\n";
+
+    /**
+     * SSH reader 异常停止提示。
+     */
+    private static final String READER_ERROR_MESSAGE = "\u001b[0m\r\n" + "\u001b[31m" + "[SSH 终端读取异常，请重新连接]" + "\u001b[0m\r\n";
 
     @Resource
     private SshSessionPort sshSessionService;
 
-    /** sessionId -> Shell 通道 */
-    private final Map<String, ChannelShell> channels = new ConcurrentHashMap<>();
-
-    /** sessionId -> 输出流 */
-    private final Map<String, OutputStream> outputStreams = new ConcurrentHashMap<>();
-
-    /** sessionId -> 输入流 */
-    private final Map<String, InputStream> inputStreams = new ConcurrentHashMap<>();
-
-    /** sessionId -> 未读输出缓冲区 */
-    private final Map<String, StringBuilder> outputBuffers = new ConcurrentHashMap<>();
-
-    /** sessionId -> 读取线程是否存活 */
-    private final Map<String, Boolean> readerAlive = new ConcurrentHashMap<>();
-
-    /** connectionId -> 当前活跃的 sessionId（一个连接只允许一个终端会话） */
-    private final Map<String, String> activeConnectionSession = new ConcurrentHashMap<>();
-
+    /**
+     * 创建终端会话。
+     *
+     * @param connectionId SSH 连接 ID
+     * @param cols         终端列数
+     * @param rows         终端行数
+     * @return terminal sessionId
+     */
     @Override
     public String openTerminal(String connectionId, int cols, int rows) {
-        // 同一 connectionId 只允许一个终端会话，先关闭旧的
+        /*
+         * ================================
+         * 1. 关闭当前 connection 的旧终端
+         * ================================
+         */
         String oldSessionId = activeConnectionSession.get(connectionId);
+
         if (oldSessionId != null) {
-            log.info("关闭旧终端会话以避免重复 connectionId={} oldSessionId={}", connectionId, oldSessionId);
+            log.info("connection 已存在终端，关闭旧终端 connectionId={} oldSessionId={}", connectionId, oldSessionId);
             cleanup(oldSessionId);
         }
 
-        String sessionId = UUID.randomUUID().toString().replace("-", "");
+        /*
+         * 为本次 Terminal 创建独立 sessionId。
+         */
+        String sessionId = UUID.randomUUID().toString();
+
+        /*
+         * 先声明局部资源。
+         *
+         * 如果创建过程中失败，
+         * 即使 TerminalSessionContext 尚未加入 Map，
+         * 也能够正确释放资源。
+         */
+        ChannelShell channel = null;
+        InputStream inputStream = null;
+        OutputStream outputStream = null;
+
 
         try {
-            Session session = sshSessionService.getSession(connectionId);
-            if (session == null || !session.isConnected()) {
-                throw new IllegalStateException("SSH会话不可用 connectionId=" + connectionId);
+            /*
+             * ================================
+             * 2. 获取底层 SSH Session
+             * ================================
+             */
+            Session sshSession = sshSessionService.getSession(connectionId);
+            if (sshSession == null || !sshSession.isConnected()) {
+                throw new IllegalStateException("SSH 会话不可用 connectionId=" + connectionId);
             }
 
-            ChannelShell channel = (ChannelShell) session.openChannel("shell");
+            /*
+             * ================================
+             * 3. 创建 Shell Channel
+             * ================================
+             */
+            channel = (ChannelShell) sshSession.openChannel("shell");
+
+
+            /*
+             * 开启伪终端。
+             * 如果不开启 PTY，
+             * Vim、top、less、clear 等程序行为会异常。
+             */
             channel.setPty(true);
+
+            /*
+             * 指定终端类型。
+             */
             channel.setPtyType(PTY_TYPE);
-            channel.setPtySize(cols, rows, 480, 640);
 
-            InputStream in = channel.getInputStream();
-            OutputStream out = channel.getOutputStream();
+            /*
+             * 设置当前终端尺寸。
+             *
+             * 后两个参数表示像素尺寸。
+             * 对 SSH 终端而言通常可以使用 0。
+             */
+            channel.setPtySize(cols, rows, 0, 0);
 
+            /*
+             * 获得 SSH Channel 输入输出流。
+             * inputStream： Linux -> Java
+             * outputStream：Java -> Linux
+             */
+            inputStream = channel.getInputStream();
+            outputStream = channel.getOutputStream();
+
+            /*
+             * ================================
+             * 4. 建立 Shell Channel
+             * ================================
+             */
             channel.connect(5000);
 
-            channels.put(sessionId, channel);
-            inputStreams.put(sessionId, in);
-            outputStreams.put(sessionId, out);
-            outputBuffers.put(sessionId, new StringBuilder());
+            /*
+             * ================================
+             * 5. 创建 Terminal 上下文
+             * ================================
+             */
+            TerminalSessionContext context = new TerminalSessionContext(sessionId,connectionId,channel, inputStream,outputStream);
+
+            /*
+             * 保存 Terminal session。
+             */
+            terminalSessions.put(sessionId, context
+            );
+
+            /*
+             * 保存 connection 当前对应的 terminal session。
+             */
             activeConnectionSession.put(connectionId, sessionId);
 
-            // 启动输出读取线程，持续读取 shell 输出到缓冲区
-            startOutputReader(sessionId, in);
+            /*
+             * ================================
+             * 6. 启动唯一 reader
+             * ================================
+             */
+            startOutputReader(context);
 
-            // 等待 Shell 首次输出到达 + 额外等待让 MOTD 完整积累
-            // 然后消费缓冲区，作为 initialOutput 返回给前端
-            // 这样前端不再依赖轮询获取初始输出，彻底解决"有时显示有时不显示"的问题
-            StringBuilder buffer = outputBuffers.get(sessionId);
-            long waitDeadline = System.currentTimeMillis() + 3000; // 最多等 3s 等首数据
-            try {
-                // 阶段1：等首数据到达
-                while (System.currentTimeMillis() < waitDeadline) {
-                    synchronized (buffer) {
-                        if (!buffer.isEmpty()) {
-                            break;
-                        }
-                    }
-                    Thread.sleep(30);
-                }
-                // 阶段2：额外等 200ms 让 MOTD/prompt 完整到达
-                Thread.sleep(200);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-
-            log.info("终端会话打开成功 sessionId={} connectionId={}", sessionId, connectionId);
+            /*
+             * 注意：
+             * 这里不再像旧代码一样：
+             * 最多等待 3 秒
+             * +
+             * 再 sleep 200ms
+             * 因为 SSH 输出本质上应该完全异步。
+             * openTerminal() 创建成功后直接返回 sessionId，
+             * 后台 reader 会不断把 MOTD / shell prompt
+             * 放入 outputBuffer。
+             * 前端下一次 read() 即可读取。
+             */
+            log.info("终端会话打开成功 sessionId={} connectionId={} size={}x{}", sessionId, connectionId, cols, rows);
             return sessionId;
 
         } catch (Exception e) {
-            log.error("打开终端会话失败 connectionId={}", connectionId, e);
-            cleanup(sessionId);
+            log.error("打开终端会话失败 connectionId={} sessionId={}", connectionId, sessionId, e);
+
+            /*
+             * 如果 context 已经成功加入 terminalSessions，
+             * 使用统一 cleanup 清理。
+             */
+            if (terminalSessions.containsKey(sessionId)) {
+                cleanup(sessionId);
+            } else {
+                /*
+                 * context 还没有放进去时，
+                 * cleanup(sessionId) 找不到资源。
+                 * 所以手动释放当前局部变量。
+                 */
+                closeQuietly(outputStream);
+                closeQuietly(inputStream);
+                disconnectQuietly(channel);
+            }
             throw new RuntimeException("打开终端失败: " + e.getMessage(), e);
         }
     }
 
-    /** 输入重试次数 */
-    private static final int WRITE_MAX_RETRIES = 2;
 
-    /** Write with retry on I/O failure */
+    /**
+     * 向 SSH Terminal 写入数据。
+     * 注意：
+     * 这里没有再做 IOException 自动重试。
+     * 原因是：
+     * OutputStream.write()
+     * 如果发生 IOException，
+     * Java 无法确认到底已经成功写入了多少字节。
+     * 如果直接把整个 command 再发送一次，
+     * 有可能造成：
+     * ls 实际变成：lsls
+     * 因此终端这种场景下，不建议自动重发用户输入。
+     */
     @Override
     public void write(String sessionId, String command) {
-        OutputStream out = outputStreams.get(sessionId);
-        if (out == null) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭 sessionId=" + sessionId);
-        }
 
-        IOException lastError = null;
-        for (int attempt = 1; attempt <= WRITE_MAX_RETRIES; attempt++) {
+        TerminalSessionContext context = getTerminalSession(sessionId);
+        if (!isChannelConnected(context.channel)) {
+            log.warn("write - SSH Channel 已断开 sessionId={}", sessionId);
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+        }
+        if (command == null || command.isEmpty()) {
+            return;
+        }
+        /*
+         * 同一个 Terminal 可能存在多个 Web 请求同时 write。
+         * OutputStream 本身不能保证：
+         * request A 写入：
+         * abc
+         * request B 写入：
+         * 123
+         * 一定不会变成：
+         * a12bc3
+         * 所以增加独立 writeLock。
+         */
+        synchronized (context.writeLock) {
             try {
-                out.write(command.getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                return; // 成功
+                byte[] bytes = command.getBytes(StandardCharsets.UTF_8);
+                context.outputStream.write(bytes);
+                /*
+                 * Terminal 输入应该立即发送，
+                 * 所以这里主动 flush。
+                 */
+                context.outputStream.flush();
+
             } catch (IOException e) {
-                lastError = e;
-                log.warn("写入终端失败 (attempt={}/{}) sessionId={} reason={}",
-                        attempt, WRITE_MAX_RETRIES, sessionId, e.getMessage());
-                // 最后一次重试后抛出异常
-                if (attempt == WRITE_MAX_RETRIES) {
-                    break;
-                }
-                // 短暂等待后重试
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
+                log.error("写入终端失败 sessionId={} reason={}", sessionId, e.getMessage(), e);
+                throw new RuntimeException("写入终端失败: " + e.getMessage(), e);
             }
         }
-        log.error("写入终端失败 (已重试 {} 次) sessionId={}", WRITE_MAX_RETRIES, sessionId, lastError);
-        throw new RuntimeException("写入终端失败: " + lastError.getMessage(), lastError);
     }
 
+
+    /**
+     * 读取当前未消费的 Terminal 输出。
+     * 本方法完全非阻塞。
+     * 有数据：立即返回数据
+     * 没数据：返回 ""
+     * 前端自己通过 polling / WebSocket 控制读取频率。
+     */
     @Override
     public String read(String sessionId) {
-        StringBuilder buffer = outputBuffers.get(sessionId);
-        if (buffer == null) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭 sessionId=" + sessionId);
+        TerminalSessionContext context = getTerminalSession(sessionId);
+        /*
+         * ================================
+         * 1. 读取当前 buffer
+         * ================================
+         */
+        String output = null;
+        synchronized (context.eventLock) {
+            if (!context.outputBuffer.isEmpty()) {
+                output = context.outputBuffer.toString();
+                /*
+                 * 数据已经被前端消费，
+                 * 清空缓冲区。
+                 */
+                context.outputBuffer.setLength(0);
+            }
         }
 
-        Boolean alive = readerAlive.get(sessionId);
-        if (alive != null && !alive) {
-            ChannelShell channel = channels.get(sessionId);
-            if (channel == null || !channel.isConnected()) {
-                return "\u001b[31m\r\n[连接已断开]\u001b[0m\r\n";
-            }
-            InputStream in = inputStreams.get(sessionId);
-            if (in != null) {
-                log.info("尝试重启终端读取线程 sessionId={}", sessionId);
-                startOutputReader(sessionId, in);
-            }
-        }
+        /*
+         * ================================
+         * 2. 如果之前发生 Buffer Overflow
+         * ================================
+         */
+        boolean overflow = context.bufferOverflowed.getAndSet(false);
 
-        // 非阻塞：直接返回缓冲区当前内容，不等
-        // 前端轮询本身就是等待机制，不需要后端再等
-        synchronized (buffer) {
-            if (buffer.isEmpty()) {
-                return "";
+        if (output != null && !output.isEmpty()) {
+            if (overflow) {
+                return BUFFER_OVERFLOW_MESSAGE + output;
             }
-            String output = buffer.toString();
-            buffer.setLength(0);
             return output;
         }
+
+        /*
+         * buffer 已经没有数据，
+         * 但如果之前发生 overflow，
+         * 仍然需要通知前端。
+         */
+        if (overflow) {
+            return BUFFER_OVERFLOW_MESSAGE;
+        }
+
+        /*
+         * ================================
+         * 3. reader 异常
+         * ================================
+         * 如果 Channel 仍然连接，
+         * 但是 reader 因 IOException 停止，
+         * 说明当前 Terminal 已经不可靠。
+         * 不再尝试启动第二个 reader。
+         * 因为多个 reader 读取同一个 InputStream
+         * 会引发更严重的数据竞争。
+         */
+
+        if (context.readerFailed.get()) {
+            if (context.stateMessageReturned.compareAndSet(false, true)) {
+                return READER_ERROR_MESSAGE;
+            }
+            return "";
+        }
+
+
+        /*
+         * ================================
+         * 4. SSH 已经断开
+         * ================================
+         */
+        boolean disconnected = context.eofReached.get() || !isChannelConnected(context.channel);
+        if (disconnected) {
+            /*
+             * 只返回一次断开提示。
+             * 避免前端每轮 polling 都出现：
+             * [SSH连接已断开]
+             * [SSH连接已断开]
+             * [SSH连接已断开]
+             */
+            if (context.stateMessageReturned.compareAndSet(false, true)) {
+                return DISCONNECTED_MESSAGE;
+            }
+        }
+
+        /*
+         * 当前没有任何新数据。
+         */
+        return "";
     }
 
+
+
+    /**
+     * 异步读取 SSH 数据。
+     * ----------------------------------------------------------
+     * 情况一：
+     * outputBuffer 已经有数据
+     *      ↓
+     * 立即返回 completedFuture
+     * ----------------------------------------------------------
+     * 情况二：
+     * 当前没有 SSH 数据
+     *      ↓
+     * 创建 CompletableFuture
+     *      ↓
+     * 放入 context.pendingRead
+     *      ↓
+     * 当前请求暂停
+     * ----------------------------------------------------------
+     * 之后 SSH Reader 收到数据：
+     * pendingRead.complete(...)
+     *      ↓
+     * Controller 的 DeferredResult 返回
+     */
+    @Override
+    public CompletableFuture<TerminalReadResult> readAsync(String sessionId) {
+        TerminalSessionContext context = getTerminalSession(sessionId);
+        /*
+         * 如果前端错误地同时创建两个 Long Poll，我们使用最新请求替换旧请求。
+         */
+        CompletableFuture<TerminalReadResult> oldPending = null;
+        CompletableFuture<TerminalReadResult> future;
+
+        synchronized (context.eventLock) {
+            /*
+             * ==========================================
+             * 1. Buffer 已经存在未消费的数据
+             * ==========================================
+             */
+            if (!context.outputBuffer.isEmpty()) {
+                String data = consumeOutputBuffer(context);
+
+                /*
+                 * 获取并清除 Buffer Overflow 状态。只通知前端一次。
+                 */
+                boolean bufferOverflow = context.bufferOverflowed.getAndSet(false);
+                return CompletableFuture.completedFuture(TerminalReadResult.data(data, isChannelConnected(context.channel), bufferOverflow));
+            }
+
+            /*
+             * ==========================================
+             * 2. SSH Reader 已经异常退出
+             * ==========================================
+             */
+            if (context.readerFailed.get()) {
+                return CompletableFuture.completedFuture(
+                        TerminalReadResult.readerError(
+                                isChannelConnected(context.channel)
+                        )
+                );
+            }
+
+            /*
+             * ==========================================
+             * 3. SSH 已经 EOF 或真正断开
+             * ==========================================
+             */
+            if (context.eofReached.get() || !isChannelConnected(context.channel)) {
+                return CompletableFuture.completedFuture(
+                        TerminalReadResult.disconnected(
+                                context.eofReached.get()
+                        )
+                );
+            }
+
+            /*
+             * ==========================================
+             * 4. 是否存在上一个 Long Poll
+             * ==========================================
+             * 正常情况下不会出现。
+             * 但是例如：浏览器网络卡顿 前端重复调用 React 重复 effect 都可能造成并发 Long Poll。
+             */
+            if (context.pendingRead != null && !context.pendingRead.isDone()) {
+                oldPending = context.pendingRead;
+            }
+
+            /*
+             * ==========================================
+             * 5. 创建新的 Long Poll
+             * ==========================================
+             */
+            future = new CompletableFuture<>();
+            context.pendingRead = future;
+        }
+
+        /*
+         * 不要在 synchronized(eventLock) 内 complete Future。
+         *
+         * Future.complete() 可能触发 callback，
+         * callback 又可能调用其他 Terminal 方法，
+         * 会让锁关系变复杂。
+         */
+        if (oldPending != null) {
+            oldPending.complete(
+                    TerminalReadResult.replaced(
+                            isChannelConnected(context.channel)
+                    )
+            );
+        }
+
+        /*
+         * ==========================================
+         * 6. Long Poll 超时
+         * ==========================================
+         * 这里不能把 timeout 理解成：SSH 命令结束。
+         * 它仅仅表示：这 25 秒内没有新的 SSH Terminal 输出。
+         */
+        CompletableFuture.delayedExecutor( LONG_POLL_TIMEOUT_SECONDS,TimeUnit.SECONDS).execute(() -> {
+            if (future.isDone()) {
+                return;
+            }
+            future.complete(
+                    TerminalReadResult.timeout(
+                            isChannelConnected(context.channel)
+                    )
+            );
+        });
+
+        /*
+         * ==========================================
+         * 7. Long Poll 完成后清除引用
+         * ==========================================
+         * DATA
+         * TIMEOUT
+         * DISCONNECTED
+         * READER_ERROR
+         * REPLACED
+         * 无论哪种状态完成，都需要清理。
+         */
+        future.whenComplete(
+                (result, throwable) -> {
+                    synchronized (context.eventLock) {
+                        /*
+                         * 一定要判断是不是当前 Future。
+                         * 防止：oldFuture 完成却把 newFuture 的 pendingRead 清除了。
+                         */
+                        if (context.pendingRead == future) {
+                            context.pendingRead = null;
+                        }
+                    }
+                }
+        );
+        return future;
+    }
+
+
+
+    /**
+     * 调整 Terminal 尺寸。
+     * xterm.js resize 时可以调用这里。
+     */
     @Override
     public void resize(String sessionId, int cols, int rows) {
-        ChannelShell channel = channels.get(sessionId);
-        if (channel == null || !channel.isConnected()) {
-            throw new IllegalArgumentException("终端会话不存在或已关闭 sessionId=" + sessionId);
+        TerminalSessionContext context = getTerminalSession(sessionId);
+        if (!isChannelConnected(context.channel)) {
+            log.warn("resize - Terminal 已关闭 sessionId={}", sessionId);
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+        }
+
+        /*
+         * 防止前端传入非法尺寸。
+         */
+        if (cols <= 0 || rows <= 0) {
+            log.warn("非法终端尺寸 sessionId={} cols={} rows={}", sessionId, cols, rows);
+            return;
         }
 
         try {
-            channel.setPtySize(cols, rows, 480, 640);
-            log.debug("终端大小已调整 sessionId={} {}x{}", sessionId, cols, rows);
+            context.channel.setPtySize(cols, rows, 0, 0);
+            log.debug("终端大小调整成功 sessionId={} {}x{}", sessionId, cols, rows);
+
         } catch (Exception e) {
-            log.error("调整终端大小失败 sessionId={}", sessionId, e);
+            log.error("调整终端大小失败 sessionId={} {}x{}", sessionId, cols, rows, e);
             throw new RuntimeException("调整终端大小失败: " + e.getMessage(), e);
         }
     }
 
+
+    /**
+     * 主动关闭 Terminal。
+     */
     @Override
     public void closeSession(String sessionId) {
-        log.info("关闭终端会话 sessionId={}", sessionId);
+        log.info("主动关闭终端会话 sessionId={}", sessionId);
         cleanup(sessionId);
     }
 
+
+    /**
+     * 判断 Terminal 是否仍然存在并且 SSH Channel 正常连接。
+     */
     @Override
     public boolean sessionExists(String sessionId) {
-        ChannelShell channel = channels.get(sessionId);
-        return channel != null && channel.isConnected();
-    }
-
-    // ========== 内部方法 ==========
-
-    /**
-     * 启动输出读取线程
-     * SocketTimeoutException 时继续循环（不是真正的断连），
-     * 只有 EOF（-1）或真正的 IOException 才退出
-     */
-    private void startOutputReader(String sessionId, InputStream in) {
-        readerAlive.put(sessionId, true);
-        Thread reader = new Thread(() -> {
-            byte[] buf = new byte[4096];
-            try {
-                int len;
-                while ((len = in.read(buf)) != -1) {
-                    String text = new String(buf, 0, len, StandardCharsets.UTF_8);
-                    StringBuilder buffer = outputBuffers.get(sessionId);
-                    if (buffer != null) {
-                        synchronized (buffer) {
-                            buffer.append(text);
-                        }
-                    }
-                }
-                // in.read() 返回 -1，说明 shell channel EOF
-                log.warn("终端 Shell Channel EOF sessionId={}", sessionId);
-            } catch (java.net.SocketTimeoutException e) {
-                // SocketTimeout 不是断连，重试即可——但实际不应到这里了（setTimeout(0)）
-                // 保留作为防御性处理
-                log.debug("终端读取超时（非断连），继续读取 sessionId={}", sessionId);
-                InputStream inRef = inputStreams.get(sessionId);
-                if (inRef != null) {
-                    startOutputReader(sessionId, inRef);
-                }
-                return; // 当前线程退出，新线程已接替
-            } catch (IOException e) {
-                ChannelShell ch = channels.get(sessionId);
-                // channel 还活着说明不是真正的断连，可能是临时 I/O 问题，尝试重启
-                if (ch != null && ch.isConnected()) {
-                    log.warn("终端读取I/O异常但channel仍连接，重启reader sessionId={} reason={}", sessionId, e.getMessage());
-                    InputStream inRef = inputStreams.get(sessionId);
-                    if (inRef != null) {
-                        startOutputReader(sessionId, inRef);
-                    }
-                    return;
-                }
-                log.debug("终端输出读取异常 sessionId={} reason={}", sessionId, e.getMessage());
-            } finally {
-                readerAlive.put(sessionId, false);
-
-                // 诊断：为什么线程退出了？
-                ChannelShell ch = channels.get(sessionId);
-                boolean channelConnected = ch != null && ch.isConnected();
-                boolean channelClosed = ch != null && ch.isClosed();
-                log.warn("终端输出读取线程退出 sessionId={} channelConnected={} channelClosed={}",
-                        sessionId, channelConnected, channelClosed);
-
-                // 通知等待中的 read() 方法：线程已退出，不再有数据
-                StringBuilder buffer = outputBuffers.get(sessionId);
-                if (buffer != null) {
-                    synchronized (buffer) {
-                        buffer.notifyAll();
-                    }
-                }
-            }
-        }, "terminal-reader-" + sessionId);
-        reader.setDaemon(true);
-        reader.start();
-    }
-
-    /**
-     * 清理资源
-     */
-    private void cleanup(String sessionId) {
-        // 清理 connectionId -> sessionId 映射
-        activeConnectionSession.entrySet().removeIf(e -> sessionId.equals(e.getValue()));
-
-        try {
-            OutputStream out = outputStreams.remove(sessionId);
-            if (out != null) out.close();
-        } catch (IOException ignored) {}
-
-        try {
-            InputStream in = inputStreams.remove(sessionId);
-            if (in != null) in.close();
-        } catch (IOException ignored) {}
-
-        ChannelShell channel = channels.remove(sessionId);
-        if (channel != null && channel.isConnected()) {
-            channel.disconnect();
-        }
-
-        outputBuffers.remove(sessionId);
-        readerAlive.remove(sessionId);
+        TerminalSessionContext context = terminalSessions.get(sessionId);
+        return context != null && !context.closed.get() && isChannelConnected(context.channel);
     }
 
 }

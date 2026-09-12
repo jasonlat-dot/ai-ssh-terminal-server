@@ -1,6 +1,7 @@
 package com.jasonlat.ai.trigger.http;
 
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.trigger.api.dto.*;
 import com.jasonlat.ai.trigger.api.response.Response;
@@ -10,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * SSH终端操作 HTTP 控制器
@@ -52,7 +54,13 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                     .info(ResponseCode.SUCCESS.getInfo())
                     .data(response)
                     .build();
-        } catch (IllegalStateException | IllegalArgumentException e) {
+        } catch (AppException e) {
+            log.warn("打开终端会话参数异常: {}", e.getMessage());
+            return Response.<TerminalOpenResponseDTO>builder()
+                    .code(e.getCode())
+                    .info(e.getMessage())
+                    .build();
+        }catch (IllegalStateException | IllegalArgumentException e) {
             log.warn("打开终端会话参数错误: {}", e.getMessage());
             return Response.<TerminalOpenResponseDTO>builder()
                     .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
@@ -107,10 +115,10 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                     .info(ResponseCode.SUCCESS.getInfo())
                     .data(response)
                     .build();
-        } catch (IllegalArgumentException e) {
+        } catch (AppException e) {
             log.warn("执行命令参数错误: {}", e.getMessage());
             return Response.<TerminalExecResponseDTO>builder()
-                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                    .code(e.getCode())
                     .info(e.getMessage())
                     .build();
         } catch (Exception e) {
@@ -130,10 +138,10 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
                     .build();
-        } catch (IllegalArgumentException e) {
+        } catch (AppException e) {
             log.warn("写入终端参数错误: {}", e.getMessage());
             return Response.<Void>builder()
-                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                    .code(e.getCode())
                     .info(e.getMessage())
                     .build();
         } catch (Exception e) {
@@ -145,7 +153,7 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
         }
     }
 
-    @RequestMapping(value = "read", method = RequestMethod.GET)
+    @RequestMapping(value = "read11", method = RequestMethod.GET)
     public Response<TerminalReadResponseDTO> readFromTerminal(@RequestParam("sessionId") String sessionId) {
         try {
             String output = sshTerminalDomainService.readTerminal(sessionId);
@@ -163,12 +171,6 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                     .code(appException.getCode())
                     .info(appException.getMessage())
                     .build();
-        } catch (IllegalArgumentException e) {
-            log.warn("读取终端参数异常: {}", e.getMessage());
-            return Response.<TerminalReadResponseDTO>builder()
-                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
-                    .info(e.getMessage())
-                    .build();
         } catch (Exception e) {
             log.error("读取终端失败 sessionId={}", sessionId, e);
             return Response.<TerminalReadResponseDTO>builder()
@@ -176,6 +178,29 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                     .info("读取终端失败: " + e.getMessage())
                     .build();
         }
+    }
+
+    @RequestMapping(value = "read", method = RequestMethod.GET)
+    public CompletableFuture<Response<TerminalReadResultDTO>> readAsyncFromTerminal(@RequestParam("sessionId") String sessionId) {
+        CompletableFuture<TerminalReadResult> completableFuture = sshTerminalDomainService.readTerminalAsync(sessionId);
+        // thenApply：异步完成后，把结果转换DTO
+        return completableFuture.thenApply(readResult -> {
+            TerminalReadResultDTO response = new TerminalReadResultDTO();
+            // 其他需要的字段赋值...
+            response.setOutput(readResult.getData());
+            response.setStatus(readResult.getStatus().toString());
+            response.setHasData(readResult.isHasData());
+            response.setConnected(readResult.isConnected());
+            response.setEof(readResult.isEof());
+            response.setTimeout(readResult.isTimeout());
+            response.setBufferOverflow(readResult.isBufferOverflow());
+
+            return Response.<TerminalReadResultDTO>builder()
+                    .code(ResponseCode.SUCCESS.getCode())
+                    .info(ResponseCode.SUCCESS.getInfo())
+                    .data(response)
+                    .build();
+        });
     }
 
     @RequestMapping(value = "resize", method = RequestMethod.POST)

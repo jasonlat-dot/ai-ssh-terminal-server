@@ -1,6 +1,9 @@
 package com.jasonlat.ai.domain.ssh.service;
 
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+
+import java.util.concurrent.CompletableFuture;
 
 /**
  * SSH终端领域服务接口
@@ -66,6 +69,12 @@ public interface ISshTerminalService {
      * @return 当前终端输出
      */
     String readTerminal(String sessionId);
+
+    /** 异步读取终端当前输出（不执行命令，用于同步状态）
+     *
+     * @param sessionId 会话ID
+     */
+    CompletableFuture<TerminalReadResult> readTerminalAsync(String sessionId);
 
     /**
      * 写入原始输入到终端（逐字节模式，由 Shell 自身处理 echo）

@@ -1,5 +1,9 @@
 package com.jasonlat.ai.domain.ssh.adapter.port;
 
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+
+import java.util.concurrent.CompletableFuture;
+
 /**
  * 终端会话服务接口
  * 负责管理 SSH 终端会话，包括打开/写入/读取/调整大小/关闭会话
@@ -31,6 +35,15 @@ public interface ITerminalSessionPort {
      * @return 终端输出内容
      */
     String read(String sessionId);
+
+    /**
+     * 异步读取 SSH Terminal 数据。
+     * 如果当前已经有数据：Future 立即完成。
+     * 如果当前没有数据： Future 暂时挂起。
+     * SSH Reader 收到数据后：Future 自动完成。
+     * HTTP Long Poll 超时由 Controller 控制。
+     */
+    CompletableFuture<TerminalReadResult> readAsync(String sessionId);
 
     /**
      * 调整终端大小
