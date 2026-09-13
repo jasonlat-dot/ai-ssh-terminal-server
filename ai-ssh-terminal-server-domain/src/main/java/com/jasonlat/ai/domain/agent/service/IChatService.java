@@ -28,4 +28,16 @@ public interface IChatService {
     List<String> handleMessage(ChatCommandEntity chatCommandEntity);
 
     Flowable<Event> handleMessageStream(ChatCommandEntity chatCommandEntity);
+
+    /**
+     * 处理消息（流式）
+     * @param agentId 智能体ID
+     * @param userId 用户ID
+     * @param sessionId 会话ID
+     * @param message 消息内容
+     * @param terminalSessionId SSH终端会话ID（用于MCP工具调用）
+     * @return 事件流
+     */
+    Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message, String terminalSessionId);
+
 }

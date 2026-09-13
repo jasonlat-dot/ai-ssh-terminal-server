@@ -21,7 +21,7 @@
     <!--     1.1.0-M3 -> 2.0.0-M2 -->
     <langchain4j.version>1.4.0</langchain4j.version>
     <postgresql.version>42.7.5</postgresql.version>
-    <google.sdk.version>0.4.0</google.sdk.version>
+    <google.sdk.version>1.6.0</google.sdk.version>
     <!--      0.4.0 ->  1.0.0-rc.1 -->
   </properties>
   <developers>

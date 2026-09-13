@@ -2,12 +2,14 @@ package com.jasonlat.ai.domain.agent.service.amory.node;
 
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.models.springai.SpringAI;
+import com.google.adk.tools.FunctionTool;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
-import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalSpringAI;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolRegistry;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
@@ -15,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -28,6 +31,10 @@ public class AgentNode extends AbstractAmorySupport {
 
     @Resource
     private AgentWorkflowNode agentWorkflowNode;
+
+    @Resource
+    private AdkToolRegistry adkToolRegistry;
+
 
     /**
      * 业务流程处理方法
@@ -53,12 +60,13 @@ public class AgentNode extends AbstractAmorySupport {
                 chatModel = dynamicContext.getChatModelMap().get(getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
             }
 
-            LlmAgent llmAgent = LlmAgent.builder()
+            LlmAgent llmAgent  = LlmAgent.builder()
                     .name(agentConfig.getName())
-                    .model(new LocalSpringAI(chatModel))
+                    .model(new SpringAI(chatModel))
                     .description(agentConfig.getDescription())
                     .instruction(agentConfig.getInstruction())
                     .outputKey(agentConfig.getOutputKey())
+                    .tools(adkToolRegistry.getAllTools("sshExecuteAdkTool"))
                     .build();
 
             dynamicContext.getAgentGroup().put(agentConfig.getName(), llmAgent);

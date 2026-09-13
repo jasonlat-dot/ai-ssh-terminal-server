@@ -34,7 +34,7 @@ spring:
     # 配置自定义的 agent yml配置文件
     import:
 #      - classpath:agent/test-agent.yml
-      - classpath:agent/only-agent.yml
+      - classpath:agent/ssh-agent.yml
 #      - classpath:agent/parallel_research_app.yml
 
 baidu:

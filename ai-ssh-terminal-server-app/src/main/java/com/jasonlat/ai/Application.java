@@ -2,6 +2,7 @@
 package com.jasonlat.ai;
 
 import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.server.MyTestMcpService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;

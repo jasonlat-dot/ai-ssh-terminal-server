@@ -187,6 +187,7 @@ public class AgentController implements IAgentService {
             Objects.requireNonNull(request.getUserId(), "用户ID不能为空");
             Objects.requireNonNull(request.getMessage(), "用户消息不能为空");
             Objects.requireNonNull(request.getSessionId(), "会话ID不能为空");
+            Objects.requireNonNull(request.getTerminalSessionId(), "终端会话ID不能为空");
 
             String sessionId = request.getSessionId();
             if (!StringUtils.isBlank(sessionId)) {
@@ -203,8 +204,8 @@ public class AgentController implements IAgentService {
                 sessionId = chatService.createSession(request.getAgentId(), request.getUserId());
             }
 
-            log.info("流式对话 agentId:{} userId:{} sessionId:{} message:{}", request.getAgentId(), request.getUserId(), sessionId, request.getMessage());
-            Disposable subscribe = chatService.handleMessageStream(request.getAgentId(), request.getUserId(), sessionId, request.getMessage())
+            log.info("流式对话 agentId:{} userId:{} sessionId:{} terminalSessionId:{} message:{}", request.getAgentId(), request.getUserId(), sessionId, request.getTerminalSessionId(), request.getMessage());
+            Disposable subscribe = chatService.handleMessageStream(request.getAgentId(), request.getUserId(), sessionId, request.getMessage(), request.getTerminalSessionId())
                     .subscribe(
                             event -> {
                                 try {

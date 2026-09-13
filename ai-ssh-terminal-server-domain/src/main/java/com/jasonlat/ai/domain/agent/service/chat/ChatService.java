@@ -3,7 +3,6 @@ package com.jasonlat.ai.domain.agent.service.chat;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.runner.InMemoryRunner;
-import com.google.cloud.aiplatform.v1beta1.Presets;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.model.entity.ChatCommandEntity;
@@ -13,6 +12,7 @@ import com.jasonlat.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigPro
 import com.jasonlat.ai.domain.agent.service.IChatService;
 import com.jasonlat.ai.domain.agent.service.amory.cache.SessionCache;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
@@ -22,7 +22,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.stream.Stream;
 
 /**
  * @author jasonlat
@@ -153,13 +152,35 @@ public class ChatService implements IChatService {
         // 构建 逐字返回 配置
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
         RunConfig runConfig = RunConfig.builder()
-                .setStreamingMode(RunConfig.StreamingMode.SSE) // 逐字返回
-                .setMaxLlmCalls(20)
-                .setSaveInputBlobsAsArtifacts(true)
+                .streamingMode(RunConfig.StreamingMode.SSE)
+                .maxLlmCalls(20)
+                .saveInputBlobsAsArtifacts(true)
                 .build();
         // 构建用户信息
         Content userContent = Content.builder().role("user").parts(parts).build();
         return runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), userContent, runConfig);
+    }
+
+    @Override
+    public Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message, String terminalSessionId) {
+        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(agentId);
+
+        if (null == aiAgentRegisterVO) {
+            throw new AppException(ResponseCode.AGENT_ID_NOT_FOUNT);
+        }
+
+        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+
+        // 设置终端会话ID到ThreadLocal，供 MCP 工具使用
+        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
+            log.info("设置终端会话ID: {}", terminalSessionId);
+            SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
+        }
+
+        Content userMsg = Content.fromParts(Part.fromText(message));
+
+        return runner.runAsync(userId, sessionId, userMsg);
+
     }
 
     private List<Part> buildParts(ChatCommandEntity chatCommandEntity) {

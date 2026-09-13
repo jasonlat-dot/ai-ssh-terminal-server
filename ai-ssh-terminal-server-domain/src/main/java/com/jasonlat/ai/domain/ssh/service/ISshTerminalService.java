@@ -28,7 +28,7 @@ public interface ISshTerminalService {
      * @param command    命令内容
      * @return 命令执行后的终端输出
      */
-    String executeCommand(String sessionId, String command);
+    String executeCommand(String sessionId, String command) throws InterruptedException;
 
     /**
      * 调整终端大小
