@@ -11,12 +11,12 @@ ai:
             agent-desc: SSH 智能运维助手，可执行远程命令并智能分析结果
           module:
             ai-api:
-              base-url: http://127.0.0.1:9999/
-              api-key: sk-tabbit-local
+              base-url: http://api.jasonlat.cc/
+              api-key: sk-9015ff0e06e6798b520fe274dab46df42c854b4c5b88cf5743abe76727923c3d
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
             chat-model:
-              model: tabbit/GPT-5.6 Luna
+              model: gpt-5.5
             llm-agents:
               - name: sshOperator
                 description: SSH 命令执行与结果分析智能体，帮助用户在远程服务器上执行操作

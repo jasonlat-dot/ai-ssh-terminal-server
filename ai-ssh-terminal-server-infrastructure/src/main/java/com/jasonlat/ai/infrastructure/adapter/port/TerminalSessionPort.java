@@ -19,8 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -263,6 +265,103 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 throw new RuntimeException("写入终端失败: " + e.getMessage(), e);
             }
         }
+    }
+
+    @Override
+    public String executeCommand(String sessionId, String command, long timeoutSeconds) throws InterruptedException {
+        /*
+         * 先验证上下文和 Channel。这里不能只判断 terminalSessions 中是否存在 sessionId，
+         * 因为远端已经断开时 Context 可能还没来得及被 Reader 清理。
+         */
+        TerminalSessionContext context = getTerminalSession(sessionId);
+        if (!isChannelConnected(context.channel)) {
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+        }
+        if (command == null || command.isBlank()) {
+            throw new IllegalArgumentException("SSH 命令不能为空");
+        }
+        if (timeoutSeconds <= 0) {
+            throw new IllegalArgumentException("SSH 命令超时时间必须大于 0");
+        }
+
+        /*
+         * 一个交互式 Shell 只有一条输入流和一条输出流。两个 Agent 命令并发执行时，
+         * 输出会交叉，开始/结束标记也可能互相嵌套，所以同一终端必须串行执行 Agent 命令。
+         * 这个锁只限制 Agent 工具调用，不会停止 SSH Reader，也不会暂停前端 Long Poll。
+         */
+        synchronized (context.agentCommandLock) {
+            /* 每条命令使用独立 UUID，避免命令正文或历史终端输出意外命中边界。 */
+            String token = UUID.randomUUID().toString();
+            AgentCommandCapture capture = new AgentCommandCapture(
+                    "\u001eSSH_AGENT_START_" + token + "\u001f",
+                    "\u001eSSH_AGENT_END_" + token + ":",
+                    command
+            );
+
+            /*
+             * 必须先注册捕获器再写命令。顺序反过来时，响应很快的命令可能在捕获器注册
+             * 之前就已返回，从而永久错过开始标记。
+             */
+            synchronized (context.agentCaptureLock) {
+                context.activeAgentCommand = capture;
+            }
+
+            /*
+             * 在原有交互式 Shell 中执行命令，而不是另开 exec Channel：
+             * 这样 Agent 可以继承用户在终端里执行 cd、export 等操作后形成的环境。
+             *
+             * RS(\036) 和 US(\037) 包住边界；结束标记同时携带 $?，让上层既得到输出，
+             * 也能知道命令是否成功。eval 的参数经过单引号转义，避免破坏包装脚本结构。
+             */
+            String shellCommand = "printf '\\036SSH_AGENT_START_" + token + "\\037\\n'; "
+                    + "eval '" + escapeForSingleQuotedShell(command) + "'; "
+                    + "__ssh_agent_exit_code=$?; "
+                    + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\r";
+
+            try {
+                write(sessionId, shellCommand);
+
+                /*
+                 * 当前线程等待的是 AgentCommandCapture.result，不是 readAsync()。
+                 * SSH Reader 在后台持续读取并同时喂给 Agent 捕获器和前端 outputBuffer，
+                 * 因此前端长轮询与这里不会再互相替换或消费数据。
+                 */
+                return capture.result.get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                /*
+                 * 到达命令级总超时后先让 Agent Future 失败，再向远端发送 Ctrl+C，尽量终止
+                 * 仍在运行的命令。write() 失败不能覆盖原始“命令超时”异常。
+                 */
+                capture.result.completeExceptionally(new IllegalStateException("SSH 命令执行超时（" + timeoutSeconds + " 秒）"));
+                try {
+                    write(sessionId, "\u0003");
+                } catch (Exception interruptError) {
+                    log.debug("命令超时后发送 Ctrl+C 失败 sessionId={}", sessionId, interruptError);
+                }
+                throw new IllegalStateException("SSH 命令执行超时（" + timeoutSeconds + " 秒）", e);
+            } catch (ExecutionException e) {
+                // Reader EOF、Reader 异常、缓冲区溢出会通过 Future 的 cause 传递到这里。
+                Throwable cause = e.getCause();
+                if (cause instanceof RuntimeException runtimeException) throw runtimeException;
+                throw new IllegalStateException("读取 SSH 命令输出失败", cause);
+            } finally {
+                /*
+                 * 只清理自己创建的捕获器。虽然 agentCommandLock 已避免 Agent 并发，仍保留
+                 * 身份判断，防止关闭流程已经先一步把 activeAgentCommand 清空。
+                 */
+                synchronized (context.agentCaptureLock) {
+                    if (context.activeAgentCommand == capture) {
+                        capture.completed = true;
+                        context.activeAgentCommand = null;
+                    }
+                }
+            }
+        }
+    }
+
+    private String escapeForSingleQuotedShell(String command) {
+        /* POSIX Shell 中要在单引号字符串里表达单引号，需要结束引号、写入 '、再重新开启。 */
+        return command.replace("'", "'\"'\"'");
     }
 
 

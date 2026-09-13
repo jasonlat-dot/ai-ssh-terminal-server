@@ -12,12 +12,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * SSH终端领域服务实现
@@ -27,11 +23,11 @@ import java.util.concurrent.TimeoutException;
 @Service
 public class SshTerminalService implements ISshTerminalService {
 
-    /** Agent 单条命令允许等待的最长时间。 */
+    /**
+     * Agent 单条命令允许等待的最长时间。
+     * 这是“整条命令执行完成”的上限，与前端每次 Long Poll 的 25 秒等待时间无关。
+     */
     private static final long COMMAND_TIMEOUT_SECONDS = 10L;
-
-    /** 防止异常命令让 Agent 结果无限增长。 */
-    private static final int MAX_COMMAND_OUTPUT_CHARS = 2 * 1024 * 1024;
 
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
@@ -85,7 +81,10 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public String executeCommand(String sessionId, String command) throws InterruptedException {
-        // 1. 校验会话
+        /*
+         * 领域层先检查业务会话是否仍处于活动状态，避免把已经关闭的 sessionId 继续传给
+         * JSch。基础设施层还会再次检查真实 Channel，处理网络刚好断开的竞态情况。
+         */
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
@@ -95,132 +94,15 @@ public class SshTerminalService implements ISshTerminalService {
         }
 
         /*
-         * 一个 terminalSession 同一时刻只执行一条 Agent 命令。
-         * 这样每条命令的开始/结束标记和输出不会交叉。
+         * 完整结果的收集由基础设施层完成。这里不再循环调用 readAsync()，所以不会与
+         * 浏览器正在进行的 Long Poll 竞争同一个 pendingRead 或 outputBuffer。
          */
-        synchronized (entity) {
-            String token = UUID.randomUUID().toString();
-            String startMarker = "\u001eSSH_AGENT_START_" + token + "\u001f";
-            String endMarkerPrefix = "\u001eSSH_AGENT_END_" + token + ":";
+        String output = terminalSessionService.executeCommand(sessionId, command, COMMAND_TIMEOUT_SECONDS);
 
-            /*
-             * Shell 会回显发送进去的命令文本，因此不能使用普通字符串作为边界。
-             * printf 输出的 RS/US 控制字符不会出现在命令回显中，可以准确区分：
-             *   历史/MOTD 输出、命令回显、真实命令输出、后续 prompt。
-             */
-            String shellCommand = "printf '\\036SSH_AGENT_START_" + token + "\\037\\n'; "
-                    + "eval '" + escapeForSingleQuotedShell(command) + "'; "
-                    + "__ssh_agent_exit_code=$?; "
-                    + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\r";
-
-            terminalSessionService.write(sessionId, shellCommand);
-            entity.touch();
-
-            StringBuilder received = new StringBuilder();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(COMMAND_TIMEOUT_SECONDS);
-
-            while (true) {
-                long remainingNanos = deadline - System.nanoTime();
-                if (remainingNanos <= 0) {
-                    throw new IllegalStateException("SSH 命令执行超时（" + COMMAND_TIMEOUT_SECONDS + " 秒）");
-                }
-
-                CompletableFuture<TerminalReadResult> readFuture = terminalSessionService.readAsync(sessionId);
-                TerminalReadResult readResult;
-                try {
-                    // get() 会阻塞当前 Agent 调用线程，但不会阻塞 SSH Reader 线程。
-                    readResult = readFuture.get(remainingNanos, TimeUnit.NANOSECONDS);
-                } catch (TimeoutException e) {
-                    readFuture.cancel(false);
-                    throw new IllegalStateException("SSH 命令执行超时（" + COMMAND_TIMEOUT_SECONDS + " 秒）", e);
-                } catch (ExecutionException e) {
-                    throw new IllegalStateException("读取 SSH 命令输出失败", e.getCause());
-                }
-
-                switch (readResult.getStatus()) {
-                    case DATA -> {
-                        if (readResult.isBufferOverflow()) {
-                            throw new IllegalStateException("SSH 命令输出超过缓冲区上限，无法保证结果完整");
-                        }
-                        if (readResult.isHasData()) {
-                            received.append(readResult.getData());
-                        }
-                        if (received.length() > MAX_COMMAND_OUTPUT_CHARS) {
-                            throw new IllegalStateException("SSH 命令输出超过 Agent 可接收上限");
-                        }
-
-                        String completeOutput = extractCompletedCommandOutput(
-                                received, startMarker, endMarkerPrefix
-                        );
-                        if (completeOutput != null) {
-                            log.debug("命令执行完成 sessionId={} outputLength={}",
-                                    sessionId, completeOutput.length());
-                            return completeOutput;
-                        }
-                    }
-                    case TIMEOUT -> {
-                        // Long Poll 超时只表示本轮没有数据，命令仍可能正在运行。
-                    }
-                    case REPLACED -> throw new IllegalStateException(
-                            "SSH 命令输出读取被同一终端会话的另一个 Long Poll 请求替换"
-                    );
-                    case DISCONNECTED -> throw new IllegalStateException("SSH 在命令执行期间断开");
-                    case READER_ERROR -> throw new IllegalStateException("SSH Reader 在命令执行期间异常");
-                }
-            }
-        }
-    }
-
-    private String escapeForSingleQuotedShell(String command) {
-        return command.replace("'", "'\"'\"'");
-    }
-
-    /**
-     * 只有同时收到开始和结束标记才返回结果；否则返回 null 继续 Long Poll。
-     */
-    private String extractCompletedCommandOutput(StringBuilder received,
-                                                 String startMarker,
-                                                 String endMarkerPrefix) {
-        int start = received.indexOf(startMarker);
-        if (start < 0) {
-            return null;
-        }
-
-        int outputStart = start + startMarker.length();
-        int end = received.indexOf(endMarkerPrefix, outputStart);
-        if (end < 0) {
-            return null;
-        }
-
-        int exitCodeStart = end + endMarkerPrefix.length();
-        int markerEnd = received.indexOf("\u001f", exitCodeStart);
-        if (markerEnd < 0) {
-            return null;
-        }
-
-        String output = received.substring(outputStart, end);
-        String exitCode = received.substring(exitCodeStart, markerEnd).trim();
-        output = trimBoundaryLineBreaks(output);
-
-        if (!"0".equals(exitCode)) {
-            if (!output.isEmpty()) {
-                output += System.lineSeparator();
-            }
-            output += "[命令退出码: " + exitCode + "]";
-        }
+        // 只有命令正常返回时才刷新会话最后活动时间；异常由上层工具转换成失败结果。
+        entity.touch();
+        log.debug("命令执行完成 sessionId={} outputLength={}", sessionId, output.length());
         return output;
-    }
-
-    private String trimBoundaryLineBreaks(String value) {
-        int start = 0;
-        int end = value.length();
-        while (start < end && (value.charAt(start) == '\r' || value.charAt(start) == '\n')) {
-            start++;
-        }
-        while (end > start && (value.charAt(end - 1) == '\r' || value.charAt(end - 1) == '\n')) {
-            end--;
-        }
-        return value.substring(start, end);
     }
 
     @Override

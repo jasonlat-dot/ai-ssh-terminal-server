@@ -12,7 +12,6 @@ import com.jasonlat.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigPro
 import com.jasonlat.ai.domain.agent.service.IChatService;
 import com.jasonlat.ai.domain.agent.service.amory.cache.SessionCache;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
@@ -149,13 +148,9 @@ public class ChatService implements IChatService {
         }
         // 构建 parts
         List<Part> parts = buildParts(chatCommandEntity);
-        // 构建 逐字返回 配置
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-        RunConfig runConfig = RunConfig.builder()
-                .streamingMode(RunConfig.StreamingMode.SSE)
-                .maxLlmCalls(20)
-                .saveInputBlobsAsArtifacts(true)
-                .build();
+        RunConfig runConfig = buildStreamingRunConfig();
+
         // 构建用户信息
         Content userContent = Content.builder().role("user").parts(parts).build();
         return runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), userContent, runConfig);
@@ -170,17 +165,23 @@ public class ChatService implements IChatService {
         }
 
         InMemoryRunner runner = aiAgentRegisterVO.getRunner();
-
-        // 设置终端会话ID到ThreadLocal，供 MCP 工具使用
-        if (terminalSessionId != null && !terminalSessionId.isEmpty()) {
-            log.info("设置终端会话ID: {}", terminalSessionId);
-            SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-        }
+        RunConfig runConfig = buildStreamingRunConfig();
 
         Content userMsg = Content.fromParts(Part.fromText(message));
 
-        return runner.runAsync(userId, sessionId, userMsg);
+        return runner.runAsync(userId, sessionId, userMsg, runConfig);
 
+    }
+
+    /**
+     * 统一构造 ADK 流式运行配置，避免不同 handleMessageStream 重载的行为不一致。
+     */
+    private RunConfig buildStreamingRunConfig() {
+        return RunConfig.builder()
+                .setStreamingMode(RunConfig.StreamingMode.SSE)
+                .setMaxLlmCalls(20)
+                .setSaveInputBlobsAsArtifacts(true)
+                .build();
     }
 
     private List<Part> buildParts(ChatCommandEntity chatCommandEntity) {

@@ -18,6 +18,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
+ * SSH 交互式终端的公共状态与并发控制。
+ *
+ * <p>核心数据流：</p>
+ * <pre>
+ *                        ┌─> AgentCommandCapture（Agent 独立命令结果）
+ * SSH InputStream -> Reader
+ *                        └─> outputBuffer -> HTTP Long Poll -> xterm.js
+ * </pre>
+ *
+ * <p>Reader 始终只有一个。它读取一次 SSH 输出后，把同一份数据分发给两个用途不同的
+ * 消费者。这样 Agent 能等待一条命令的完整结果，前端也能持续刷新终端，两者不会通过
+ * {@code readAsync()} 竞争同一个缓冲区。</p>
+ *
  * @author jasonlat
  * 2026-09-13  01:56
  */
@@ -49,6 +62,13 @@ public class TerminalSessionPortSupport {
      * 最终导致 JVM OOM。
      */
     private static final int MAX_OUTPUT_BUFFER_SIZE = 2 * 1024 * 1024;
+
+    /**
+     * Agent 单条命令最多保留的输出字符数。
+     * Agent 必须等结束标记出现后才能返回完整结果，因此执行期间的内容不能像前端缓冲区
+     * 一样被 Long Poll 分批消费。设置上限可防止 tail -f 等持续输出命令耗尽 JVM 内存。
+     */
+    protected static final int MAX_AGENT_COMMAND_OUTPUT_SIZE = 2 * 1024 * 1024;
 
 
 
@@ -169,6 +189,25 @@ public class TerminalSessionPortSupport {
         final Object writeLock = new Object();
 
         /**
+         * 保证同一个 Terminal 同时只执行一条 Agent 命令。
+         * 多条命令并行写入同一个交互式 Shell 时，输出会交叉，无法准确判断每条命令
+         * 的结束位置，因此 Agent 命令必须串行执行。
+         */
+        final Object agentCommandLock = new Object();
+
+        /**
+         * 保护 activeAgentCommand 及捕获器内部状态。SSH Reader 线程负责追加数据，
+         * Agent 调用线程负责创建和清理捕获器，这两个线程不能同时修改捕获器。
+         */
+        final Object agentCaptureLock = new Object();
+
+        /**
+         * 当前 Agent 命令的独立输出捕获器；没有 Agent 命令执行时为 null。
+         * 它与前端 Long Poll 使用的 outputBuffer 是两套独立存储。
+         */
+        AgentCommandCapture activeAgentCommand;
+
+        /**
          * 当前 Terminal Reader Thread。
          */
         volatile Thread readerThread;
@@ -217,6 +256,176 @@ public class TerminalSessionPortSupport {
     }
 
     /**
+     * 一条 Agent 命令的流式输出捕获器。
+     *
+     * <p>基础设施层实际写入 Shell 的结构为：</p>
+     * <pre>
+     * printf START_MARKER
+     * eval '用户命令'
+     * printf END_MARKER:退出码
+     * </pre>
+     *
+     * <p>START/END 使用控制字符和随机 UUID 组成，普通命令输出几乎不会与它碰撞。
+     * SSH 输出是流式到达的，一个标记可能被拆到多次 read 中，因此 pending 必须保留
+     * 尚不能确定是普通输出还是标记前缀的尾部字符。</p>
+     *
+     * <p>accept() 返回允许展示给前端的内容；result 则在收到完整结束标记以后，
+     * 向等待中的 Agent 返回完整命令结果。</p>
+     */
+    protected static final class AgentCommandCapture {
+        /** 真实命令输出开始标记；它之前通常是 Shell 对包装命令的回显。 */
+        final String startMarker;
+
+        /** 真实命令输出结束标记前缀；其后紧跟命令退出码和 US 结束字符。 */
+        final String endMarkerPrefix;
+
+        /**
+         * 展示给 xterm.js 的原始 Agent 命令。
+         * Shell 实际收到的是包含 printf/eval 的包装脚本，不能把包装脚本直接显示给用户。
+         */
+        final String displayCommand;
+
+        /** 未完成边界判断的数据，也保存跨越两个 SSH read 的不完整标记。 */
+        final StringBuilder pending = new StringBuilder();
+
+        /** 只属于 Agent 的命令结果，不会被前端 Long Poll 消费或清空。 */
+        final StringBuilder output = new StringBuilder();
+
+        /** Agent 调用线程等待的 Future，由 SSH Reader 在线程安全区域内完成。 */
+        final CompletableFuture<String> result = new CompletableFuture<>();
+
+        /** 是否已经识别到 START_MARKER。 */
+        boolean started;
+
+        /** 是否已经成功结束，或因输出溢出、断开等原因失败。 */
+        boolean completed;
+
+        AgentCommandCapture(String startMarker, String endMarkerPrefix, String displayCommand) {
+            this.startMarker = startMarker;
+            this.endMarkerPrefix = endMarkerPrefix;
+            this.displayCommand = displayCommand;
+        }
+
+        String accept(String incoming) {
+            // 命令结束后的数据属于后续 Shell prompt 或用户输入，直接交给前端。
+            if (completed) {
+                return incoming;
+            }
+
+            pending.append(incoming);
+            String displayPrefix = "";
+            if (!started) {
+                int start = pending.indexOf(startMarker);
+                if (start < 0) {
+                    /*
+                     * 还没收到完整开始标记。包装命令的回显不展示给前端，但必须保留
+                     * pending 尾部可能属于 START_MARKER 开头的字符，以处理跨块标记。
+                     */
+                    retainPossibleMarkerPrefix(pending, startMarker);
+                    return "";
+                }
+                // 删除包装命令回显和开始标记，后面的字符才是真实命令输出。
+                pending.delete(0, start + startMarker.length());
+                started = true;
+
+                /*
+                 * 包装脚本已经被过滤，此处补回用户真正关心的命令文本。终端之前已经显示
+                 * Shell prompt，所以直接写“命令 + 换行”即可形成正常的交互式终端记录。
+                 */
+                displayPrefix = displayCommand + "\r\n";
+            }
+
+            int end = pending.indexOf(endMarkerPrefix);
+            if (end < 0) {
+                /*
+                 * 结束标记尚未完整出现。先消费确定不属于标记的内容，只留下可能构成
+                 * END_MARKER 的末尾字符等待下一块 SSH 数据。
+                 */
+                int safeLength = pending.length() - markerPrefixOverlap(pending, endMarkerPrefix);
+                return displayPrefix + consumeOutput(safeLength);
+            }
+
+            int exitCodeStart = end + endMarkerPrefix.length();
+            int markerEnd = pending.indexOf("\u001f", exitCodeStart);
+            if (markerEnd < 0) {
+                // 已收到结束标记前缀，但退出码还没收完整，只消费标记前的命令输出。
+                return displayPrefix + consumeOutput(end);
+            }
+
+            /*
+             * consumeOutput(end) 会删掉 pending 中结束标记以前的内容，所以后续索引
+             * 需要按“结束标记当前位于下标 0”重新计算。
+             */
+            String displayOutput = consumeOutput(end);
+            int adjustedExitCodeStart = endMarkerPrefix.length();
+            int adjustedMarkerEnd = pending.indexOf("\u001f", adjustedExitCodeStart);
+            String exitCode = pending.substring(adjustedExitCodeStart, adjustedMarkerEnd).trim();
+            String afterMarker = pending.substring(adjustedMarkerEnd + 1);
+            pending.setLength(0);
+            completed = true;
+
+            String commandOutput = trimBoundaryLineBreaks(output.toString());
+            if (!"0".equals(exitCode)) {
+                // 非零退出码显式附加到结果中，Agent 才能稳定判断命令是否执行成功。
+                if (!commandOutput.isEmpty()) commandOutput += System.lineSeparator();
+                commandOutput += "[命令退出码: " + exitCode + "]";
+            }
+            result.complete(commandOutput);
+            return displayPrefix + displayOutput + afterMarker;
+        }
+
+        private String consumeOutput(int length) {
+            if (length <= 0) return "";
+            String value = pending.substring(0, length);
+            pending.delete(0, length);
+            if (output.length() + value.length() > MAX_AGENT_COMMAND_OUTPUT_SIZE) {
+                /*
+                 * 这段数据仍返回给前端显示，但 Agent 结果已无法保证完整，因此用异常
+                 * 完成 Future，不能把截断内容作为一次成功结果返回。
+                 */
+                completed = true;
+                result.completeExceptionally(new IllegalStateException("SSH 命令输出超过 Agent 可接收上限"));
+                return value;
+            }
+            output.append(value);
+            return value;
+        }
+
+        private static void retainPossibleMarkerPrefix(StringBuilder value, String marker) {
+            int overlap = markerPrefixOverlap(value, marker);
+            if (value.length() > overlap) value.delete(0, value.length() - overlap);
+        }
+
+        private static int markerPrefixOverlap(StringBuilder value, String marker) {
+            /*
+             * 寻找 value 的最长后缀，同时也是 marker 的前缀。例如 value 以 SSH_AGE
+             * 结尾，下一块以 NT_END 开始时，两块合并后才是完整边界标记。
+             */
+            int max = Math.min(value.length(), marker.length() - 1);
+            for (int length = max; length > 0; length--) {
+                int offset = value.length() - length;
+                boolean matches = true;
+                for (int i = 0; i < length; i++) {
+                    if (value.charAt(offset + i) != marker.charAt(i)) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) return length;
+            }
+            return 0;
+        }
+
+        private static String trimBoundaryLineBreaks(String value) {
+            int start = 0;
+            int end = value.length();
+            while (start < end && (value.charAt(start) == '\r' || value.charAt(start) == '\n')) start++;
+            while (end > start && (value.charAt(end - 1) == '\r' || value.charAt(end - 1) == '\n')) end--;
+            return value.substring(start, end);
+        }
+    }
+
+    /**
      * SSH Reader 收到新的 Terminal 输出。
      * 两种情况：
      * 一、有 Long Poll 正在等待
@@ -238,6 +447,26 @@ public class TerminalSessionPortSupport {
         if (len <= 0 || context.closed.get()) {
             return;
         }
+
+        String incoming = new String(chars, 0, len);
+        String terminalOutput;
+        synchronized (context.agentCaptureLock) {
+            AgentCommandCapture capture = context.activeAgentCommand;
+            /*
+             * 无 Agent 命令时原样进入前端缓冲区；
+             * 有 Agent 命令时，capture 一边把真实输出复制到 Agent 独立缓冲区，一边过滤仅用于内部定位的包装命令与标记。
+             */
+            terminalOutput = capture == null ? incoming : capture.accept(incoming);
+        }
+
+        /*
+         * Agent 的包装命令回显或边界标记可能被捕获器完整过滤。
+         * 此时不要用空 DATA 提前结束前端 Long Poll。
+         */
+        if (terminalOutput.isEmpty()) {
+            return;
+        }
+
         CompletableFuture<TerminalReadResult> pendingFuture = null;
         TerminalReadResult readResult = null;
 
@@ -258,19 +487,19 @@ public class TerminalSessionPortSupport {
             /*
              * 正常情况下 READ_BUFFER_SIZE 远小于 MAX_OUTPUT_BUFFER_SIZE。这里仍然防御一次。
              */
-            if (len >= MAX_OUTPUT_BUFFER_SIZE) {
+            if (terminalOutput.length() >= MAX_OUTPUT_BUFFER_SIZE) {
                 context.outputBuffer.setLength(0);
                 /*
                  * 只保留这一批数据的最后 MAX_SIZE 部分。
                  */
-                int start = len - MAX_OUTPUT_BUFFER_SIZE;
-                context.outputBuffer.append(chars, start, MAX_OUTPUT_BUFFER_SIZE);
+                int start = terminalOutput.length() - MAX_OUTPUT_BUFFER_SIZE;
+                context.outputBuffer.append(terminalOutput, start, terminalOutput.length());
                 context.bufferOverflowed.set(true);
             } else {
                 /*
                  * Buffer 放不下新数据。
                  */
-                if (currentSize + len > MAX_OUTPUT_BUFFER_SIZE) {
+                if (currentSize + terminalOutput.length() > MAX_OUTPUT_BUFFER_SIZE) {
                     /*
                      * 丢弃旧数据，优先保留最新 Terminal 输出。
                      * 对 Terminal 场景来说：保证 JVM 不 OOM 比无限保存所有历史输出更加重要。
@@ -279,13 +508,13 @@ public class TerminalSessionPortSupport {
 
                     context.bufferOverflowed.set(true);
                     log.warn("Terminal输出缓冲区溢出，丢弃部分旧数据 sessionId={} oldSize={} incomingSize={} maxSize={}",
-                            context.sessionId, currentSize, len, MAX_OUTPUT_BUFFER_SIZE
+                            context.sessionId, currentSize, terminalOutput.length(), MAX_OUTPUT_BUFFER_SIZE
                     );
                 }
                 /*
                  * 保存本次 SSH 输出。
                  */
-                context.outputBuffer.append(chars, 0, len);
+                context.outputBuffer.append(terminalOutput);
             }
 
 
@@ -403,6 +632,7 @@ public class TerminalSessionPortSupport {
          * 不能让请求继续等待到 25 秒超时。这里是主动关闭，所以不一定真的读取到了 EOF，eof=false。
          */
         completePendingRead(context, TerminalReadResult.disconnected(false));
+        failActiveAgentCommand(context, "SSH 终端会话已关闭");
 
         /*
          * 只删除：
@@ -537,6 +767,27 @@ public class TerminalSessionPortSupport {
         }
     }
 
+    /**
+     * 当前 SSH 会话失效时立即唤醒正在等待结果的 Agent。
+     *
+     * <p>如果 Reader 已退出却不完成 result，executeCommand() 只能一直等到命令超时。
+     * 这里先在锁内摘除捕获器，再在锁外 completeExceptionally，避免 Future 回调在锁内
+     * 重新进入终端代码而形成复杂锁关系。</p>
+     */
+    protected void failActiveAgentCommand(TerminalSessionContext context, String message) {
+        CompletableFuture<String> result = null;
+        synchronized (context.agentCaptureLock) {
+            if (context.activeAgentCommand != null) {
+                result = context.activeAgentCommand.result;
+                context.activeAgentCommand.completed = true;
+                context.activeAgentCommand = null;
+            }
+        }
+        if (result != null && !result.isDone()) {
+            result.completeExceptionally(new IllegalStateException(message));
+        }
+    }
+
     // ============================================================
     // SSH Reader
     // ============================================================
@@ -645,6 +896,7 @@ public class TerminalSessionPortSupport {
                      * 立即告诉前端 SSH 已经断开。
                      */
                     completePendingRead(context, TerminalReadResult.disconnected(true));
+                    failActiveAgentCommand(context, "SSH 在命令执行期间断开（EOF）");
                     break;
                 }
                 /*
@@ -684,6 +936,7 @@ public class TerminalSessionPortSupport {
                  * Long Poll 立即返回 READER_ERROR。
                  */
                 completePendingRead(context, TerminalReadResult.readerError(true));
+                failActiveAgentCommand(context, "SSH Reader 在命令执行期间异常");
             } else {
                 /*
                  * SSH Channel 已经真正断开。
@@ -695,6 +948,7 @@ public class TerminalSessionPortSupport {
                  * 这里不一定真的读取到了 -1，因此 eof=false 更严谨。
                  */
                 completePendingRead(context, TerminalReadResult.disconnected(false));
+                failActiveAgentCommand(context, "SSH 在命令执行期间断开");
             }
         } catch (Exception e) {
             if (!context.closed.get()) {
@@ -706,6 +960,7 @@ public class TerminalSessionPortSupport {
                                 isChannelConnected(context.channel)
                         )
                 );
+                failActiveAgentCommand(context, "SSH Reader 在命令执行期间异常");
             }
         } finally {
             /*

@@ -100,7 +100,8 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
         return output;
     }
 
-    @RequestMapping(value = "exec", method = RequestMethod.POST)
+    // 暂时不暴露给http调用
+//    @RequestMapping(value = "exec", method = RequestMethod.POST)
     public Response<TerminalExecResponseDTO> execCommand(@RequestBody TerminalExecRequestDTO requestDTO) {
         try {
             log.info("执行SSH命令，sessionId:{} command:{}", requestDTO.getSessionId(), requestDTO.getCommand());

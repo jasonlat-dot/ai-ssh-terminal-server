@@ -29,6 +29,26 @@ public interface ITerminalSessionPort {
     void write(String sessionId, String command);
 
     /**
+     * 在当前交互式 Shell 中执行一条 Agent 命令，并等待独立命令缓冲区收集完整结果。
+     *
+     * <p>该方法与 {@link #write(String, String)} 的区别：</p>
+     * <ul>
+     *   <li>write 只负责发送按键或文本，不等待输出；</li>
+     *   <li>executeCommand 会添加唯一边界、等待命令结束，并返回这条命令的完整输出。</li>
+     * </ul>
+     *
+     * <p>Agent 使用独立捕获缓冲区，不会调用或消费前端 Long Poll 使用的
+     * {@link #readAsync(String)} 输出缓冲区。</p>
+     *
+     * @param sessionId     终端会话 ID
+     * @param command       Shell 命令
+     * @param timeoutSeconds 命令总超时时间（秒）
+     * @return 完整命令输出
+     * @throws InterruptedException 等待结果的 Agent 线程被中断
+     */
+    String executeCommand(String sessionId, String command, long timeoutSeconds) throws InterruptedException;
+
+    /**
      * 读取终端输出
      *
      * @param sessionId 会话ID
