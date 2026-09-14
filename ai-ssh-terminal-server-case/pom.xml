@@ -1,0 +1,49 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.jasonlat.ai</groupId>
+        <artifactId>ai-ssh-terminal-server</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ai-ssh-terminal-server-case</artifactId>
+    <packaging>jar</packaging>
+
+    <name>ai-ssh-terminal-server-case</name>
+    <url>http://maven.apache.org</url>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.jasonlat.ai</groupId>
+            <artifactId>ai-ssh-terminal-server-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.jasonlat.ai</groupId>
+            <artifactId>ai-ssh-terminal-server-domain</artifactId>
+        </dependency>
+
+        <!-- 设计模式框架 -->
+        <dependency>
+            <groupId>com.jasonlat.dot</groupId>
+            <artifactId>jasonlat-wrench-starter-design-framework</artifactId>
+        </dependency>
+
+        <!-- Spring Web (ResponseBodyEmitter) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+        </dependency>
+
+        <!-- Jackson -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+    </dependencies>
+</project>

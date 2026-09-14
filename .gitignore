@@ -40,3 +40,4 @@ build/
 /.idea/
 /ai-ssh-terminal-server-app/src/main/resources/application-sit.yml
 /ai-ssh-terminal-server-app/data/
+/ai-ssh-terminal-server-app/src/test/resources/ssh-config.local_bak

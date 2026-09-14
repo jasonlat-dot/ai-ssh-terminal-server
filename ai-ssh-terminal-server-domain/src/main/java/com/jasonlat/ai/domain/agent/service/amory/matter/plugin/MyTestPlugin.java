@@ -131,8 +131,8 @@ public class MyTestPlugin extends BasePlugin {
                 .map(part -> part.text().orElse(""))
                 .collect(Collectors.joining("\n"))
                 .trim();
-        if (text.length() > 200) {
-            return text.substring(0, 200) + "...";
+        if (text.length() > 20) {
+            return text.substring(0, 20) + "...";
         }
         return text;
     }
@@ -144,8 +144,8 @@ public class MyTestPlugin extends BasePlugin {
         String str = args.entrySet().stream()
                 .map(e -> e.getKey() + "=" + e.getValue())
                 .collect(Collectors.joining(", "));
-        if (str.length() > 300) {
-            return "{" + str.substring(0, 300) + "...}";
+        if (str.length() > 30) {
+            return "{" + str.substring(0, 30) + "...}";
         }
         return "{" + str + "}";
     }

@@ -11,6 +11,7 @@ ai:
             agent-desc: SSH 智能运维助手，可执行远程命令并智能分析结果
           module:
             ai-api:
+              # 添加 VM options参数：-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|192.168.*
               base-url: http://api.jasonlat.cc/
               api-key: sk-9015ff0e06e6798b520fe274dab46df42c854b4c5b88cf5743abe76727923c3d
               completions-path: v1/chat/completions

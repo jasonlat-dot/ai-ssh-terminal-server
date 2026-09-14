@@ -7,9 +7,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <!--        <version>3.4.3</version>-->
     <version>3.4.3</version>
-    <!-- 3.4.3 -> 4.0.5  配合 SpringAi 2.0.0-M2使用 -->
   </parent>
   <properties>
     <java.version>17</java.version>
@@ -17,11 +15,11 @@
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <spring-ai.version>1.1.0-M3</spring-ai.version>
+    <spring-ai.version>1.1.5</spring-ai.version>
     <!--     1.1.0-M3 -> 2.0.0-M2 -->
     <langchain4j.version>1.4.0</langchain4j.version>
     <postgresql.version>42.7.5</postgresql.version>
-    <google.sdk.version>0.5.0</google.sdk.version>
+    <google.sdk.version>1.2.0</google.sdk.version>
     <!--      0.4.0 ->  1.0.0-rc.1 -->
   </properties>
   <developers>
@@ -273,6 +271,11 @@
         <artifactId>ai-ssh-terminal-server-api</artifactId>
         <version>1.0-SNAPSHOT</version>
       </dependency>
+      <dependency>
+        <groupId>com.jasonlat.ai</groupId>
+        <artifactId>ai-ssh-terminal-server-case</artifactId>
+        <version>1.0-SNAPSHOT</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
   <build>
@@ -344,5 +347,6 @@
     <module>ai-ssh-terminal-server-infrastructure</module>
     <module>ai-ssh-terminal-server-types</module>
     <module>ai-ssh-terminal-server-api</module>
+    <module>ai-ssh-terminal-server-case</module>
   </modules>
 </project>

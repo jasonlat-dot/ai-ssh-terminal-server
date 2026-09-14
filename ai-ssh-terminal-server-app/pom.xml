@@ -72,12 +72,6 @@
         </dependency>
 
         <dependency>
-            <!-- 质谱 Ai -->
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-zhipuai</artifactId>
-        </dependency>
-
-        <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-mcp-client-webflux</artifactId>
         </dependency>
@@ -169,6 +163,10 @@
         <dependency>
             <groupId>com.jasonlat.ai</groupId>
             <artifactId>ai-ssh-terminal-server-infrastructure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.jasonlat.ai</groupId>
+            <artifactId>ai-ssh-terminal-server-case</artifactId>
         </dependency>
     </dependencies>
 

@@ -136,6 +136,8 @@ public class ChatModelNode extends AbstractAmorySupport {
         return OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
                 .defaultOptions(OpenAiChatOptions.builder()
+                        // 不要让 spring ai 内部调用工具 否则google adk 拿不到工具结果
+                        .internalToolExecutionEnabled(false)
                         .model(chatModelConfig.getModel())
                         .toolCallbacks(toolCallbacks)
                         .build())
