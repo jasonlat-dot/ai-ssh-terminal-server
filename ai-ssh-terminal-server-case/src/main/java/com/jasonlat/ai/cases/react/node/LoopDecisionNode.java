@@ -79,6 +79,7 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
         }
 
         // 6. 检查上一轮是否有工具调用（继续 ReAct 循环的条件）
+        //    如果上一轮有工具调用，说明 AI 还在通过工具完成任务，需要继续对话
         List<Map<String, Object>> currentToolCalls = dynamicContext.getCurrentToolCalls();
         if (currentToolCalls != null && !currentToolCalls.isEmpty()) {
             log.info("上一轮有 {} 个工具调用，继续 ReAct 循环", currentToolCalls.size());
@@ -106,14 +107,13 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
                 case IDLE_TIMEOUT:
                     dynamicContext.getResult().setIdleTimeout(true);
                     break;
-                case ERROR:
-                    break;
                 case MAX_STEPS:
                     dynamicContext.getResult().setMaxStepsReached(true);
                     break;
-                case MAX_TOOL_CALLS:
                 case COMPLETED:
                 case FINISH:
+                case ERROR:
+                case MAX_TOOL_CALLS:
                 default:
                     break;
             }

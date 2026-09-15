@@ -16,6 +16,14 @@ ai:
               api-key: sk-9015ff0e06e6798b520fe274dab46df42c854b4c5b88cf5743abe76727923c3d
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
+              proxy:
+                enabled: true
+                host: 127.0.0.1
+                port: 7890
+                non-proxy-hosts:
+                  - localhost
+                  - 127.0.0.1
+                  - "192.168.*"
             chat-model:
               model: gpt-5.5
             llm-agents:

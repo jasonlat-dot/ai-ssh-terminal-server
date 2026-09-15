@@ -5,6 +5,7 @@ import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
+import com.jasonlat.ai.trigger.api.dto.enums.ToolStatusEnum;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -142,6 +143,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
         }
 
         // 清除本轮工具调用标记，避免重复路由
+        // 注意：toolResults 保留，供 UserFeedbackNode 构建最终结果
         dynamicContext.getCurrentToolCalls().clear();
     }
 
@@ -152,6 +154,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
     /**
      * 手动执行工具调用
      * <p>当 ADK 未自动执行工具时，由 ToolCallNode 直接执行
+     * <p>适用于：自定义工具、MCP 工具、需要预处理/后处理的场景
      */
     private void handleManualToolExecution(DefaultReActFactory.DynamicContext dynamicContext,
                                            List<Map<String, Object>> toolCalls,
@@ -168,18 +171,18 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             }
 
             // 发送 tool_call executing 事件
-            sendToolCallEvent(emitter, toolCallId, toolName, "executing");
+            sendToolCallEvent(emitter, toolCallId, toolName, argsStr, ToolStatusEnum.RUNNING);
 
             // 执行工具
             String resultContent;
-            String status = "success";
+            ToolStatusEnum status = ToolStatusEnum.SUCCESS;
             try {
                 resultContent = executeTool(toolName, argsStr);
                 log.info("工具执行成功: name={}, result_length={}", toolName, resultContent.length());
             } catch (Exception e) {
                 log.error("工具执行失败: name={}", toolName, e);
                 resultContent = "Error executing tool '" + toolName + "': " + e.getMessage();
-                status = "error";
+                status = ToolStatusEnum.ERROR;
             }
 
             // 截断过长结果
@@ -187,7 +190,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
             // 存储工具结果到上下文
             Map<String, Object> toolResult = new HashMap<>();
-            toolResult.put("status", status);
+            toolResult.put("status", status.getCode());
             toolResult.put("id", toolCallId);
             toolResult.put("name", toolName);
             toolResult.put("content", resultContent);

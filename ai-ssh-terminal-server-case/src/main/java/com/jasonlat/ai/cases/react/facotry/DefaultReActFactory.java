@@ -2,6 +2,7 @@ package com.jasonlat.ai.cases.react.facotry;
 
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import lombok.*;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
@@ -141,6 +142,28 @@ public class DefaultReActFactory {
         private ReActResultDTO result;
 
         // ══════════════════════════════════════════════════════════
+        //  工具定义
+        // ══════════════════════════════════════════════════════════
+
+        /**
+         * 工具回调列表（从 ArmoryService 装配链路获取）
+         */
+        private ToolCallback[] toolCallbacks;
+
+        /**
+         * 是否使用 Anthropic 格式（tool_call_id vs tool_use_id）
+         */
+        private boolean useAnthropicFormat;
+
+        // ══════════════════════════════════════════════════════════
+        //  上下文记忆（Phase 1: 动态 Prompt 构建）
+        // ══════════════════════════════════════════════════════════
+
+        /** 最近执行的命令记录（用于注入到动态 Prompt 中） */
+        @Builder.Default
+        private List<String> recentCommands = new ArrayList<>();
+
+        // ══════════════════════════════════════════════════════════
         //  辅助方法
         // ══════════════════════════════════════════════════════════
 
@@ -184,8 +207,18 @@ public class DefaultReActFactory {
         }
 
         public void appendToolMessage(String toolCallId, String content) {
-            Map<String, Object> msg = Map.of("role", "tool", "tool_call_id", toolCallId, "content", content);
+            Map<String, Object> msg = useAnthropicFormat
+                    ? Map.of("type", "tool_result", "tool_use_id", toolCallId, "content", content)
+                    : Map.of("role", "tool", "tool_call_id", toolCallId, "content", content);
             messageHistory.add(msg);
+        }
+
+        public void addRecentCommand(String command) {
+            if (command == null || command.trim().isEmpty()) return;
+            recentCommands.add(command.trim());
+            while (recentCommands.size() > 20) {
+                recentCommands.remove(0);
+            }
         }
 
     }

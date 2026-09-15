@@ -5,13 +5,19 @@ import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.amory.node.utils.OpenAiProxyHttpClient;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.client.reactive.JdkClientHttpConnector;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.http.HttpClient;
 import java.util.List;
 
 /**
@@ -81,12 +87,34 @@ public class AiApiNode extends AbstractAmorySupport {
         return router(requestParameter, dynamicContext);
     }
 
-    private OpenAiApi buildOpenAiApi(AiAgentConfigTableVO.Module.AiApi aiApiConfig ) {
-        return OpenAiApi.builder()
+    private OpenAiApi buildOpenAiApi(AiAgentConfigTableVO.Module.AiApi aiApiConfig) {
+        OpenAiApi.Builder builder = OpenAiApi.builder()
                 .baseUrl(aiApiConfig.getBaseUrl())
                 .apiKey(aiApiConfig.getApiKey())
                 .completionsPath(aiApiConfig.getCompletionsPath())
-                .embeddingsPath(aiApiConfig.getEmbeddingsPath())
-                .build();
+                .embeddingsPath(aiApiConfig.getEmbeddingsPath());
+
+        AiAgentConfigTableVO.Module.AiApi.ProxySettings proxySettings =
+                aiApiConfig.getProxy();
+
+        if (proxySettings != null && proxySettings.isEnabled()) {
+            HttpClient proxyHttpClient =
+                    OpenAiProxyHttpClient.create(proxySettings);
+
+            builder.restClientBuilder(
+                    RestClient.builder()
+                            .requestFactory(
+                                    new JdkClientHttpRequestFactory(proxyHttpClient)
+                            )
+            );
+
+            builder.webClientBuilder(
+                    WebClient.builder()
+                            .clientConnector(
+                                    new JdkClientHttpConnector(proxyHttpClient)
+                            )
+            );
+        }
+        return builder.build();
     }
 }

@@ -5,6 +5,8 @@ import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActEventDTO;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
+import com.jasonlat.ai.trigger.api.dto.enums.ReActEventTypeEnum;
+import com.jasonlat.ai.trigger.api.dto.enums.ToolStatusEnum;
 import com.jasonlat.design.framework.tree.AbstractMultiThreadStrategyRouter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -119,7 +121,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     protected void sendTextEvent(ResponseBodyEmitter emitter, String content, String fullText) {
         try {
             ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("text");
+            event.setEvent(ReActEventTypeEnum.TEXT.getCode());
             event.setContent(content);
             event.setFullText(fullText);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
@@ -132,13 +134,13 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     /**
      * 发送工具调用事件
      */
-    protected void sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String status) {
+    protected void sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String commend, ToolStatusEnum status) {
         try {
             ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("tool_call");
+            event.setEvent(ReActEventTypeEnum.TOOL_CALL.getCode());
             event.setToolCallId(toolCallId);
             event.setToolName(toolName);
-            event.setStatus(status);
+            event.setStatus(status.getCode());
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("发送工具调用事件 {}", event);
         } catch (Exception e) {
@@ -149,13 +151,13 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     /**
      * 发送工具结果事件
      */
-    protected void sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, String status) {
+    protected void sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, ToolStatusEnum status) {
         try {
             ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("tool_result");
+            event.setEvent(ReActEventTypeEnum.TOOL_RESULT.getCode());
             event.setToolCallId(toolCallId);
             event.setContent(content);
-            event.setStatus(status);
+            event.setStatus(status.getCode());
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("发送工具结果事件 {}", event);
         } catch (Exception e) {
@@ -175,7 +177,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             stepInfo.setTotalToolCalls(totalToolCalls);
 
             ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("round_end");
+            event.setEvent(ReActEventTypeEnum.ROUND_END.getCode());
             event.setStepInfo(stepInfo);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("发送 round_end 事件 {}", event);
@@ -190,7 +192,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     protected void sendDoneEvent(ResponseBodyEmitter emitter, ReActResultDTO result) {
         try {
             ReActEventDTO event = new ReActEventDTO();
-            event.setEvent("done");
+            event.setEvent(ReActEventTypeEnum.DONE.getCode());
             event.setContent(objectMapper.writeValueAsString(result));
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("发送 done 事件 {}", event);

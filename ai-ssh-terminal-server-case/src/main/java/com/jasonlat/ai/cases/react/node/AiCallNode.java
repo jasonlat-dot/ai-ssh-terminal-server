@@ -12,10 +12,12 @@ import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
+import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
+import com.jasonlat.ai.trigger.api.dto.enums.ToolStatusEnum;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +53,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     @Resource
     private DefaultArmoryFactory defaultArmoryFactory;
 
+    @Resource
+    private IPromptService promptService;
+
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
         log.info("ReAct AiCallNode - 开始 AI 调用，第 {} 步", dynamicContext.getStep() + 1);
@@ -77,18 +82,22 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
         }
 
-        // 5. 构建用户消息
+        // 5. 构建动态上下文并注入用户消息
+        String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
+        log.debug("注入动态上下文后消息长度: {} -> {}", lastUserMessage.length(), enrichedMessage.length());
+
+        // 6. 构建用户消息
         Content userContent = Content.builder()
                 .role("user")
                 // todo 目前仅支持文本 后续可拓展图片等
-                .parts(Part.builder().text(lastUserMessage).build())
+                .parts(Part.builder().text(enrichedMessage).build())
                 .build();
 
-        // 6. 重置 ReAct 循环标志
+        // 7. 重置 ReAct 循环标志
         dynamicContext.setStopReason(null);
         dynamicContext.setErrorMessage(null);
 
-        // 7. 调用 ADK Runner 并处理事件流
+        // 8. 调用 ADK Runner 并处理事件流
         ResponseBodyEmitter emitter = dynamicContext.getEmitter();
         StringBuilder textAccumulator = new StringBuilder();
         int roundToolCalls = 0;
@@ -131,7 +140,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
                     dynamicContext.getCurrentToolCalls().add(toolCallInfo);
 
-                    sendToolCallEvent(emitter, toolCallId, toolName, "executing");
+                    sendToolCallEvent(emitter, toolCallId, toolName, argsJson, ToolStatusEnum.RUNNING);
 
                     roundToolCalls++;
                     dynamicContext.incrementTotalToolCalls();
@@ -148,7 +157,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     Map<String, Object> result = response.response().orElse(Map.of());
                     String output = String.valueOf(result.getOrDefault("output", ""));
                     boolean success = Boolean.TRUE.equals(result.get("success"));
-                    String status = success ? "success" : "error";
+                    ToolStatusEnum status = success ? ToolStatusEnum.SUCCESS : ToolStatusEnum.ERROR;
 
                     log.info("检测到真实工具结果: id={}, name={}, result={}", toolCallId, toolName, output);
 
@@ -156,19 +165,14 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     toolResultInfo.put("id", toolCallId);
                     toolResultInfo.put("name", toolName);
                     toolResultInfo.put("content", output);
-                    toolResultInfo.put("status", status);
+                    toolResultInfo.put("status", status.getCode());
 
                     dynamicContext.getCurrentToolResults().add(toolResultInfo);
 
-                    sendToolResultEvent(
-                            emitter,
-                            toolCallId,
-                            output,
-                            status
-                    );
+                    sendToolResultEvent(emitter, toolCallId, output, status);
                 }
 
-                // 7.1 处理文本内容（模型的响应文本，包括工具调用后的总结）
+                // 8.1 处理文本内容（模型的响应文本，包括工具调用后的总结）
                 String eventText = event.stringifyContent();
                 if (!eventText.isBlank()) {
                     textAccumulator.append(eventText);
@@ -176,7 +180,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     sendTextEvent(emitter, eventText, textAccumulator.toString());
                 }
 
-                // 7.3 记录 assistant 内容到消息历史
+                // 8.2 记录 assistant 内容到消息历史
                 if (event.content().isPresent()) {
                     Content content = event.content().get();
                     String role = content.role().orElse("assistant");
@@ -204,7 +208,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             }
         }
 
-        // 8. 更新步数和工具调用统计
+        // 9. 更新步数和工具调用统计
         dynamicContext.incrementStep();
         dynamicContext.getResult().setTotalSteps(dynamicContext.getStep());
         dynamicContext.getResult().setTotalToolCalls(
@@ -214,7 +218,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         log.info("ReAct AiCallNode - 第 {} 步完成，本轮工具调用 {} 次，文本长度 {}",
                 dynamicContext.getStep(), roundToolCalls, textAccumulator.length());
 
-        // 9. 发送本轮结束事件
+        // 10. 发送本轮结束事件
         sendRoundEndEvent(
                 dynamicContext.getEmitter(),
                 dynamicContext.getStep(),
@@ -223,12 +227,12 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 dynamicContext.getResult().getTotalToolCalls()
         );
 
-        // 10. 错误处理
+        // 11. 错误处理
         if (hasError) {
             dynamicContext.setStopReason(StopReasonEnum.ERROR.getCode());
         }
 
-        // 11. 路由
+        // 12. 路由
         return router(requestParameter, dynamicContext);
     }
 
@@ -283,6 +287,42 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
 
         return "";
+    }
+    // ═══════════════════════════════════════════════════════════════
+    //  Phase 1: 动态上下文注入
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 从工具结果中提取命令并记录到最近命令列表
+     */
+    private void recordExecutedCommand(DefaultReActFactory.DynamicContext dynamicContext, String toolResult) {
+        if (toolResult.length() > 1000) {
+            dynamicContext.addRecentCommand(truncate(toolResult, 80) + "...");
+        } else {
+            dynamicContext.addRecentCommand(toolResult);
+        }
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /**
+     * 构建注入了动态上下文的用户消息
+     * 委托 IPromptService 完成环境采集、里程碑获取、前缀构建
+     */
+    private String buildEnrichedMessage(String userMessage, DefaultReActFactory.DynamicContext dynamicContext) {
+        // 记录用户消息的里程碑
+        promptService.detectAndRecordMilestone(dynamicContext.getChatSessionId(), "user", userMessage);
+
+        // 委托领域服务构建富化消息
+        return promptService.buildEnrichedMessage(
+                userMessage,
+                dynamicContext.getChatSessionId(),
+                dynamicContext.getTerminalSessionId(),
+                dynamicContext.getRecentCommands()
+        );
     }
 
 }

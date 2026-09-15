@@ -67,7 +67,15 @@ public class AiAgentConfigTableVO {
             private String apiKey;
             private String completionsPath = "/v1/chat/completions";
             private String embeddingsPath = "/v1/embeddings";
+            private ProxySettings proxy = new ProxySettings();
 
+            @Data
+            public static class ProxySettings {
+                private boolean enabled;
+                private String host;
+                private int port;
+                private List<String> nonProxyHosts = new ArrayList<>();
+            }
         }
 
         @Data

@@ -35,6 +35,11 @@ public class ReActEventDTO {
     private String toolName;
 
     /**
+     * 执行的命令
+     */
+    private String commend;
+
+    /**
      * 工具调用状态（tool_call / tool_result 时）
      * - pending: 等待执行
      * - running: 执行中

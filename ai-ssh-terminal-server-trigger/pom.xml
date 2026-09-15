@@ -46,6 +46,10 @@
             <groupId>com.jasonlat.ai</groupId>
             <artifactId>ai-ssh-terminal-server-api</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.jasonlat.ai</groupId>
+            <artifactId>ai-ssh-terminal-server-case</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
