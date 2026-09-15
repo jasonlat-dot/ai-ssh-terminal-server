@@ -141,6 +141,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setToolCallId(toolCallId);
             event.setToolName(toolName);
             event.setStatus(status.getCode());
+            event.setCommend(commend);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("发送工具调用事件 {}", event);
         } catch (Exception e) {
