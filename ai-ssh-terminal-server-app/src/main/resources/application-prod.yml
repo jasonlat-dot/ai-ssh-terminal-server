@@ -48,3 +48,58 @@ logging:
   level:
     root: info
   config: classpath:logback-spring.xml
+
+# agent 配置
+ai:
+  ssh:
+    ## SSH Agent 命令安全策略。内置拒绝规则始终生效；这里只能追加业务规则。
+    command-safety:
+      max-command-length: 8192
+      additional-deny-rules: []
+  agent:
+    context:
+      # 上下文裁剪
+      reducer:
+        minimum-recent-messages: 5
+        long-assistant-threshold: 2048
+        error-keywords:
+          - error
+          - failed
+          - exception
+          - permission denied
+          - operation not permitted
+        important-path-suffixes:
+          - .conf
+          - .yml
+          - .yaml
+          - .properties
+      # 里程碑
+      milestone:
+        enabled: true
+        recent-limit: 10
+        max-content-length: 1024
+        rules:
+          - id: user-task-change
+            role: user
+            type: TASK_CHANGE
+            priority: 100
+            pattern: "不对|不是这样|改一下|换个思路|换种方式|错了"
+
+          - id: user-task-complete
+            role: user
+            type: TASK_COMPLETE
+            priority: 90
+            pattern: "完成了|搞定|结束|好了"
+
+          - id: user-correction
+            role: user
+            type: USER_CORRECTION
+            priority: 80
+            pattern: "不要|停止|别"
+
+          - id: tool-error
+            role: tool
+            type: ERROR
+            priority: 100
+            case-insensitive: true
+            pattern: "error|failed|exception|permission denied|not found|refused"
