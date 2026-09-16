@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.agent.service;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 提示词领域服务接口
@@ -35,6 +36,25 @@ public interface IPromptService {
      * @return 注入了动态上下文的用户消息
      */
     String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands);
+
+    /**
+     * 构建注入了动态上下文的用户消息
+     * <p>
+     * 内部完成以下工作：
+     * <br/>1. 从 SSH 终端采集环境信息（OS、用户、工作目录）
+     * <br/>2. 获取最近里程碑事件
+     * <br/>3. 构建 PromptContextVO 并生成消息前缀
+     * <br/>4. 将前缀与原始用户消息拼接
+     *
+     * @param userMessage        原始用户消息
+     * @param sessionId          对话会话 ID
+     * @param terminalSessionId  SSH 终端会话 ID（可为 null）
+     * @param recentCommands     最近执行的命令列表
+     * @param messageHistory     对话历史记录
+     * @return 注入了动态上下文的用户消息
+     */
+    String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory);
+
 
     /**
      * 清除指定会话的里程碑记录

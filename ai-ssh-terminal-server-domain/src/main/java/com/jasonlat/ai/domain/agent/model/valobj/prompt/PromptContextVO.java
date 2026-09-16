@@ -23,4 +23,14 @@ public class PromptContextVO {
      * 里程碑记录
      */
     private List<MilestoneVO> milestoneVOS;
+
+    /**
+     * 工具执行摘要
+     */
+    private String toolResultSummary;
+
+    /**
+     * 当前任务描述（首条用户消息）
+     */
+    private String taskDescription;
 }

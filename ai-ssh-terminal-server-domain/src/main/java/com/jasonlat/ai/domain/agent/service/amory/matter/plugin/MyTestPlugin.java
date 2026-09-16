@@ -75,7 +75,7 @@ public class MyTestPlugin extends BasePlugin {
     public Maybe<LlmResponse> afterModelCallback(CallbackContext callbackContext, LlmResponse llmResponse) {
         return Maybe.fromAction(() -> {
             String contentText = formatContent(llmResponse.content());
-            log.info("插件日志-🧠 大模型响应 | agent:{} | content:{} | turnComplete:{}",
+            log.debug("插件日志-🧠 大模型响应 | agent:{} | content:{} | turnComplete:{}",
                     callbackContext.agentName(),
                     contentText,
                     llmResponse.turnComplete().orElse(false));

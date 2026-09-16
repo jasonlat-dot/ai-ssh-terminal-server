@@ -125,7 +125,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setContent(content);
             event.setFullText(fullText);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送文本事件 {}", event);
+            log.debug("发送文本事件 {}", event);
         } catch (Exception e) {
             log.warn("发送文本事件失败: {}", e.getMessage());
         }
@@ -143,7 +143,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setStatus(status.getCode());
             event.setCommend(commend);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送工具调用事件 {}", event);
+            log.debug("发送工具调用事件 {}", event);
         } catch (Exception e) {
             log.warn("发送工具调用事件失败: {}", e.getMessage());
         }
@@ -160,7 +160,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setContent(content);
             event.setStatus(status.getCode());
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送工具结果事件 {}", event);
+            log.debug("发送工具结果事件 {}", event);
         } catch (Exception e) {
             log.warn("发送工具结果事件失败: {}", e.getMessage());
         }
@@ -196,7 +196,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setEvent(ReActEventTypeEnum.DONE.getCode());
             event.setContent(objectMapper.writeValueAsString(result));
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送 done 事件 {}", event);
+            log.debug("发送 done 事件 content: {}", objectMapper.writeValueAsString(event));
         } catch (Exception e) {
             log.warn("发送 done 事件失败: {}", e.getMessage());
         }

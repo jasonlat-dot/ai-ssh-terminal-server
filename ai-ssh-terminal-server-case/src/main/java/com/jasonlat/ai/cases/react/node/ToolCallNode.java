@@ -2,6 +2,8 @@ package com.jasonlat.ai.cases.react.node;
 
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
+import com.jasonlat.ai.domain.agent.service.IChatContextService;
+import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -51,6 +53,12 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private SshExecuteAdkTool sshExecuteAdkTool;
+
+    @Resource
+    private IPromptService promptService;
+
+    @Resource
+    private IChatContextService chatContextService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -131,17 +139,19 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
         for (Map<String, Object> toolCall : toolCalls) {
             String toolCallId = (String) toolCall.get("id");
             String toolName = (String) toolCall.get("name");
+            String args = (String) toolCall.get("args");
 
             Map<String, Object> matchedResult = resultMap.get(toolCallId);
             if (matchedResult != null) {
                 String content = (String) matchedResult.get("content");
-                log.info("ADK 工具结果: id={}, name={}, result_length={}",
-                        toolCallId, toolName, content != null ? content.length() : 0);
+                log.info("ADK 工具结果: id={}, toolName={},args:{} result_length={}",
+                        toolCallId, toolName, args, content != null ? content.length() : 0);
+
+                chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, content);
             } else {
                 log.warn("未找到工具结果: id={}, name={}", toolCallId, toolName);
             }
         }
-
         // 清除本轮工具调用标记，避免重复路由
         // 注意：toolResults 保留，供 UserFeedbackNode 构建最终结果
         dynamicContext.getCurrentToolCalls().clear();
@@ -201,6 +211,10 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
             // 发送 tool_result SSE 事件
             sendToolResultEvent(emitter, toolCallId, resultContent, status);
+
+            // 记录里程碑和工具执行摘要（供下一轮 Prompt 注入）
+            promptService.detectAndRecordMilestone(dynamicContext.getChatSessionId(), "tool", resultContent);
+            chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, resultContent);
         }
     }
 
