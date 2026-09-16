@@ -1,11 +1,15 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
+import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
+import com.jasonlat.ai.domain.agent.service.context.provider.ContextProviderOrder;
+import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 任务上下文提供者（order=20）
@@ -40,6 +44,9 @@ import java.util.Map;
 @Component
 public class TaskProvider implements ContextProvider {
 
+    @Resource
+    private ConversationContextStore conversationContextStore;
+
     @Override
     public String getName() {
         return "task";
@@ -47,7 +54,7 @@ public class TaskProvider implements ContextProvider {
 
     @Override
     public int getOrder() {
-        return 20;
+        return ContextProviderOrder.TASK;
     }
 
     @Override
@@ -74,6 +81,12 @@ public class TaskProvider implements ContextProvider {
          * 如果 messageHistory 为 null，或者没有找到 user 消息，
          * 则不会向 result 中添加 taskDescription。
          */
+        String originalTask = conversationContextStore.getOriginalTask(sessionId);
+        if (originalTask != null && !originalTask.isBlank()) {
+            result.put("taskDescription", originalTask);
+            return result;
+        }
+
         if (messageHistory != null) {
             messageHistory.stream()
                     // 只保留 role = user 的消息
@@ -85,7 +98,6 @@ public class TaskProvider implements ContextProvider {
                     // 找到后，将消息内容放入上下文结果中
                     .ifPresent(m -> result.put("taskDescription", m.get("content")));
         }
-
         return result;
     }
 }

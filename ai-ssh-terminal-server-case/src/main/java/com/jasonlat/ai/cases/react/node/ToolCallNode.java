@@ -1,5 +1,7 @@
 package com.jasonlat.ai.cases.react.node;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
@@ -124,7 +126,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
      */
     private void handleAdkToolResults(DefaultReActFactory.DynamicContext dynamicContext,
                                       List<Map<String, Object>> toolCalls,
-                                      List<Map<String, Object>> toolResults) {
+                                      List<Map<String, Object>> toolResults) throws JsonProcessingException {
 
         // ADK runner 内部已管理对话历史（自动执行工具 + 追加 FunctionResponse）
         // 这里只做日志记录，不重复追加消息到 history
@@ -139,15 +141,23 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
         for (Map<String, Object> toolCall : toolCalls) {
             String toolCallId = (String) toolCall.get("id");
             String toolName = (String) toolCall.get("name");
-            String args = (String) toolCall.get("args");
+            String argsJson = (String)toolCall.get("args");
+            // 把json字符串转为map
+            Map<String,Object> argsMap = objectMapper.readValue(argsJson, new TypeReference<Map<String,Object>>() {});
+            String command = (String) argsMap.get("command");
 
             Map<String, Object> matchedResult = resultMap.get(toolCallId);
             if (matchedResult != null) {
                 String content = (String) matchedResult.get("content");
                 log.info("ADK 工具结果: id={}, toolName={},args:{} result_length={}",
-                        toolCallId, toolName, args, content != null ? content.length() : 0);
+                        toolCallId, toolName, command, content != null ? content.length() : 0);
 
-                chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, content);
+                promptService.detectAndRecordMilestone(
+                        dynamicContext.getChatSessionId(),
+                        "tool",
+                        content
+                );
+                chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, command, content);
             } else {
                 log.warn("未找到工具结果: id={}, name={}", toolCallId, toolName);
             }
@@ -214,7 +224,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
             // 记录里程碑和工具执行摘要（供下一轮 Prompt 注入）
             promptService.detectAndRecordMilestone(dynamicContext.getChatSessionId(), "tool", resultContent);
-            chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, resultContent);
+            chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, argsStr, resultContent);
         }
     }
 

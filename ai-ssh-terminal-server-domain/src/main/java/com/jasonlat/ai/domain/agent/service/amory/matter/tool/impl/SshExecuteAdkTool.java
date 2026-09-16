@@ -4,18 +4,16 @@ package com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl;
 import com.google.adk.tools.Annotations;
 import com.google.adk.tools.FunctionTool;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.function.Consumer;
-import java.util.regex.Pattern;
 
 /**
  * SSH 命令执行 ADK 工具，为智能体提供在 SSH 终端执行命令的能力
@@ -28,6 +26,9 @@ public class SshExecuteAdkTool implements AdkToolProvider {
 
     @Resource
     private ISshTerminalService sshTerminalService;
+
+    @Resource
+    private CommandSafetyPolicy commandSafetyPolicy;
 
     // 当前线程的终端会话 ID（使用 InheritableThreadLocal 支持子线程继承）
     private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
@@ -56,22 +57,25 @@ public class SshExecuteAdkTool implements AdkToolProvider {
         return List.of(FunctionTool.create(this, "executeCommand"));
     }
 
-    // 危险命令模式（需要用户确认），这些命令，也可以设计成配置来使用
-    private static final Pattern DANGEROUS_PATTERN = Pattern.compile(
-            "\\b(rm\\s+-rf\\s+/|dd\\s+if=|mkfs\\.|:\\(\\)\\s*\\{|>\\s*/dev/sd|chmod\\s+-R\\s+777\\s+/)\\b",
-            Pattern.CASE_INSENSITIVE
-    );
-
     public Map<String, Object> executeCommand(
             @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
             String command) {
 
-        // 危险命令检测
-        if (DANGEROUS_PATTERN.matcher(command).find()) {
+        // AI 工具命令的统一安全入口：任何命令都必须先通过后端策略，不能依赖模型自行判断。
+        String safeCommand = command == null ? "" : command;
+        CommandSafetyDecision safetyDecision = commandSafetyPolicy.evaluate(safeCommand);
+        if (!safetyDecision.isAllowed()) {
+            // 返回结构化 ruleId/riskLevel，便于工具结果、日志和前端使用同一个拦截原因。
+            log.warn("SSH 命令被安全策略拦截 ruleId={}, reason={}, command={}",
+                    safetyDecision.getRuleId(), safetyDecision.getReason(), safeCommand);
             return Map.of(
                     "success", false,
-                    "output", "⚠️ 危险命令被拦截: " + command + "\n该命令可能导致系统损坏或数据丢失。如确需执行，请手动在终端操作。",
-                    "command", command
+                    "blocked", true,
+                    "ruleId", safetyDecision.getRuleId(),
+                    "riskLevel", "DENIED",
+                    "output", "⚠️ 命令已被安全策略拦截：" + safetyDecision.getReason()
+                            + "\n如确认必须执行，请登录终端后人工操作。",
+                    "command", safeCommand
             );
         }
 
@@ -83,14 +87,14 @@ public class SshExecuteAdkTool implements AdkToolProvider {
             log.info("[executeCommand] ThreadLocal 为空，回退到会话级变量: terminalSessionId={}", terminalSessionId);
         }
         log.info("[executeCommand] thread={}, terminalSessionId={}, command={}",
-                Thread.currentThread().getName(), terminalSessionId, command);
+                Thread.currentThread().getName(), terminalSessionId, safeCommand);
 
         if (terminalSessionId == null || terminalSessionId.isEmpty()) {
             log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
             return Map.of(
                     "success", false,
                     "output", "未绑定 SSH 终端会话。请先打开 SSH 终端连接。",
-                    "command", command
+                    "command", safeCommand
             );
         }
 
@@ -99,15 +103,15 @@ public class SshExecuteAdkTool implements AdkToolProvider {
             return Map.of(
                     "success", false,
                     "output", "SSH 终端会话不存在或已关闭: " + terminalSessionId,
-                    "command", command
+                    "command", safeCommand
             );
         }
 
         try {
-            log.info("SSH 执行命令: session={}, command={}", terminalSessionId, command);
+            log.info("SSH 执行命令: session={}, command={}", terminalSessionId, safeCommand);
 
             // 执行命令
-            String output = sshTerminalService.executeCommand(terminalSessionId, command);
+            String output = sshTerminalService.executeCommand(terminalSessionId, safeCommand);
 
             log.info("SSH 命令执行完成: outputLength={}, output={}",
                     output.length(), output.length() > 300 ? output.substring(0, 300) + "..." : output);
@@ -116,7 +120,7 @@ public class SshExecuteAdkTool implements AdkToolProvider {
             boolean success = isExecutionSuccessful(output);
 
             Map<String, Object> result = new java.util.HashMap<>();
-            result.put("command", command);
+            result.put("command", safeCommand);
             result.put("output", output);
             result.put("success", success);
 
@@ -126,11 +130,11 @@ public class SshExecuteAdkTool implements AdkToolProvider {
 
             return result;
         } catch (Exception e) {
-            log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, command, e);
+            log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, safeCommand, e);
             return Map.of(
                     "success", false,
                     "output", "命令执行异常: " + e.getMessage(),
-                    "command", command
+                    "command", safeCommand
             );
         }
 

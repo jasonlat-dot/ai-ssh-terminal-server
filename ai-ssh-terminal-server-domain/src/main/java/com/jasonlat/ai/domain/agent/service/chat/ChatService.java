@@ -44,8 +44,8 @@ public class ChatService implements IChatService {
         // 获取智能体注册信息
         String storeSessionId = sessionCache.get(userId, sessionId, agentId);
         if (StringUtils.isBlank(storeSessionId)) {
-            // 兜底处理 - 删除ADK会话
-            armoryFactory.deleteAdkSession(agentId, userId, sessionId);
+            // 兜底处理 - 删除session缓存
+            sessionCache.invalidate(agentId, userId, sessionId);
             return false;
         }
         return true;

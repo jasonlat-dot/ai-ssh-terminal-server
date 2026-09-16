@@ -1,7 +1,9 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
+import com.jasonlat.ai.domain.agent.model.valobj.properties.AgentContextProperties;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
+import com.jasonlat.ai.domain.agent.service.context.provider.ContextProviderOrder;
 import com.jasonlat.ai.domain.agent.service.prompt.dynamic.MilestoneTracker;
 import org.springframework.stereotype.Component;
 
@@ -32,10 +34,10 @@ import java.util.Map;
  *   ============ 下一轮 provide() 时 ============
  *                              |
  *                              v
- *                     MilestoneTracker.getRecent(sessionId, 10)
+ *                     MilestoneTracker.getRecent(sessionId, recent-limit)
  *                              |
  *                              v
- *                     Map{ milestoneVOS: 最近10条里程碑 }
+ *                     Map{ milestoneVOS: 配置指定数量的最近里程碑 }
  *                              |
  *                              v
  *              消息前缀 [关键事件] 段落：- [ERROR] xxx
@@ -47,6 +49,9 @@ public class MilestoneProvider implements ContextProvider {
     @Resource
     private MilestoneTracker milestoneTracker;
 
+    @Resource
+    private AgentContextProperties contextProperties;
+
     @Override
     public String getName() {
         return "milestoneVO";
@@ -54,19 +59,20 @@ public class MilestoneProvider implements ContextProvider {
 
     @Override
     public int getOrder() {
-        return 30;
+        return ContextProviderOrder.MILESTONE;
     }
 
     @Override
     public boolean enabled() {
-        return true;
+        return contextProperties.getMilestone().isEnabled();
     }
 
     @Override
     public Map<String, Object> provide(String sessionId, String userId, String terminalSessionId, List<Map<String, Object>> messageHistory) {
         Map<String, Object> result = new HashMap<>();
         // 获取指定会话最近的 N 条里程碑事件。
-        List<MilestoneVO> milestoneVOS = milestoneTracker.getRecent(sessionId, 10);
+        int recentLimit = Math.max(0, contextProperties.getMilestone().getRecentLimit());
+        List<MilestoneVO> milestoneVOS = milestoneTracker.getRecent(sessionId, recentLimit);
         result.put("milestoneVOS", milestoneVOS);
         return result;
     }

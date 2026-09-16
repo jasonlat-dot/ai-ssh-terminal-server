@@ -2,9 +2,11 @@ package com.jasonlat.ai.cases.react.node;
 
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
+import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.design.framework.tree.StrategyHandler;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -25,6 +27,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 @Component("reactRootNode")
 public class RootNode extends AbstractAIAgentReActSupport {
+
+    @Resource
+    private ConversationContextStore conversationContextStore;
 
     private static final int DEFAULT_MAX_STEPS = 50;
     private static final int DEFAULT_MAX_TOOL_CALLS = 200;
@@ -53,11 +58,14 @@ public class RootNode extends AbstractAIAgentReActSupport {
         }
 
         // 3. 初始化上下文
+        ConversationContextStore.ConversationContextSnapshot snapshot = conversationContextStore.initializeAndLoad(sessionId, message);
+
         dynamicContext.setChatSessionId(sessionId);
         dynamicContext.setUserId(userId);
         dynamicContext.setAgentId(agentId);
         dynamicContext.setTerminalSessionId(terminalSessionId);
-        dynamicContext.setMessageHistory(new java.util.ArrayList<>());
+        dynamicContext.setMessageHistory(snapshot.getMessageHistory());
+        dynamicContext.setRecentCommands(snapshot.getRecentCommands());
         dynamicContext.setCurrentToolCalls(new java.util.ArrayList<>());
         dynamicContext.setCurrentToolResults(new java.util.ArrayList<>());
         dynamicContext.setCurrentStep(new AtomicInteger(0));

@@ -1,120 +1,219 @@
 package com.jasonlat.ai.domain.agent.service.context.reducer.impl;
 
+import com.jasonlat.ai.domain.agent.model.valobj.properties.AgentContextProperties;
 import com.jasonlat.ai.domain.agent.service.context.reducer.AbstractReducerSupport;
-import com.jasonlat.ai.domain.agent.service.context.reducer.MessageReducer;
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import lombok.Getter;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 /**
- * 优先级裁剪器
- * <p>
- * 功能：按消息内容推断优先级，预算不足时优先丢弃"不重要"的消息，
- * 保证错误信息、关键指令不被裁掉。重要性保障。
- * <p>
- * 优先级规则（inferPriority）：
- * <pre>
- *   CRITICAL : tool 结果含 error/failed/exception/permission denied
- *              （错误必须让模型看到，否则会在同一个坑反复失败）
- *   HIGH     : system 消息；user 消息含 / 、.conf、.yml、.properties
- *              （通常是文件路径/配置类关键指令）
- *   LOW      : assistant 回复 > 5000 字符（多为冗长输出，可丢）
- *   MEDIUM   : 其余消息
- * </pre>
- * 运行过程：
- * <pre>
- *   messages --> 逐条推断优先级 PrioritizedMessage(msg, priority)
- *        |
- *        v
- *   保底：先无条件保留最近 2 条
- *        |
- *        v
- *   从旧到新（倒数第3条 -> 第1条）尝试回填：
- *        usedTokens + msgTokens <= 预算 ? 加入头部 : 丢弃
- *        |
- *        v
- *   返回 kept（保持时间正序）
- * </pre>
+ * 基于消息优先级和时间位置的上下文裁剪器。
  *
+ * <p>裁剪规则：</p>
+ * <ol>
+ *     <li>最近 N 条消息无条件保留，N 来自 minimum-recent-messages。</li>
+ *     <li>剩余消息按照优先级从高到低选择。</li>
+ *     <li>相同优先级下，优先保留较新的消息。</li>
+ *     <li>选择完成后恢复消息原始时间顺序。</li>
+ * </ol>
+ *
+ * <p>优先级：</p>
+ * <ul>
+ *     <li>CRITICAL：工具执行错误</li>
+ *     <li>HIGH：系统消息、包含配置文件或路径的用户消息</li>
+ *     <li>MEDIUM：普通消息</li>
+ *     <li>LOW：过长的模型回复</li>
+ * </ul>
  */
 @Component
 public class PriorityReducer extends AbstractReducerSupport {
 
+    private final AgentContextProperties.Reducer properties;
+
+    public PriorityReducer(AgentContextProperties contextProperties) {
+        this.properties = contextProperties.getReducer();
+    }
+
     @Override
     public List<Map<String, Object>> reduce(List<Map<String, Object>> messages, int tokenBudget) {
-        // 为每条消息推断优先级
-        List<PrioritizedMessage> prioritized = messages.stream()
-                // 过滤掉 messages 中为 null 的元素
-                .filter(Objects::nonNull)
-                .map(m -> new PrioritizedMessage(m, inferPriority(m)))
-                .collect(Collectors.toList());
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
 
-        // 至少保留最近 2 条
-        int minKeep = Math.min(2, prioritized.size());
-        List<PrioritizedMessage> kept = new ArrayList<>(prioritized.subList(
-            prioritized.size() - minKeep, prioritized.size()));
+        int effectiveBudget = Math.max(tokenBudget, 0);
 
-        // 从低优先级开始丢弃，直到满足 token 预算
-        int usedTokens = estimateTokens(kept);
-        for (int i = prioritized.size() - minKeep - 1; i >= 0; i--) {
-            PrioritizedMessage pm = prioritized.get(i);
-            int msgTokens = estimateToken(pm.getMessage());
-            if (usedTokens + msgTokens <= tokenBudget) {
-                kept.add(0, pm);
-                usedTokens += msgTokens;
+        List<PrioritizedMessage> prioritizedMessages = buildPrioritizedMessages(messages);
+
+        if (prioritizedMessages.isEmpty()) {
+            return List.of();
+        }
+
+        /*
+         * 保存被选中的原始消息下标。
+         * 使用下标而不是 Map.equals/indexOf，避免内容相同的消息定位错误。
+         */
+        Set<Integer> selectedIndexes = new HashSet<>();
+        int usedTokens = 0;
+        /*
+         * 第一步：保留最近 N 条消息。
+         *
+         * 最新的用户输入和模型回复是继续当前对话的必要条件，因此即使它们本身
+         * 超出 tokenBudget，也不会直接删除。超长消息应当在进入裁剪器之前做摘要。
+         */
+        int minimumRecentMessages = Math.max(0, properties.getMinimumRecentMessages());
+        int recentStart = Math.max(0, prioritizedMessages.size() - minimumRecentMessages);
+
+        for (int i = recentStart; i < prioritizedMessages.size(); i++) {
+            PrioritizedMessage recentMessage = prioritizedMessages.get(i);
+            if (selectedIndexes.add(recentMessage.index())) {
+                usedTokens += recentMessage.estimatedTokens();
             }
         }
 
-        return kept.stream().map(PrioritizedMessage::getMessage).collect(Collectors.toList());
+        /*
+         * 第二步：取出剩余候选消息。
+         */
+        List<PrioritizedMessage> candidates = new ArrayList<>();
+
+        for (PrioritizedMessage prioritizedMessage : prioritizedMessages) {
+            if (!selectedIndexes.contains(prioritizedMessage.index())) {
+                candidates.add(prioritizedMessage);
+            }
+        }
+
+        /*
+         * 第三步：按照优先级选择。
+         *
+         * 优先级高的在前；
+         * 优先级相同时，下标大的消息更新，因此优先保留。
+         */
+        candidates.sort(
+                Comparator
+                        .comparingInt(
+                                (PrioritizedMessage message) ->
+                                        message.priority().getWeight()
+                        )
+                        .reversed()
+                        .thenComparing(
+                                Comparator.comparingInt(
+                                        PrioritizedMessage::index
+                                ).reversed()
+                        )
+        );
+
+        /*
+         * 第四步：依次把候选消息放入剩余 token 预算。
+         */
+        for (PrioritizedMessage candidate : candidates) {
+            int candidateTokens = candidate.estimatedTokens();
+            if (usedTokens + candidateTokens > effectiveBudget) {
+                continue;
+            }
+            if (selectedIndexes.add(candidate.index())) {
+                usedTokens += candidateTokens;
+            }
+        }
+
+        /*
+         * 第五步：恢复原始时间顺序。
+         *
+         * 模型看到的历史必须是旧消息在前、新消息在后，不能按照优先级顺序发送。
+         */
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (PrioritizedMessage prioritizedMessage : prioritizedMessages) {
+            if (selectedIndexes.contains(prioritizedMessage.index())) {
+                result.add(prioritizedMessage.message());
+            }
+        }
+        return result;
     }
 
-    private Priority inferPriority(Map<String, Object> message) {
-
-        String role = (String) message.get("role");
-        String content = String.valueOf(message.get("content"));
-
-        if ("tool".equals(role) && containsAny(content, "error", "failed", "exception", "permission denied")) {
-            return Priority.CRITICAL;
+    /**
+     * 为消息增加原始下标、优先级及预估 token 数量。
+     */
+    private List<PrioritizedMessage> buildPrioritizedMessages(List<Map<String, Object>> messages) {
+        List<PrioritizedMessage> result = new ArrayList<>(messages.size());
+        for (int index = 0; index < messages.size(); index++) {
+            Map<String, Object> message = messages.get(index);
+            if (message == null) {
+                continue;
+            }
+            result.add(new PrioritizedMessage(index, message, inferPriority(message), estimateToken(message)));
         }
-        if ("user".equals(role) && containsAny(content, "/", ".conf", ".yml", ".properties")) {
-            return Priority.HIGH;
+        return result;
+    }
+
+    /**
+     * 根据角色和消息内容推断优先级。
+     */
+    private MessagePriority inferPriority(Map<String, Object> message) {
+        String role = Objects.toString(message.get("role"), "");
+        String content = Objects.toString(message.get("content"), "");
+
+        if ("tool".equals(role) && containsAny(content, properties.getErrorKeywords())) {
+            return MessagePriority.CRITICAL;
         }
+
         if ("system".equals(role)) {
-            return Priority.HIGH;
+            return MessagePriority.HIGH;
         }
-        if ("assistant".equals(role) && content.length() > 5000) {
-            return Priority.LOW;
+
+        if ("user".equals(role) && containsAny(content, properties.getImportantPathSuffixes())) {
+            return MessagePriority.HIGH;
         }
-        return Priority.MEDIUM;
+
+        int longAssistantThreshold = Math.max(0, properties.getLongAssistantThreshold());
+        if (("assistant".equals(role) || "model".equals(role))
+                && content.length() > longAssistantThreshold) {
+            return MessagePriority.LOW;
+        }
+
+        return MessagePriority.MEDIUM;
     }
 
-    private boolean containsAny(String content, String... keywords) {
-        if (content == null) return false;
-        String lower = content.toLowerCase();
+    private boolean containsAny(String content, List<String> keywords) {
+        if (content == null || content.isBlank() || keywords == null || keywords.isEmpty()) {
+            return false;
+        }
+        String normalizedContent = content.toLowerCase(Locale.ROOT);
         for (String keyword : keywords) {
-            if (lower.contains(keyword)) return true;
+            if (keyword != null
+                    && !keyword.isBlank()
+                    && normalizedContent.contains(keyword.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
         }
         return false;
     }
 
+    @Getter
+    private enum MessagePriority {
+        CRITICAL(400),
+        HIGH(300),
+        MEDIUM(200),
+        LOW(100);
 
-    private int estimateTokens(List<PrioritizedMessage> messages) {
-        return messages.stream().mapToInt(m -> estimateToken(m.getMessage())).sum();
+        private final int weight;
+
+        MessagePriority(int weight) {
+            this.weight = weight;
+        }
+
     }
 
-    @Data
-    @AllArgsConstructor
-    private static class PrioritizedMessage {
-        private Map<String, Object> message;
-        private Priority priority;
+    /**
+     * @param index 消息在原始列表中的位置。
+     */
+    private record PrioritizedMessage(int index, Map<String, Object> message,
+                                      MessagePriority priority, int estimatedTokens) {
+
     }
-
-    enum Priority { CRITICAL, HIGH, MEDIUM, LOW }
-
 }

@@ -3,9 +3,11 @@ package com.jasonlat.ai.cases.react.node;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
+import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.design.framework.tree.StrategyHandler;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
@@ -27,6 +29,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 @Slf4j
 @Component("reactUserFeedbackNode")
 public class UserFeedbackNode extends AbstractAIAgentReActSupport {
+
+    @Resource
+    private ConversationContextStore conversationContextStore;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -58,7 +63,9 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
             }
             throw e;
         } finally {
-            // 4. 清理上下文
+            // 4. 将本次 ReAct 执行过程中产生的历史消息和命令回写到会话状态。
+            persistConversationContext(dynamicContext);
+            // 5. 清理上下文
             cleanup(dynamicContext);
         }
     }
@@ -96,6 +103,45 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
                 .toolCalls(dynamicContext.getCurrentToolCalls())
                 .toolResults(dynamicContext.getCurrentToolResults())
                 .build();
+    }
+
+    /**
+     * 将本次 ReAct 执行过程中产生的历史消息和命令回写到会话状态。
+     */
+    private void persistConversationContext(DefaultReActFactory.DynamicContext dynamicContext) {
+
+        String sessionId = dynamicContext.getChatSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+
+        try {
+            /*
+             * 将本次 ReAct 执行过程中产生的历史和命令回写到会话状态。
+             */
+            conversationContextStore.saveExecutionState(
+                    sessionId,
+                    dynamicContext.getMessageHistory(),
+                    dynamicContext.getRecentCommands()
+            );
+
+            log.debug(
+                    "ReAct 会话上下文已保存 sessionId={}, historySize={}, commandSize={}",
+                    sessionId,
+                    dynamicContext.getMessageHistory() == null
+                            ? 0
+                            : dynamicContext.getMessageHistory().size(),
+                    dynamicContext.getRecentCommands() == null
+                            ? 0
+                            : dynamicContext.getRecentCommands().size()
+            );
+        } catch (Exception e) {
+            log.warn(
+                    "ReAct 会话上下文保存失败 sessionId={}",
+                    sessionId,
+                    e
+            );
+        }
     }
 
     /**

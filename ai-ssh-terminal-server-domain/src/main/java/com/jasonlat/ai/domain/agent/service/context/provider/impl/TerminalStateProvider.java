@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
+import com.jasonlat.ai.domain.agent.service.context.provider.ContextProviderOrder;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.types.utils.StringUtils;
 import org.slf4j.Logger;
@@ -55,7 +56,7 @@ public class TerminalStateProvider implements ContextProvider {
 
     @Override
     public int getOrder() {
-        return 10;
+        return ContextProviderOrder.TERMINAL;
     }
 
     @Override

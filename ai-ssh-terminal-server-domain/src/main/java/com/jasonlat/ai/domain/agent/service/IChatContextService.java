@@ -51,7 +51,8 @@ public interface IChatContextService {
      *
      * @param sessionId 对话会话 ID
      * @param toolName  工具名称
+     * @param args  参数
      * @param result    执行结果
      */
-    void pushToolResult(String sessionId, String toolName, String result);
+    void pushToolResult(String sessionId, String toolName, String args, String result);
 }

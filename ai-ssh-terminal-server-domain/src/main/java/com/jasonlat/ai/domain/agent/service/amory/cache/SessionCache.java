@@ -8,6 +8,7 @@ import com.google.adk.sessions.BaseSessionService;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.cache.model.SessionData;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,9 @@ public class SessionCache {
 
     @Resource
     private  DefaultArmoryFactory armoryFactory;
+
+    @Resource
+    private ConversationContextStore conversationContextStore;
 
     private static final Logger log = LoggerFactory.getLogger(SessionCache.class);
     // 核心：本地缓存，支持每个key自定义过期
@@ -51,6 +55,7 @@ public class SessionCache {
                         log.info("session 过期, key: {}, value: {}", key, value);
                         // 清理谷歌ADK的 session
                         if (value == null) return;
+                        conversationContextStore.clearSession(value.getSessionId());
                         armoryFactory.deleteAdkSession(value.getAgentId(), value.getUserId(), value.getSessionId());
                     }
                 })
@@ -74,8 +79,8 @@ public class SessionCache {
     public void invalidate(String agentId, String userId, String sessionId) {
         String key = userId + "_" + agentId + "_" + sessionId;
         sessionCache.invalidate(key);
+        conversationContextStore.clearSession(sessionId);
         // 删除 谷歌ADK session 缓存
         armoryFactory.deleteAdkSession(agentId, userId, sessionId);
     }
-
 }

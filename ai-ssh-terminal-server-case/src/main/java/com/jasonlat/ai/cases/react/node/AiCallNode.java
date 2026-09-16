@@ -160,7 +160,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
                     Map<String, Object> result = response.response().orElse(Map.of());
                     String output = String.valueOf(result.getOrDefault("output", ""));
-                    String args = String.valueOf(result.getOrDefault("command", ""));
+                    String command = String.valueOf(result.getOrDefault("command", ""));
                     boolean success = Boolean.TRUE.equals(result.get("success"));
                     ToolStatusEnum status = success ? ToolStatusEnum.SUCCESS : ToolStatusEnum.ERROR;
 
@@ -170,7 +170,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     toolResultInfo.put("id", toolCallId);
                     toolResultInfo.put("name", toolName);
                     toolResultInfo.put("content", output);
-                    toolResultInfo.put("args", args);
+                    toolResultInfo.put("args", command);
                     toolResultInfo.put("status", status.getCode());
 
                     dynamicContext.getCurrentToolResults().add(toolResultInfo);
@@ -178,32 +178,34 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     sendToolResultEvent(emitter, toolCallId, output, status);
 
                     // 记录执行的命令到上下文
-                    if ("executeCommand".equals(toolName) && !output.isEmpty()) {
-                        recordExecutedCommand(dynamicContext, output);
+                    if ("executeCommand".equals(toolName) && command != null && !command.isBlank()) {
+                        dynamicContext.addRecentCommand(command);
                     }
                 }
 
-                // 10.1 处理文本内容（模型的响应文本，包括工具调用后的总结）
-                String eventText = event.stringifyContent();
-                if (!eventText.isBlank()) {
-                    textAccumulator.append(eventText);
-                    dynamicContext.setAssistantContent(textAccumulator);
-                    sendTextEvent(emitter, eventText, textAccumulator.toString());
-                }
-
-                // 10.2 记录 assistant 内容到消息历史
+                // 10 处理文本内容（模型的响应文本，包括工具调用后的总结）
+                // 只提取模型输出的文本 Part
                 if (event.content().isPresent()) {
                     Content content = event.content().get();
-                    String role = content.role().orElse("assistant");
-                    if ("assistant".equals(role)) {
-                        String text = event.stringifyContent();
-                        if (!text.isBlank()) {
-                            dynamicContext.appendAssistantMessage(text);
+                    String role = content.role().orElse("");
+                    if ("model".equals(role) || "assistant".equals(role)) {
+                        StringBuilder eventTextBuilder = new StringBuilder();
+                        for (Part part : content.parts().orElse(List.of())) {
+                            part.text().ifPresent(eventTextBuilder::append);
+                        }
+                        String eventText = eventTextBuilder.toString();
+                        if (!eventText.isBlank()) {
+                            textAccumulator.append(eventText);
+                            sendTextEvent(emitter, eventText, textAccumulator.toString());
                         }
                     }
                 }
             }
 
+            // 整轮 AI 调用结束后，只记录一条完整 Assistant 消息
+            if (!textAccumulator.isEmpty()) {
+                dynamicContext.appendAssistantMessage(textAccumulator.toString());
+            }
             log.info("ADK Runner 事件流处理完成，共 {} 个事件", eventCount);
 
         } catch (Exception e) {
@@ -302,23 +304,6 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     // ═══════════════════════════════════════════════════════════════
     //  Phase 1: 动态上下文注入
     // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * 从工具结果中提取命令并记录到最近命令列表
-     */
-    private void recordExecutedCommand(DefaultReActFactory.DynamicContext dynamicContext, String toolResult) {
-        if (toolResult.length() > 1000) {
-            dynamicContext.addRecentCommand(truncate(toolResult, 80) + "...");
-        } else {
-            dynamicContext.addRecentCommand(toolResult);
-        }
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() > max ? s.substring(0, max) : s;
-    }
-
     /**
      * 构建注入了动态上下文的用户消息
      * 委托 IPromptService 完成环境采集、里程碑获取、前缀构建

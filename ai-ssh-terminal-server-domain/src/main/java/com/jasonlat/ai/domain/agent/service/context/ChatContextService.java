@@ -33,7 +33,7 @@ import java.util.Map;
  *        | (1) trimHistory(history, 8000)
  *        |        |
  *        |        v
- *        |     HybridReducer = PriorityReducer ∩ SlidingWindowReducer + 保底2条
+ *        |     HybridReducer = PriorityReducer ∩ SlidingWindowReducer + 配置化保底条数
  *        |        |
  *        |        v
  *        |     裁剪后的历史回写 DynamicContext
@@ -121,8 +121,8 @@ public class ChatContextService implements IChatContextService {
     }
     
     @Override
-    public void pushToolResult(String sessionId, String toolName, String result) {
-        toolResultProvider.pushResult(sessionId, toolName, result);
+    public void pushToolResult(String sessionId, String toolName,String args, String result) {
+        toolResultProvider.pushResult(sessionId, toolName, args, result);
     }
 
 }
