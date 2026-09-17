@@ -2,6 +2,7 @@ package com.jasonlat.ai.cases.react.node;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
@@ -24,30 +25,12 @@ import java.util.Map;
  * ReAct 工具执行节点
  *
  * <p>职责：
- * <br/>1. 从上下文中获取 AI 返回的工具调用列表（由 AiCallNode 设置）
- * <br/>2. 检查工具是否已被 ADK 自动执行（FunctionResponse 已存在）
- * <br/>3. 如果未执行，则手动执行工具
- * <br/>4. 将工具结果追加到消息历史
- * <br/>5. 发送 tool_call / tool_result SSE 事件
- * <br/>6. 路由：回到 AiCallNode 继续对话 或 到 LoopDecisionNode 完成
+ * 1. 从上下文中获取 AI 返回的工具调用列表（由 AiCallNode 设置）
+ * 2. 检查工具是否已被 ADK 自动执行（FunctionResponse 已存在）
+ * 3. 整理自动执行的工具事件并记录补偿日志
+ * 4. 路由：到 LoopDecisionNode 检查终止条件
  *
- * <p>工具执行模式：
- * <ul>
- *   <li>ADK 自动执行模式：ADK runner.runAsync() 内部自动执行工具，
- *       ToolCallNode 仅处理已有结果并路由</li>
- *   <li>手动执行模式（未来扩展）：ToolCallNode 直接调用
- *       SshExecuteAdkTool.executeCommand() 等工具方法执行</li>
- * </ul>
- *
- * <p>ReAct 循环链路：
- * <pre>
- * RootNode
- *   └→ AiCallNode（调用模型，解析 FunctionCalls）
- *         └→ ToolCallNode（处理工具结果）
- *               └→ [有工具结果] 回到 AiCallNode 继续对话
- *               └→ [无工具调用] LoopDecisionNode
- *                     └→ UserFeedbackNode
- * </pre>
+ * <p>注意：在当前 ADK 自动执行模式下，此节点不承担真实的循环发起职责。
  */
 @Slf4j
 @Component("reactToolCallNode")
@@ -82,7 +65,7 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
         // 这种场景就是用户的配置的 LLM 质量不高的时候，一种鲁棒设计，尽量的增强可靠性
         if (adkAutoExecuted) {
             // ─── ADK 自动执行模式 ───
-            log.info("工具已被 ADK 自动执行，处理已有结果");
+            log.info("工具已被 ADK 自动执行，记录执行痕迹");
             handleAdkToolResults(dynamicContext, toolCalls, toolResults);
         } else {
             // ─── 手动执行模式 ───
@@ -96,23 +79,9 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
     @Override
     public StrategyHandler<ChatRequest, DefaultReActFactory.DynamicContext, ReActResultDTO> get(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
-        List<Map<String, Object>> toolCalls = dynamicContext.getCurrentToolCalls();
 
-        // 有工具调用（已执行完成）→ 回到 AiCallNode 继续对话
-        if (toolCalls != null && !toolCalls.isEmpty()) {
-            // 检查是否达到最大步数
-            if (dynamicContext.getStep() >= dynamicContext.getMaxSteps()) {
-                log.info("达到最大步数 {}，路由到 LoopDecisionNode", dynamicContext.getMaxSteps());
-                dynamicContext.setStopReason("max_steps");
-                return getBean("reactLoopDecisionNode");
-            }
-
-            log.info("工具调用处理完成，回到 AiCallNode 继续对话");
-            return getBean("reactAiCallNode");
-        }
-
-        // 无工具调用 → 路由到 LoopDecisionNode
-        log.info("无工具调用，路由到 LoopDecisionNode");
+        // 在 ADK 自动执行主循环架构下，ToolCallNode 只是观测和整理节点，直接路由到 LoopDecisionNode 判断收尾条件。
+        log.info("工具观测节点处理完成，路由到 LoopDecisionNode 检查终止条件");
         return getBean("reactLoopDecisionNode");
     }
 
@@ -149,8 +118,11 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             Map<String, Object> matchedResult = resultMap.get(toolCallId);
             if (matchedResult != null) {
                 String content = (String) matchedResult.get("content");
-                log.info("ADK 工具结果: id={}, toolName={},args:{} result_length={}",
-                        toolCallId, toolName, command, content != null ? content.length() : 0);
+                log.info("ADK 工具结果记录完毕: id={}, name={}, result_length={}",
+                        toolCallId, toolName, content != null ? content.length() : 0);
+
+                // 补全 ADK 自动执行模式下缺失的 messageHistory 写入
+                dynamicContext.appendToolMessage(toolCallId, content);
 
                 promptService.detectAndRecordMilestone(
                         dynamicContext.getChatSessionId(),
@@ -159,12 +131,9 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
                 );
                 chatContextService.pushToolResult(dynamicContext.getChatSessionId(), toolName, command, content);
             } else {
-                log.warn("未找到工具结果: id={}, name={}", toolCallId, toolName);
+                log.warn("未找到工具结果记录: id={}, name={}", toolCallId, toolName);
             }
         }
-        // 清除本轮工具调用标记，避免重复路由
-        // 注意：toolResults 保留，供 UserFeedbackNode 构建最终结果
-        dynamicContext.getCurrentToolCalls().clear();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -232,113 +201,77 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
     //  工具执行
     // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * 根据工具名称和参数执行对应的工具
-     */
-    private String executeTool(String toolName, String argsStr) throws Exception {
-        log.info("手动执行工具: name={}, args={}", toolName, argsStr);
-
-        return switch (toolName) {
-            case "executeCommand", "execute_command", "run_command" -> executeSshTool(argsStr);
-            default -> {
-                log.warn("未知工具: {}", toolName);
-                yield "Unknown tool: " + toolName + ". Available tools: executeCommand";
-            }
-        };
+    private String executeTool(String toolName, String args) throws Exception {
+        if ("executeCommand".equals(toolName)) {
+            String command = resolveCommandArgument(args);
+            Map<String, Object> result = sshExecuteAdkTool.executeCommand(command);
+            return formatToolExecutionResult(result);
+        }
+        throw new UnsupportedOperationException("Unsupported tool: " + toolName);
     }
 
-    /**
-     * 执行 SSH 工具
-     * <p>调用 SshExecuteAdkTool.executeCommand() 执行 SSH 命令
-     */
-    @SuppressWarnings("unchecked")
-    private String executeSshTool(String argsStr) throws Exception {
-        // 1. 解析参数
-        String command = parseToolArg(argsStr, "command");
-        if (command == null || command.isBlank()) {
-            return "Error: missing 'command' argument";
+    private String resolveCommandArgument(String args) {
+        if (args == null || args.isBlank()) {
+            return "";
         }
 
-        // 2. 执行 SSH 命令
-        Map<String, Object> result = sshExecuteAdkTool.executeCommand(command);
-
-        // 3. 格式化结果
-        return formatSshResult(result);
-    }
-
-    /**
-     * 格式化 SSH 执行结果
-     */
-    private String formatSshResult(Map<String, Object> result) {
-        if (result == null) {
-            return "No result";
+        String trimmedArgs = args.trim();
+        if (!trimmedArgs.startsWith("{")) {
+            return trimmedArgs;
         }
-
-        StringBuilder sb = new StringBuilder();
-
-        Object output = result.get("output");
-        if (output != null && !output.toString().isEmpty()) {
-            sb.append(output);
-        }
-
-        Object error = result.get("error");
-        if (error != null && !error.toString().isEmpty()) {
-            if (!sb.isEmpty()) sb.append("\n");
-            sb.append("[ERROR] ").append(error);
-        }
-
-        Object exitCode = result.get("exitCode");
-        if (exitCode != null) {
-            if (!sb.isEmpty()) sb.append("\n");
-            sb.append("[Exit code: ").append(exitCode).append("]");
-        }
-
-        return !sb.isEmpty() ? sb.toString() : "Command executed with no output";
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    //  辅助方法
-    // ═══════════════════════════════════════════════════════════════
-
-    /**
-     * 从 JSON 参数字符串中解析指定 key 的值
-     */
-    private String parseToolArg(String argsStr, String key) {
-        if (argsStr == null || argsStr.isBlank()) return null;
 
         try {
-            Map<String, Object> args = objectMapper.readValue(argsStr,
-                    objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
-            Object value = args.get(key);
-            return value != null ? value.toString() : null;
-        } catch (Exception e) {
-            log.warn("解析工具参数失败: {}", e.getMessage());
-            // 兜底：简单字符串匹配
-            String pattern = "\"" + key + "\"";
-            int idx = argsStr.indexOf(pattern);
-            if (idx >= 0) {
-                int colonIdx = argsStr.indexOf(":", idx + pattern.length());
-                if (colonIdx >= 0) {
-                    String remaining = argsStr.substring(colonIdx + 1).trim();
-                    if (remaining.startsWith("\"")) {
-                        int endQuote = remaining.indexOf("\"", 1);
-                        if (endQuote > 0) {
-                            return remaining.substring(1, endQuote);
-                        }
-                    }
-                }
+            JsonNode root = objectMapper.readTree(trimmedArgs);
+            JsonNode commandNode = root.get("command");
+            if (commandNode != null && !commandNode.isNull()) {
+                return commandNode.asText("");
             }
-            return null;
+        } catch (Exception e) {
+            log.warn("解析工具参数失败，按原始字符串执行: args={}", trimmedArgs, e);
+        }
+
+        return trimmedArgs;
+    }
+
+    private String formatToolExecutionResult(Map<String, Object> result) {
+        if (result == null || result.isEmpty()) {
+            return "";
+        }
+
+        String output = valueAsString(result.get("output"));
+        String suggestion = valueAsString(result.get("suggestion"));
+        boolean success = Boolean.TRUE.equals(result.get("success"));
+
+        if (success || suggestion.isBlank()) {
+            return output.isBlank() ? valueAsString(result) : output;
+        }
+
+        if (output.isBlank()) {
+            return suggestion;
+        }
+
+        return output + "\nSuggestion: " + suggestion;
+    }
+
+    private String valueAsString(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof String text) {
+            return text;
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            return String.valueOf(value);
         }
     }
 
-    /**
-     * 截断过长的工具响应
-     */
-    private String truncateToolResponse(String content, int maxLength) {
-        if (content == null) return "";
-        if (content.length() <= maxLength) return content;
-        return content.substring(0, maxLength) + "\n... (truncated, total " + content.length() + " chars)";
+    private String truncateToolResponse(String response, int maxLength) {
+        if (response == null || response.length() <= maxLength) {
+            return response;
+        }
+        return response.substring(0, maxLength) + "\n...[Truncated]";
     }
 
 }

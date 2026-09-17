@@ -3,6 +3,7 @@ package com.jasonlat.ai.cases.react.node;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
+import com.jasonlat.ai.domain.agent.service.IChatContextService;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -13,18 +14,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 /**
- * ReAct 用户反馈节点（结果发送 + 清理）
+ * ReAct 用户反馈/结束节点
  *
  * <p>职责：
- * 1. 构建最终 ReActResultDTO
- * 2. 发送 done SSE 事件
- * 3. 关闭 Emitter
- * 4. 清理 ThreadLocal 上下文
- *
- * <p>这是 ReAct 循环链路的终点，负责：
- * - 将累积的响应文本封装为最终结果
- * - 通过 SSE 发送 done 事件通知前端
- * - 清理终端会话绑定
+ * 1. 组装最终结果
+ * 2. 清理会话绑定的终端资源
+ * 3. 将 DynamicContext 中的统计信息同步到 ResultDTO
+ * 4. 清理会话级别的上下文缓存（如工具摘要、里程碑等）
  */
 @Slf4j
 @Component("reactUserFeedbackNode")
@@ -33,19 +29,31 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
     @Resource
     private ConversationContextStore conversationContextStore;
 
+    @Resource
+    private IChatContextService chatContextService;
+
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
-        log.info("ReAct UserFeedbackNode - 发送最终结果");
+        log.info("ReAct UserFeedbackNode - 生成最终结果");
 
         ResponseBodyEmitter emitter = dynamicContext.getEmitter();
         try {
+            String sessionId = dynamicContext.getChatSessionId();
+
             // 1. 构建最终结果
             ReActResultDTO result = buildFinalResult(dynamicContext);
 
-            // 2. 发送 done SSE 事件
+
+            // 4. 清理资源绑定和缓存
+            unbindTerminalSession(sessionId);
+            clearCurrentTerminalSession();
+            chatContextService.clearSessionContext(sessionId);
+            conversationContextStore.clearMilestones(sessionId);
+
+            // 5. 发送 done SSE 事件
             sendDoneEvent(emitter, result);
 
-            // 3. 关闭 emitter
+            // 6. 关闭 emitter
             emitter.complete();
 
             log.info("ReAct 完成 - 步数: {}, 工具调用: {}, 停止原因: {}",
@@ -95,12 +103,13 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
         return ReActResultDTO.builder()
                 .content(fullText)
                 .totalSteps(dynamicContext.getStep())
-                .totalToolCalls(dynamicContext.getResult() != null ? dynamicContext.getResult().getTotalToolCalls() : 0)
+                .totalToolCalls(dynamicContext.getTotalToolCallCount().get())
                 .maxStepsReached(StopReasonEnum.MAX_STEPS.getCode().equals(stopReason))
                 .userStopped(StopReasonEnum.USER_STOP.getCode().equals(stopReason))
                 .idleTimeout(StopReasonEnum.IDLE_TIMEOUT.getCode().equals(stopReason))
                 .stopReason(stopReason)
-                .toolCalls(dynamicContext.getCurrentToolCalls())
+                // 3. 将会话中实际执行的工具调用记录设置到结果中
+                .toolCalls(dynamicContext.getExecutedToolCalls())
                 .toolResults(dynamicContext.getCurrentToolResults())
                 .build();
     }

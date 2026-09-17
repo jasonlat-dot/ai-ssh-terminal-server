@@ -160,6 +160,13 @@ public class ConversationContextStore {
         return state.getRecentToolResults(limit);
     }
 
+    public void clearRecentToolResults(String sessionId) {
+        SessionContextState state = getIfPresent(sessionId);
+        if (state != null) {
+            state.clearRecentToolResults();
+        }
+    }
+
     /**
      * 清除指定会话的全部业务上下文。
      * ADK Session 过期、删除或者用户开启新会话时调用。
@@ -347,6 +354,10 @@ public class ConversationContextStore {
 
             int fromIndex = Math.max(0, toolResults.size() - limit);
             return new ArrayList<>(toolResults.subList(fromIndex, toolResults.size()));
+        }
+
+        private synchronized void clearRecentToolResults() {
+            toolResults.clear();
         }
     }
 }

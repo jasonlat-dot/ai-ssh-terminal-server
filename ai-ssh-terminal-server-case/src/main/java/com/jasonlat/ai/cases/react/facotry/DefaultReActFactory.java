@@ -84,6 +84,13 @@ public class DefaultReActFactory {
         @Builder.Default
         private List<Map<String, Object>> currentToolResults = new ArrayList<>();
 
+        /**
+         * 整个会话中实际执行的工具调用记录（供最终结果展示）
+         */
+        @Builder.Default
+        private List<Map<String, Object>> executedToolCalls = new ArrayList<>();
+
+
         // ══════════════════════════════════════════════════════════
         //  ReAct 循环状态
         // ══════════════════════════════════════════════════════════

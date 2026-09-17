@@ -55,4 +55,6 @@ public interface IChatContextService {
      * @param result    执行结果
      */
     void pushToolResult(String sessionId, String toolName, String args, String result);
+
+    void clearSessionContext(String sessionId);
 }

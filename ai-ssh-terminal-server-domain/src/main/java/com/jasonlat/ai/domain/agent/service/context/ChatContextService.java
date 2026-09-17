@@ -125,4 +125,36 @@ public class ChatContextService implements IChatContextService {
         toolResultProvider.pushResult(sessionId, toolName, args, result);
     }
 
+    /**
+     * 清理指定会话的上下文缓存。
+     *
+     * <p>当前主要清理的是 ToolResultProvider 内部维护的会话级工具结果缓存，
+     * 用于避免一次对话结束后，上一轮工具执行结果继续污染下一轮上下文。
+     *
+     * <p>案例：
+     * <pre>
+     *   session-001 在本轮执行中累计了：
+     *   - ls /var/log 结果
+     *   - tail error.log 结果
+     *   - cat nginx.conf 结果
+     *
+     *   当本轮完成，调用：
+     *   clearSessionContext("session-001")
+     *
+     *   效果：
+     *   ToolResultProvider.clear("session-001")
+     *   -> 清空该会话的工具结果缓存和对应摘要缓存
+     * </pre>
+     *
+     * <p>这样下一次新的会话轮次开始时，不会继续沿用上一次已经失效的工具执行结果。
+     *
+     * @param sessionId 当前会话 ID
+     */
+    @Override
+    public void clearSessionContext(String sessionId) {
+        if (sessionId != null) {
+            toolResultProvider.clearResult(sessionId);
+        }
+    }
+
 }

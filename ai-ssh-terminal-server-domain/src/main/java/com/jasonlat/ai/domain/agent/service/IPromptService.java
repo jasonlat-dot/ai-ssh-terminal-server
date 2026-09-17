@@ -12,7 +12,7 @@ import java.util.Map;
 public interface IPromptService {
 
     /**
-     * 检测并记录里程碑事件（用户纠偏、任务切换、错误等）
+     * 构建带动态上下文前缀的富化消息。
      *
      * @param sessionId 对话会话 ID
      * @param role      消息角色："user" 或 "tool"
@@ -31,11 +31,12 @@ public interface IPromptService {
      *
      * @param userMessage        原始用户消息
      * @param sessionId          对话会话 ID
+     * @param userId             用户 ID
      * @param terminalSessionId  SSH 终端会话 ID（可为 null）
      * @param recentCommands     最近执行的命令列表
      * @return 注入了动态上下文的用户消息
      */
-    String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands);
+    String buildEnrichedMessage(String userMessage, String sessionId, String userId,  String terminalSessionId, List<String> recentCommands);
 
     /**
      * 构建注入了动态上下文的用户消息
@@ -53,7 +54,7 @@ public interface IPromptService {
      * @param messageHistory     对话历史记录
      * @return 注入了动态上下文的用户消息
      */
-    String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory);
+    String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory);
 
 
     /**

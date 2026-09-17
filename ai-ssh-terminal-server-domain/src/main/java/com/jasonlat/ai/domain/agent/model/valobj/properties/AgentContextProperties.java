@@ -25,11 +25,14 @@ public class AgentContextProperties {
     @Data
     public static class Reducer {
 
-        /** 无论预算是否充足，都需要保留的最近消息条数。 */
+        /** 优先保留的最近消息组数量；正数 token 预算不足时允许跳过超大历史组。 */
         private int minimumRecentMessages = 5;
 
         /** Assistant/Model 消息超过该字符数后降为 LOW 优先级。 */
-        private int longAssistantThreshold = 2048;
+        private int longAssistantThreshold = 4096;
+
+        /** 单条工具结果写入裁剪上下文前允许保留的最大字符数。 */
+        private int maxToolResultCharacters = 4000;
 
         /** 工具结果命中任意关键词后提升为 CRITICAL 优先级。 */
         private List<String> errorKeywords = new ArrayList<>(List.of(

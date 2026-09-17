@@ -73,8 +73,8 @@ public class PromptService implements IPromptService {
      */
     @Override
     @Deprecated
-    public String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands) {
-        return buildEnrichedMessage(userMessage, sessionId, terminalSessionId, recentCommands, null);
+    public String buildEnrichedMessage(String userMessage, String sessionId,String userId, String terminalSessionId, List<String> recentCommands) {
+        return buildEnrichedMessage(userMessage, sessionId,userId, terminalSessionId, recentCommands, null);
     }
 
     /**
@@ -95,9 +95,9 @@ public class PromptService implements IPromptService {
      * @return 注入了动态上下文的用户消息
      */
     @Override
-    public String buildEnrichedMessage(String userMessage, String sessionId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory) {
+    public String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory) {
         // 1. 通过 ChatContextService 采集上下文
-        PromptContextVO promptContextVO = chatContextService.buildPromptContext(sessionId, "userId_placeholder", terminalSessionId, messageHistory);
+        PromptContextVO promptContextVO = chatContextService.buildPromptContext(sessionId, userId, terminalSessionId, messageHistory);
 
         // 追加来自 Case 层的 recentCommands
         promptContextVO.setRecentCommands(recentCommands);

@@ -138,6 +138,10 @@ public class ToolResultProvider implements ContextProvider {
         conversationContextStore.addToolResult(sessionId, toolName, args, result);
     }
 
+    public void clearResult(String sessionId) {
+        conversationContextStore.clearRecentToolResults(sessionId);
+    }
+
     private String generateSummary(List<ConversationContextStore.ToolResultEntry> entries, int windowIndex) {
         // 少量结果直接拼接，大量结果模板化压缩
         if (entries.size() <= windowIndex) {

@@ -4,13 +4,16 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.SequentialAgent;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.runner.Runner;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jasonlat.design.framework.tree.StrategyHandler;
+import jakarta.annotation.Resource;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +29,9 @@ import java.util.List;
 @Service
 public class RunnerNode extends AbstractAmorySupport {
     private static final Logger log = LoggerFactory.getLogger(RunnerNode.class);
+
+    @Resource
+    private CustomRunnerFactory customRunnerFactory;
 
     /**
      * 业务流程处理方法
@@ -51,7 +57,7 @@ public class RunnerNode extends AbstractAmorySupport {
         String agentDesc = agentDefinition.getAgentDesc();
         String agentName = agentDefinition.getAgentName();
 
-        InMemoryRunner inMemoryRunner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
+        Runner Runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
 
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()
                 .appName(appName)
@@ -59,7 +65,7 @@ public class RunnerNode extends AbstractAmorySupport {
                 .agentId(agentId)
                 .agentDesc(agentDesc)
                 .sessionExpireSeconds(aiAgentConfigTableVO.getSessionExpireSeconds())
-                .runner(inMemoryRunner)
+                .runner(Runner)
                 .build();
 
         // 注册到Spring容器
@@ -67,7 +73,7 @@ public class RunnerNode extends AbstractAmorySupport {
         return aiAgentRegisterVO;
     }
 
-    private @NotNull InMemoryRunner getRunner(DefaultArmoryFactory.DynamicContext dynamicContext, AiAgentConfigTableVO aiAgentConfigTableVO, String appName) {
+    private @NotNull Runner getRunner(DefaultArmoryFactory.DynamicContext dynamicContext, AiAgentConfigTableVO aiAgentConfigTableVO, String appName) {
         AiAgentConfigTableVO.Module.Runner runnerConfig = aiAgentConfigTableVO.getModule().getRunner();
         String runnerAgentName = runnerConfig.getAgentName();
         BaseAgent baseAgent = dynamicContext.getAgentGroup().get(runnerAgentName);
@@ -77,14 +83,14 @@ public class RunnerNode extends AbstractAmorySupport {
         }
         List<String> pluginNameList = runnerConfig.getPluginNameList();
         // 创建 runner
-        if (null == pluginNameList || pluginNameList.isEmpty()) return new InMemoryRunner(baseAgent, appName);
+        if (null == pluginNameList || pluginNameList.isEmpty()) return customRunnerFactory.create(baseAgent, appName);
 
         List<BasePlugin> basePlugins = new ArrayList<>(pluginNameList.size());
         pluginNameList.forEach(pluginName -> {
             BasePlugin basePlugin = beanUtils.getBean(pluginName, BasePlugin.class);
             basePlugins.add(basePlugin);
         });
-        return new InMemoryRunner(baseAgent, appName, basePlugins);
+        return customRunnerFactory.create(baseAgent, appName, basePlugins);
     }
 
     /**

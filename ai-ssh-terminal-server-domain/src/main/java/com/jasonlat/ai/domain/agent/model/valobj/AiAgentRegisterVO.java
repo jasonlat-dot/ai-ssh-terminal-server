@@ -1,6 +1,6 @@
 package com.jasonlat.ai.domain.agent.model.valobj;
 
-import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.runner.Runner;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -43,5 +43,5 @@ public class AiAgentRegisterVO {
     /**
      * 智能体运行器
      */
-    private InMemoryRunner runner;
+    private Runner runner;
 }

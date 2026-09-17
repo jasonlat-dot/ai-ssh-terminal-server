@@ -2,7 +2,7 @@ package com.jasonlat.ai.domain.agent.service.chat;
 
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
-import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.runner.Runner;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.model.entity.ChatCommandEntity;
@@ -60,7 +60,7 @@ public class ChatService implements IChatService {
         }
 
         String appName = aiAgentRegisterVO.getAppName();
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+        Runner runner = aiAgentRegisterVO.getRunner();
 
         String sessionId = runner.sessionService().createSession(appName, userId).blockingGet().id();
         sessionCache.put(agentId, userId, sessionId, aiAgentRegisterVO.getSessionExpireSeconds());
@@ -117,7 +117,7 @@ public class ChatService implements IChatService {
         // 构建 parts
         List<Part> parts = buildParts(chatCommandEntity);
         Content userContent = Content.builder().role("user").parts(parts).build();
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+        Runner runner = aiAgentRegisterVO.getRunner();
         Flowable<Event> asyncResponseEvents = runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), userContent);
         List<String> outputs = new ArrayList<>();
         asyncResponseEvents.blockingForEach(event -> {
@@ -148,7 +148,7 @@ public class ChatService implements IChatService {
         }
         // 构建 parts
         List<Part> parts = buildParts(chatCommandEntity);
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+        Runner runner = aiAgentRegisterVO.getRunner();
         RunConfig runConfig = buildStreamingRunConfig();
 
         // 构建用户信息
@@ -164,7 +164,7 @@ public class ChatService implements IChatService {
             throw new AppException(ResponseCode.AGENT_ID_NOT_FOUNT);
         }
 
-        InMemoryRunner runner = aiAgentRegisterVO.getRunner();
+        Runner runner = aiAgentRegisterVO.getRunner();
         RunConfig runConfig = buildStreamingRunConfig();
 
         Content userMsg = Content.fromParts(Part.fromText(message));
@@ -178,9 +178,9 @@ public class ChatService implements IChatService {
      */
     private RunConfig buildStreamingRunConfig() {
         return RunConfig.builder()
-                .setStreamingMode(RunConfig.StreamingMode.SSE)
-                .setMaxLlmCalls(20)
-                .setSaveInputBlobsAsArtifacts(true)
+                .streamingMode(RunConfig.StreamingMode.SSE)
+                .maxLlmCalls(20)
+                .saveInputBlobsAsArtifacts(true)
                 .build();
     }
 
