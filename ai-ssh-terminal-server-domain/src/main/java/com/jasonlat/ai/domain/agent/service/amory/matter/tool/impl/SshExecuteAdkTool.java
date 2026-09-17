@@ -1,162 +1,153 @@
 package com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl;
 
-
-import com.google.adk.tools.Annotations;
-import com.google.adk.tools.FunctionTool;
+import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.ToolContext;
+import com.google.genai.types.FunctionDeclaration;
+import com.google.genai.types.Schema;
+import com.google.genai.types.Type;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
+import io.reactivex.rxjava3.core.Single;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * SSH 命令执行 ADK 工具，为智能体提供在 SSH 终端执行命令的能力
- * <p>
- * 使用 ADK 的 @Schema 注解定义参数，支持 FunctionTool.create()
+ * SSH 命令 ADK 工具。
+ *
+ * <p>本类直接实现 BaseTool，ADK 的 ToolContext 只停留在适配入口 {@link #runAsync}。
+ * 真实业务执行方法 {@link #executeForTerminal} 不依赖 ADK，也不会把终端会话 ID 暴露给模型。</p>
  */
 @Slf4j
 @Service("sshExecuteAdkTool")
-public class SshExecuteAdkTool implements AdkToolProvider {
+public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
+
+    public static final String TERMINAL_SESSION_STATE_KEY = "terminalSessionId";
+
+    private static final FunctionDeclaration DECLARATION = FunctionDeclaration.builder()
+            .name("executeCommand")
+            .description("在当前请求绑定的 SSH 终端中执行 Shell 命令")
+            .parameters(Schema.builder()
+                    .type(Type.Known.OBJECT)
+                    .properties(Map.of(
+                            "command",
+                            Schema.builder()
+                                    .type(Type.Known.STRING)
+                                    .description("要执行的 Shell 命令，如: ls -la, docker --version")
+                                    .build()))
+                    .required(List.of("command"))
+                    .build())
+            .build();
 
     @Resource
     private ISshTerminalService sshTerminalService;
-
     @Resource
     private CommandSafetyPolicy commandSafetyPolicy;
 
-    // 当前线程的终端会话 ID（使用 InheritableThreadLocal 支持子线程继承）
-    private static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
-
-    /** 当前会话级终端会话ID（由 Controller 设置，优先级低于 ThreadLocal） */
-    private static volatile String sessionTerminalSessionId;
-    /**
-     * 设置当前线程的终端会话 ID（兼容旧接口）
-     */
-    public static void setCurrentTerminalSession(String terminalSessionId) {
-        currentTerminalSession.set(terminalSessionId);
-        sessionTerminalSessionId = terminalSessionId;
-        log.info("[ThreadLocal] 设置终端会话: thread={}, terminalSession={}",
-                Thread.currentThread().getName(), terminalSessionId);
-    }
-
-    /**
-     * 清除当前线程的终端会话 ID
-     */
-    public static void clearCurrentTerminalSession() {
-        currentTerminalSession.remove();
+    public SshExecuteAdkTool() {
+        super("executeCommand", "在当前请求绑定的 SSH 终端中执行 Shell 命令");
     }
 
     @Override
-    public List<FunctionTool> getTools() {
-        return List.of(FunctionTool.create(this, "executeCommand"));
+    public List<? extends BaseTool> getTools() {
+        return List.of(this);
     }
 
-    public Map<String, Object> executeCommand(
-            @Annotations.Schema(name = "command", description = "要执行的 Shell 命令，如: ls -la, apt install docker.io, docker --version")
-            String command) {
+    @Override
+    public Optional<FunctionDeclaration> declaration() {
+        return Optional.of(DECLARATION);
+    }
 
-        // AI 工具命令的统一安全入口：任何命令都必须先通过后端策略，不能依赖模型自行判断。
+    /**
+     * ADK 适配入口。这里只负责解析模型参数和请求级 Session state。
+     */
+    @Override
+    public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+        return Single.fromCallable(() -> {
+            String command = String.valueOf(args.getOrDefault("command", ""));
+            Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
+            String terminalSessionId = terminalValue instanceof String value ? value : null;
+            log.info("SSH 工具调用开始 invocationId={}, toolCallId={}, terminalSessionId={}, command={}",
+                    toolContext.invocationId(), toolContext.functionCallId().orElse(""),
+                    terminalSessionId, command);
+            return executeForTerminal(terminalSessionId, command);
+        });
+    }
+
+    /**
+     * 真实业务执行入口。终端 ID 由 ADK 适配层提供，方法本身不感知 ToolContext。
+     */
+    private Map<String, Object> executeForTerminal(String terminalSessionId, String command) {
         String safeCommand = command == null ? "" : command;
-        CommandSafetyDecision safetyDecision = commandSafetyPolicy.evaluate(safeCommand);
-        if (!safetyDecision.isAllowed()) {
-            // 返回结构化 ruleId/riskLevel，便于工具结果、日志和前端使用同一个拦截原因。
-            log.warn("SSH 命令被安全策略拦截 ruleId={}, reason={}, command={}",
-                    safetyDecision.getRuleId(), safetyDecision.getReason(), safeCommand);
+        CommandSafetyDecision decision = commandSafetyPolicy.evaluate(safeCommand);
+        if (!decision.isAllowed()) {
+            log.warn("SSH 命令被安全策略拦截 terminalSessionId={}, ruleId={}, reason={}, command={}",
+                    terminalSessionId, decision.getRuleId(), decision.getReason(), safeCommand);
             return Map.of(
                     "success", false,
                     "blocked", true,
-                    "ruleId", safetyDecision.getRuleId(),
+                    "ruleId", decision.getRuleId(),
                     "riskLevel", "DENIED",
-                    "output", "⚠️ 命令已被安全策略拦截：" + safetyDecision.getReason()
+                    "output", "⚠️ 命令已被安全策略拦截：" + decision.getReason()
                             + "\n如确认必须执行，请登录终端后人工操作。",
-                    "command", safeCommand
-            );
+                    "command", safeCommand);
         }
 
-        // 优先从 ThreadLocal 获取，支持异步线程继承
-        String terminalSessionId = currentTerminalSession.get();
-        // ThreadLocal 为空时回退到会话级变量（线程池场景下 ThreadLocal 可能失效）
-        if (terminalSessionId == null || terminalSessionId.isEmpty()) {
-            terminalSessionId = sessionTerminalSessionId;
-            log.info("[executeCommand] ThreadLocal 为空，回退到会话级变量: terminalSessionId={}", terminalSessionId);
-        }
-        log.info("[executeCommand] thread={}, terminalSessionId={}, command={}",
-                Thread.currentThread().getName(), terminalSessionId, safeCommand);
-
-        if (terminalSessionId == null || terminalSessionId.isEmpty()) {
-            log.warn("[executeCommand] 终端会话ID为空，无法执行命令");
+        if (terminalSessionId == null || terminalSessionId.isBlank()) {
+            log.warn("SSH 工具缺少请求级终端会话 ID，command={}", safeCommand);
             return Map.of(
                     "success", false,
                     "output", "未绑定 SSH 终端会话。请先打开 SSH 终端连接。",
-                    "command", safeCommand
-            );
+                    "command", safeCommand);
         }
-
         if (!sshTerminalService.sessionExists(terminalSessionId)) {
-            log.warn("[executeCommand] 终端会话不存在: {}", terminalSessionId);
+            log.warn("SSH 终端会话不存在 terminalSessionId={}", terminalSessionId);
             return Map.of(
                     "success", false,
                     "output", "SSH 终端会话不存在或已关闭: " + terminalSessionId,
-                    "command", safeCommand
-            );
+                    "command", safeCommand);
         }
 
         try {
-            log.info("SSH 执行命令: session={}, command={}", terminalSessionId, safeCommand);
-
-            // 执行命令
             String output = sshTerminalService.executeCommand(terminalSessionId, safeCommand);
-
-            log.info("SSH 命令执行完成: outputLength={}, output={}",
-                    output.length(), output.length() > 300 ? output.substring(0, 300) + "..." : output);
-
-            // 分析输出，判断是否成功
             boolean success = isExecutionSuccessful(output);
-
-            Map<String, Object> result = new java.util.HashMap<>();
+            Map<String, Object> result = new HashMap<>();
             result.put("command", safeCommand);
             result.put("output", output);
             result.put("success", success);
-
             if (!success) {
                 result.put("suggestion", analyzeError(output));
             }
-
+            log.info("SSH 工具调用完成 terminalSessionId={}, success={}, outputLength={}",
+                    terminalSessionId, success, output == null ? 0 : output.length());
             return result;
-        } catch (Exception e) {
-            log.error("SSH 命令执行异常: session={}, command={}", terminalSessionId, safeCommand, e);
+        } catch (Exception exception) {
+            log.error("SSH 命令执行异常 terminalSessionId={}, command={}",
+                    terminalSessionId, safeCommand, exception);
             return Map.of(
                     "success", false,
-                    "output", "命令执行异常: " + e.getMessage(),
-                    "command", safeCommand
-            );
+                    "output", "命令执行异常: " + exception.getMessage(),
+                    "command", safeCommand);
         }
-
     }
 
-
-    /**
-     * 判断命令执行是否成功
-     */
     private boolean isExecutionSuccessful(String output) {
         if (output == null || output.isEmpty()) {
             return true;
         }
-
         String lowerOutput = output.toLowerCase();
         String[] errorIndicators = {
-                "命令退出码:",
-                "command not found", "no such file or directory", "permission denied",
-                "operation not permitted", "cannot find", "error:", "failed",
-                "fatal:", "unable to", "connection refused", "network is unreachable"
+                "命令退出码:", "command not found", "no such file or directory", "permission denied",
+                "operation not permitted", "cannot find", "error:", "failed", "fatal:",
+                "unable to", "connection refused", "network is unreachable"
         };
-
         for (String indicator : errorIndicators) {
             if (lowerOutput.contains(indicator)) {
                 return false;
@@ -165,28 +156,21 @@ public class SshExecuteAdkTool implements AdkToolProvider {
         return true;
     }
 
-    /**
-     * 分析错误并提供解决建议
-     */
     private String analyzeError(String output) {
         if (output == null) return null;
-
         String lowerOutput = output.toLowerCase();
-
         if (lowerOutput.contains("command not found")) {
-            return "命令不存在。可能原因：命令拼写错误、软件未安装、或命令不在 PATH 中。建议检查命令名称或安装对应软件包。";
+            return "命令不存在。请检查命令名称、软件是否安装以及 PATH。";
         }
         if (lowerOutput.contains("permission denied")) {
-            return "权限不足。建议使用 sudo 提升权限，或检查文件/目录权限。";
+            return "权限不足。请检查用户权限，必要时人工确认后使用 sudo。";
         }
         if (lowerOutput.contains("no such file or directory")) {
-            return "文件或目录不存在。建议检查路径是否正确，或使用绝对路径。";
+            return "文件或目录不存在。请检查路径是否正确。";
         }
         if (lowerOutput.contains("connection refused") || lowerOutput.contains("network is unreachable")) {
-            return "网络连接问题。建议检查网络连接、确认目标服务是否运行、检查防火墙设置。";
+            return "网络连接失败。请检查目标服务、网络与防火墙。";
         }
         return "执行失败，请检查命令和输出信息。";
     }
-
-
 }

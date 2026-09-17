@@ -1,6 +1,6 @@
 package com.jasonlat.ai.domain.agent.service.amory.matter.tool;
 
-import com.google.adk.tools.FunctionTool;
+import com.google.adk.tools.BaseTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -61,7 +61,7 @@ public class AdkToolRegistry {
 
     private void addProviderTools(List<Object> tools, String beanName, AdkToolProvider provider) {
         try {
-            List<FunctionTool> providerTools = provider.getTools();
+            List<? extends BaseTool> providerTools = provider.getTools();
             tools.addAll(providerTools);
             log.info("注册 ADK 工具成功 beanName={}, provider={}, count={}", beanName, provider.getClass().getSimpleName(), providerTools.size());
         } catch (Exception e) {

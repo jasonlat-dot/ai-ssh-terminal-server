@@ -9,15 +9,12 @@ import com.jasonlat.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
-
 /**
- * ReAct 循环决策节点
+ * 单次 ADK invocation 的结束条件收口节点。
  *
- * <p>职责：
- * 1. 检查终止条件（错误、最大步数、用户停止、最大工具调用次数）
- * 2. 在 ADK 主循环模式下，作为结束节点收口，统一路由到 UserFeedbackNode
+ * <p>当前架构由 ADK 在 {@code runAsync} 内完成模型与工具的 ReAct 循环，本节点不会再路由
+ * 回 AiCallNode。它只把取消、保护阈值、显式 finish、错误或正常完成统一转换为 stopReason，
+ * 再交给 UserFeedbackNode 生成最终结果。</p>
  *
  * @author xiaofuge bugstack.cn @小傅哥
  */
@@ -27,50 +24,62 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
 
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
-        log.info("ReAct LoopDecisionNode - 检查结束条件，当前步数: {}/{}", dynamicContext.getStep(), dynamicContext.getMaxSteps());
+        long nodeStartNanos = System.nanoTime();
+        log.info("ReAct链路-LoopDecisionNode 开始 | sessionId:{} | step:{}/{} | totalToolCalls:{}/{} | "
+                        + "currentToolCalls:{} | currentToolResults:{} | existingStopReason:{} | hasError:{}",
+                dynamicContext.getChatSessionId(), dynamicContext.getStep(), dynamicContext.getMaxSteps(),
+                dynamicContext.getTotalToolCallCount().get(), dynamicContext.getMaxToolCalls(),
+                dynamicContext.getCurrentToolCalls().size(), dynamicContext.getCurrentToolResults().size(),
+                dynamicContext.getStopReason(), dynamicContext.getErrorMessage() != null);
 
-        // 1. 检查是否已有终止原因
+        // 取消、工具结果缺失或 Runner 异常可能已经在前序节点设置 stopReason，应优先保留。
         String stopReason = dynamicContext.getStopReason();
         if (stopReason != null) {
-            log.info("已设置终止原因: {}", stopReason);
+            log.info("ReAct链路-沿用前序终止原因 | sessionId:{} | stopReason:{} | durationMs:{}",
+                    dynamicContext.getChatSessionId(), stopReason, elapsedMillis(nodeStartNanos));
             return router(requestParameter, dynamicContext);
         }
 
-        // 2. 检查最大步数
+        // step 统计外层 ADK invocation 次数，是 Case 层的兜底保护。
         if (dynamicContext.getStep() >= dynamicContext.getMaxSteps()) {
-            log.info("达到最大步数: {}, 终止处理", dynamicContext.getMaxSteps());
+            log.warn("ReAct链路-达到最大步数 | sessionId:{} | step:{} | maxSteps:{}",
+                    dynamicContext.getChatSessionId(), dynamicContext.getStep(), dynamicContext.getMaxSteps());
             dynamicContext.setStopReason(StopReasonEnum.MAX_STEPS.getCode());
             dynamicContext.getResult().setMaxStepsReached(true);
             return router(requestParameter, dynamicContext);
         }
 
-        // 3. 检查最大工具调用次数
+        // 工具总量在观察到唯一 FunctionCall 时递增，防止一次 invocation 内工具调用失控。
         if (dynamicContext.getTotalToolCallCount().get() >= dynamicContext.getMaxToolCalls()) {
-            log.info("达到最大工具调用次数: {}, 终止处理",
-                    dynamicContext.getResult().getTotalToolCalls());
+            log.warn("ReAct链路-达到最大工具调用次数 | sessionId:{} | totalToolCalls:{} | maxToolCalls:{}",
+                    dynamicContext.getChatSessionId(), dynamicContext.getTotalToolCallCount().get(),
+                    dynamicContext.getMaxToolCalls());
             dynamicContext.setStopReason(StopReasonEnum.MAX_TOOL_CALLS.getCode());
             return router(requestParameter, dynamicContext);
         }
 
-        // 4. 检查 assistant 消息是否包含终止指令
+        // 兼容 Prompt 约定的显式完成标记；普通自然结束在最后归为 COMPLETED。
         String assistantContent = dynamicContext.getAssistantContent() != null
                 ? dynamicContext.getAssistantContent().toString()
                 : "";
         if (containsFinishCommand(assistantContent)) {
-            log.info("AI 返回 finish 指令，终止处理");
+            log.info("ReAct链路-检测到模型 finish 指令 | sessionId:{} | assistantLength:{}",
+                    dynamicContext.getChatSessionId(), assistantContent.length());
             dynamicContext.setStopReason(StopReasonEnum.FINISH.getCode());
             return router(requestParameter, dynamicContext);
         }
 
-        // 5. 检查错误
+        // 防御性检查：正常情况下设置 errorMessage 的节点也会同步设置 ERROR stopReason。
         if (dynamicContext.getErrorMessage() != null) {
-            log.info("发生错误: {}, 终止处理", dynamicContext.getErrorMessage());
+            log.warn("ReAct链路-检测到错误状态 | sessionId:{} | error:{}",
+                    dynamicContext.getChatSessionId(), dynamicContext.getErrorMessage());
             dynamicContext.setStopReason(StopReasonEnum.ERROR.getCode());
             return router(requestParameter, dynamicContext);
         }
 
-        // 6. 无异常且 ADK 自动执行结束，视为正常 completed
-        log.info("ReAct 循环完成，无更多工具调用");
+        // runAsync 已自然结束且无任何保护条件命中，视为本次请求正常完成。
+        log.info("ReAct链路-ADK invocation 正常结束 | sessionId:{} | assistantLength:{} | durationMs:{}",
+                dynamicContext.getChatSessionId(), assistantContent.length(), elapsedMillis(nodeStartNanos));
         dynamicContext.setStopReason(StopReasonEnum.COMPLETED.getCode());
         return router(requestParameter, dynamicContext);
     }
@@ -78,6 +87,8 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
     @Override
     public StrategyHandler<ChatRequest, DefaultReActFactory.DynamicContext, ReActResultDTO> get(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
         StopReasonEnum stopReasonEnum = StopReasonEnum.getByCode(dynamicContext.getStopReason());
+        log.debug("ReAct链路-同步结果状态标志 | sessionId:{} | stopReason:{} | resolvedEnum:{}",
+                dynamicContext.getChatSessionId(), dynamicContext.getStopReason(), stopReasonEnum);
 
         if (stopReasonEnum != null) {
             switch (stopReasonEnum) {
@@ -99,7 +110,13 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
             }
         }
 
-        // 在当前架构下，ADK 包办了工具链循环。到达此处意味着一次 runAsync 已跑完，直接输出结果
+        // 到达此处意味着 runAsync 已结束
+        log.info("ReAct链路-LoopDecisionNode 路由 | sessionId:{} | nextNode:UserFeedbackNode | "
+                        + "stopReason:{} | userStopped:{} | idleTimeout:{} | maxStepsReached:{}",
+                dynamicContext.getChatSessionId(), dynamicContext.getStopReason(),
+                dynamicContext.getResult().isUserStopped(), dynamicContext.getResult().isIdleTimeout(),
+                dynamicContext.getResult().isMaxStepsReached());
+
         return getBean("reactUserFeedbackNode");
     }
 
@@ -112,12 +129,21 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
      * 参考 WaLiCode streamingAgent.ts 的终止条件判断
      */
     private boolean containsFinishCommand(String content) {
-        if (content == null || content.isBlank()) return false;
+        if (content == null || content.isBlank()) {
+            return false;
+        }
 
         String lowerContent = content.toLowerCase();
-        return lowerContent.contains("<finish>")
+        boolean containsFinish = lowerContent.contains("<finish>")
                 || lowerContent.contains("[finish]")
                 || lowerContent.contains("action: finish");
+        log.debug("ReAct链路-finish 指令检查完成 | contentLength:{} | matched:{}",
+                content.length(), containsFinish);
+        return containsFinish;
+    }
+
+    private long elapsedMillis(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
 }

@@ -18,6 +18,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import reactor.core.publisher.Flux;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
@@ -183,6 +184,9 @@ public class LocalSpringAI extends BaseLlm {
     private Flowable<LlmResponse> generateStreamingContent(LlmRequest llmRequest) {
         SpringAIObservabilityHandler.RequestContext context =
                 observabilityHandler.startRequest(model(), "streaming");
+        AtomicInteger totalTokens = new AtomicInteger();
+        AtomicInteger inputTokens = new AtomicInteger();
+        AtomicInteger outputTokens = new AtomicInteger();
 
         return Flowable.create(
                 emitter -> {
@@ -204,6 +208,11 @@ public class LocalSpringAI extends BaseLlm {
                                 .subscribe(
                                         chatResponse -> {
                                             try {
+                                                updateStreamingUsage(
+                                                        chatResponse, totalTokens, inputTokens, outputTokens);
+                                                if (isUsageOnlyStreamingChunk(chatResponse)) {
+                                                    return;
+                                                }
                                                 // Use enhanced streaming-aware conversion
                                                 LlmResponse llmResponse =
                                                         messageConverter.toLlmResponse(chatResponse, true);
@@ -224,8 +233,12 @@ public class LocalSpringAI extends BaseLlm {
                                                     new RuntimeException(mappedError.getNormalizedMessage(), error));
                                         },
                                         () -> {
-                                            // Record success for streaming completion
-                                            observabilityHandler.recordSuccess(context, 0, 0, 0);
+                                            // 流式 token 来自最后的 usage 分片，不能再固定记录为 0。
+                                            observabilityHandler.recordSuccess(
+                                                    context,
+                                                    totalTokens.get(),
+                                                    inputTokens.get(),
+                                                    outputTokens.get());
                                             emitter.onComplete();
                                         });
                     } catch (Exception e) {
@@ -235,6 +248,29 @@ public class LocalSpringAI extends BaseLlm {
                     }
                 },
                 BackpressureStrategy.BUFFER);
+    }
+    private boolean isUsageOnlyStreamingChunk(ChatResponse chatResponse) {
+        return chatResponse != null
+                && (chatResponse.getResults() == null || chatResponse.getResults().isEmpty())
+                && chatResponse.getMetadata() != null
+                && chatResponse.getMetadata().getUsage() != null;
+    }
+
+
+    private void updateStreamingUsage(
+            ChatResponse chatResponse,
+            AtomicInteger totalTokens,
+            AtomicInteger inputTokens,
+            AtomicInteger outputTokens) {
+        int currentTotal = extractTokenCount(chatResponse);
+        int currentInput = extractInputTokenCount(chatResponse);
+        int currentOutput = extractOutputTokenCount(chatResponse);
+        // 只接受有意义的最终统计，避免后续的 0/0/0 分片覆盖真实值。
+        if (currentTotal > 0 || currentInput > 0 || currentOutput > 0) {
+            totalTokens.set(currentTotal > 0 ? currentTotal : currentInput + currentOutput);
+            inputTokens.set(currentInput);
+            outputTokens.set(currentOutput);
+        }
     }
 
     @Override

@@ -136,8 +136,7 @@ public class SshAgentReActTest {
         log.info("4. AI 对话会话已创建 chatSessionId={}", chatSessionId);
 
         // 5. 绑定终端会话到 ThreadLocal（核心！executeCommand 工具从这里取 terminalSessionId）
-        SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-        log.info("5. ThreadLocal 已绑定终端会话");
+        log.info("5. 终端会话将随每次请求传递");
 
         log.info("========== ReAct Test 初始化完成，可以开始对话了 ==========\n");
     }
@@ -172,8 +171,6 @@ public class SshAgentReActTest {
 
             try {
                 // 每次对话前重新绑定 ThreadLocal（防止异步线程丢失）
-                SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-
                 // 构建 ReAct 请求
                 ChatRequest requestDTO = new ChatRequest();
                 requestDTO.setAgentId(AGENT_ID);
@@ -203,8 +200,6 @@ public class SshAgentReActTest {
      */
     @Test
     public void test_singleChat() {
-        SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-
         String message = "查看服务器系统信息，包括操作系统版本、CPU、内存";
         log.info("发送消息: {}", message);
 
@@ -227,8 +222,6 @@ public class SshAgentReActTest {
      */
     @Test
     public void test_streamChat() throws Exception {
-        SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-
         String message = "检查 docker 是否安装，如果没有安装请帮我安装";
         log.info("发送消息: {}", message);
 

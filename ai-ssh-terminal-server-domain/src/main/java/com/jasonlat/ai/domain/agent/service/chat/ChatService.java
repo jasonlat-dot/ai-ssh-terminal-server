@@ -12,6 +12,7 @@ import com.jasonlat.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigPro
 import com.jasonlat.ai.domain.agent.service.IChatService;
 import com.jasonlat.ai.domain.agent.service.amory.cache.SessionCache;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.reactivex.rxjava3.core.Flowable;
@@ -169,6 +170,10 @@ public class ChatService implements IChatService {
 
         Content userMsg = Content.fromParts(Part.fromText(message));
 
+        if (runner.sessionService() instanceof CustomAdkSessionService sessionService) {
+            sessionService.prepareInvocation(
+                    runner.appName(), userId, sessionId, List.of(), terminalSessionId);
+        }
         return runner.runAsync(userId, sessionId, userMsg, runConfig);
 
     }

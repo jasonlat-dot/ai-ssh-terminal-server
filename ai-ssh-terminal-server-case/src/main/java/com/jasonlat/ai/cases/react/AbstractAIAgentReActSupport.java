@@ -13,22 +13,17 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import javax.annotation.Resource;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * ReAct 支撑类（抽象基类）
  *
- * <p>封装 ReAct 循环的通用能力：
- * - 上下文管理（DynamicContext）
- * - SSE 事件发射
- * - 工具调用结果解析
- * - 响应格式化
+ * <p>封装节点共享的 Spring Bean 路由和 SSE 协议序列化能力。本类不执行模型或工具，
+ * 也不持有跨请求状态。</p>
  *
- * <p>节点路由链：
- * RootNode → AiCallNode → ToolCallNode → (ToolResultNode) → [循环或完成]
+ * <p>节点路由链：RootNode → AiCallNode →（可选 ToolCallNode）→
+ * LoopDecisionNode → UserFeedbackNode。</p>
  */
 @Slf4j
 public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStrategyRouter<ChatRequest, DefaultReActFactory.DynamicContext, ReActResultDTO> {
@@ -41,72 +36,17 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      */
     @SuppressWarnings("unchecked")
     protected <T> T getBean(String beanName) {
-        return (T) applicationContext.getBean(beanName);
+        T bean = (T) applicationContext.getBean(beanName);
+        log.debug("ReAct链路-解析路由 Bean | beanName:{} | beanType:{}",
+                beanName, bean == null ? null : bean.getClass().getSimpleName());
+        return bean;
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    //  上下文绑定（ThreadLocal 方式，兼容异步线程）
-    // ═══════════════════════════════════════════════════════════════
-    /**
-     * chat会话 → 终端会话 ID 映射
-     */
-    protected static final Map<String, String> sessionTerminalMapping = new ConcurrentHashMap<>();
-
-    /**
-     * 当前线程绑定的终端会话 ID
-     */
-    protected static final InheritableThreadLocal<String> currentTerminalSession = new InheritableThreadLocal<>();
-
-    /**
-     * 设置当前线程的终端会话 ID
-     */
-    protected static void setCurrentTerminalSession(String terminalSessionId) {
-        currentTerminalSession.set(terminalSessionId);
-    }
-
-    /**
-     * 获取当前线程的终端会话 ID
-     */
-    protected static String getCurrentTerminalSession() {
-        return currentTerminalSession.get();
-    }
-
-    /**
-     * 清除当前线程的终端会话 ID
-     */
-    protected static void clearCurrentTerminalSession() {
-        currentTerminalSession.remove();
-    }
-
-    /**
-     * 绑定会话与终端会话
-     */
-    protected static void bindTerminalSession(String chatSessionId, String terminalSessionId) {
-        if (chatSessionId != null && terminalSessionId != null) {
-            sessionTerminalMapping.put(chatSessionId, terminalSessionId);
-        }
-    }
-
-    /**
-     * 获取会话绑定的终端会话 ID
-     */
-    protected static String getTerminalSession(String chatSessionId) {
-        return chatSessionId != null ? sessionTerminalMapping.get(chatSessionId) : null;
-    }
-
-    /**
-     * 解绑会话与终端会话
-     */
-    protected static void unbindTerminalSession(String chatSessionId) {
-        if (chatSessionId != null) {
-            sessionTerminalMapping.remove(chatSessionId);
-        }
-    }
-
 
     @Override
     protected void multiThread(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws ExecutionException, InterruptedException, TimeoutException {
-        // 暂无异步预加载需求
+        log.debug("ReAct链路-节点异步预加载跳过 | sessionId:{} | node:{}",
+                dynamicContext == null ? null : dynamicContext.getChatSessionId(),
+                getClass().getSimpleName());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -115,26 +55,26 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
 
     protected final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 发送文本事件
-     */
-    protected void sendTextEvent(ResponseBodyEmitter emitter, String content, String fullText) {
+    /** 发送一个流式文本增量；返回 false 表示 SSE 已不可写，调用方应触发取消。 */
+    protected boolean sendTextEvent(ResponseBodyEmitter emitter, String content, String fullText) {
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.TEXT.getCode());
             event.setContent(content);
             event.setFullText(fullText);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.debug("发送文本事件 {}", event);
+            log.debug("ReAct链路-SSE text 已发送 | chunkLength:{} | fullTextLength:{}",
+                    safeLength(content), safeLength(fullText));
+            return true;
         } catch (Exception e) {
-            log.warn("发送文本事件失败: {}", e.getMessage());
+            log.warn("ReAct链路-SSE text 发送失败 | chunkLength:{} | fullTextLength:{} | reason:{}",
+                    safeLength(content), safeLength(fullText), e.getMessage());
+            return false;
         }
     }
 
-    /**
-     * 发送工具调用事件
-     */
-    protected void sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String commend, ToolStatusEnum status) {
+    /** 通知前端工具进入运行状态；该方法本身不执行工具。 */
+    protected boolean sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String commend, ToolStatusEnum status) {
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.TOOL_CALL.getCode());
@@ -143,16 +83,18 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setStatus(status.getCode());
             event.setCommend(commend);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.debug("发送工具调用事件 {}", event);
+            log.debug("ReAct链路-SSE tool_call 已发送 | toolCallId:{} | toolName:{} | status:{} | argsLength:{}",
+                    toolCallId, toolName, status.getCode(), safeLength(commend));
+            return true;
         } catch (Exception e) {
-            log.warn("发送工具调用事件失败: {}", e.getMessage());
+            log.warn("ReAct链路-SSE tool_call 发送失败 | toolCallId:{} | toolName:{} | reason:{}",
+                    toolCallId, toolName, e.getMessage());
+            return false;
         }
     }
 
-    /**
-     * 发送工具结果事件
-     */
-    protected void sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, ToolStatusEnum status) {
+    /** 按 toolCallId 推送真实或合成的工具结果，供前端更新对应工具卡片。 */
+    protected boolean sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, ToolStatusEnum status) {
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.TOOL_RESULT.getCode());
@@ -160,16 +102,20 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setContent(content);
             event.setStatus(status.getCode());
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.debug("发送工具结果事件 {}", event);
+            log.debug("ReAct链路-SSE tool_result 已发送 | toolCallId:{} | status:{} | contentLength:{}",
+                    toolCallId, status.getCode(), safeLength(content));
+            return true;
         } catch (Exception e) {
-            log.warn("发送工具结果事件失败: {}", e.getMessage());
+            log.warn("ReAct链路-SSE tool_result 发送失败 | toolCallId:{} | status:{} | reason:{}",
+                    toolCallId, status.getCode(), e.getMessage());
+            return false;
         }
     }
 
     /**
      * 发送步数结束事件
      */
-    protected void sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, boolean shouldContinue, int totalToolCalls) {
+    protected boolean sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, boolean shouldContinue, int totalToolCalls) {
         try {
             ReActEventDTO.StepInfo stepInfo = new ReActEventDTO.StepInfo();
             stepInfo.setCurrentStep(currentStep);
@@ -181,25 +127,55 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
             event.setEvent(ReActEventTypeEnum.ROUND_END.getCode());
             event.setStepInfo(stepInfo);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("发送 round_end 事件 {}", event);
+            log.info("ReAct链路-SSE round_end 已发送 | currentStep:{} | maxSteps:{} | "
+                            + "shouldContinue:{} | totalToolCalls:{}",
+                    currentStep, maxSteps, shouldContinue, totalToolCalls);
+            return true;
         } catch (Exception e) {
-            log.warn("发送 round_end 事件失败: {}", e.getMessage());
+            log.warn("ReAct链路-SSE round_end 发送失败 | currentStep:{} | totalToolCalls:{} | reason:{}",
+                    currentStep, totalToolCalls, e.getMessage());
+            return false;
         }
     }
 
     /**
      * 发送完成事件
      */
-    protected void sendDoneEvent(ResponseBodyEmitter emitter, ReActResultDTO result) {
+    protected boolean sendDoneEvent(ResponseBodyEmitter emitter, ReActResultDTO result) {
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.DONE.getCode());
             event.setContent(objectMapper.writeValueAsString(result));
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.debug("发送 done 事件 content: {}", objectMapper.writeValueAsString(event));
+            log.info("ReAct链路-SSE done 已发送 | stopReason:{} | contentLength:{} | toolCalls:{} | toolResults:{}",
+                    result.getStopReason(), safeLength(result.getContent()), result.getTotalToolCalls(),
+                    result.getToolResults() == null ? 0 : result.getToolResults().size());
+            return true;
         } catch (Exception e) {
-            log.warn("发送 done 事件失败: {}", e.getMessage());
+            log.warn("ReAct链路-SSE done 发送失败 | stopReason:{} | reason:{}",
+                    result == null ? null : result.getStopReason(), e.getMessage());
+            return false;
         }
+    }
+
+    /** 发送可被前端直接识别的错误事件。 */
+    protected boolean sendErrorEvent(ResponseBodyEmitter emitter, String message) {
+        try {
+            ReActEventDTO event = new ReActEventDTO();
+            event.setEvent(ReActEventTypeEnum.ERROR.getCode());
+            event.setContent(message);
+            emitter.send(objectMapper.writeValueAsString(event) + "\n");
+            log.info("ReAct链路-SSE error 已发送 | messageLength:{}", safeLength(message));
+            return true;
+        } catch (Exception e) {
+            log.warn("ReAct链路-SSE error 发送失败 | messageLength:{} | reason:{}",
+                    safeLength(message), e.getMessage());
+            return false;
+        }
+    }
+
+    private int safeLength(String value) {
+        return value == null ? 0 : value.length();
     }
 
 

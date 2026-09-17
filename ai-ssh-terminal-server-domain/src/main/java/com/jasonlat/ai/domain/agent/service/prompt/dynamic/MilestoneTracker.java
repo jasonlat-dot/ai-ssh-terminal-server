@@ -62,11 +62,16 @@ public class MilestoneTracker {
             }
 
             int maxContentLength = Math.max(0, properties.getMaxContentLength());
-            push(sessionId, MilestoneVO.builder()
+            MilestoneVO milestone = MilestoneVO.builder()
                     .type(rule.type())
                     .content(truncate(content, maxContentLength))
                     .timestamp(System.currentTimeMillis())
-                    .build());
+                    .build();
+            push(sessionId, milestone);
+            if (rule.type() == MilestoneVO.Type.TASK_CHANGE && "user".equals(normalizedRole)) {
+                conversationContextStore.updateCurrentTask(sessionId, content);
+                log.info("会话当前任务已更新 sessionId={}, ruleId={}", sessionId, rule.id());
+            }
             log.debug(
                     "里程碑记录: sessionId={}, ruleId={}, type={}, content={}",
                     sessionId,

@@ -36,9 +36,11 @@ public class DynamicPromptBuilder {
         StringBuilder sb = new StringBuilder();
         sb.append(baseInstruction);
 
+        appendTaskDescription(sb, ctx);
         appendEnvironmentInfo(sb, ctx);
         appendRecentCommands(sb, ctx);
         appendMilestones(sb, ctx);
+        appendToolResultSummary(sb, ctx);
 
         String result = sb.toString();
         log.debug("动态 Prompt 构建完成，长度: {} (基础: {}, 动态: {})",
@@ -63,13 +65,20 @@ public class DynamicPromptBuilder {
         StringBuilder sb = new StringBuilder();
         boolean hasContent = false;
 
+        if (!isEmpty(ctx.getTaskDescription())) {
+            sb.append("[当前任务]\n").append(ctx.getTaskDescription()).append("\n");
+            hasContent = true;
+        }
+
         if (!isEmpty(ctx.getServerInfo()) || !isEmpty(ctx.getOsInfo())
-                || !isEmpty(ctx.getCurrentUser()) || !isEmpty(ctx.getCurrentDirectory())) {
+                || !isEmpty(ctx.getCurrentUser()) || !isEmpty(ctx.getCurrentDirectory())
+                || !isEmpty(ctx.getUptime())) {
             sb.append("[系统环境]\n");
             if (!isEmpty(ctx.getServerInfo()))       sb.append("服务器: ").append(ctx.getServerInfo()).append("\n");
             if (!isEmpty(ctx.getOsInfo()))           sb.append("系统: ").append(ctx.getOsInfo()).append("\n");
             if (!isEmpty(ctx.getCurrentUser()))      sb.append("用户: ").append(ctx.getCurrentUser()).append("\n");
             if (!isEmpty(ctx.getCurrentDirectory())) sb.append("目录: ").append(ctx.getCurrentDirectory()).append("\n");
+            if (!isEmpty(ctx.getUptime()))           sb.append("运行时长: ").append(ctx.getUptime()).append("\n");
             hasContent = true;
         }
 
@@ -86,6 +95,11 @@ public class DynamicPromptBuilder {
             for (MilestoneVO m : ctx.getMilestoneVOS()) {
                 sb.append("- [").append(m.getType().name()).append("] ").append(m.getContent()).append("\n");
             }
+            hasContent = true;
+        }
+
+        if (!isEmpty(ctx.getToolResultSummary())) {
+            sb.append("\n[最近工具结果摘要]\n").append(ctx.getToolResultSummary()).append("\n");
             hasContent = true;
         }
 
@@ -106,7 +120,8 @@ public class DynamicPromptBuilder {
      */
     private void appendEnvironmentInfo(StringBuilder sb, PromptContextVO ctx) {
         if (isEmpty(ctx.getServerInfo()) && isEmpty(ctx.getOsInfo())
-                && isEmpty(ctx.getCurrentUser()) && isEmpty(ctx.getCurrentDirectory())) {
+                && isEmpty(ctx.getCurrentUser()) && isEmpty(ctx.getCurrentDirectory())
+                && isEmpty(ctx.getUptime())) {
             return;
         }
         sb.append("\n\n## 当前环境信息\n");
@@ -114,6 +129,19 @@ public class DynamicPromptBuilder {
         if (!isEmpty(ctx.getOsInfo()))           sb.append("- 操作系统: ").append(ctx.getOsInfo()).append("\n");
         if (!isEmpty(ctx.getCurrentUser()))      sb.append("- 当前用户: ").append(ctx.getCurrentUser()).append("\n");
         if (!isEmpty(ctx.getCurrentDirectory())) sb.append("- 工作目录: ").append(ctx.getCurrentDirectory()).append("\n");
+        if (!isEmpty(ctx.getUptime()))           sb.append("- 运行时长: ").append(ctx.getUptime()).append("\n");
+    }
+
+    private void appendTaskDescription(StringBuilder sb, PromptContextVO ctx) {
+        if (!isEmpty(ctx.getTaskDescription())) {
+            sb.append("\n\n## 当前任务\n").append(ctx.getTaskDescription()).append("\n");
+        }
+    }
+
+    private void appendToolResultSummary(StringBuilder sb, PromptContextVO ctx) {
+        if (!isEmpty(ctx.getToolResultSummary())) {
+            sb.append("\n## 最近工具结果摘要\n").append(ctx.getToolResultSummary()).append("\n");
+        }
     }
 
     /**

@@ -1,13 +1,13 @@
 package com.jasonlat.ai.domain.agent.service.amory.node;
 
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.models.springai.SpringAI;
 import com.google.adk.tools.FunctionTool;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalSpringAI;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolRegistry;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.design.framework.tree.StrategyHandler;
@@ -62,7 +62,9 @@ public class AgentNode extends AbstractAmorySupport {
 
             LlmAgent llmAgent  = LlmAgent.builder()
                     .name(agentConfig.getName())
-                    .model(new SpringAI(chatModel))
+                    // ADK 1.2.0 的 SpringAI 在流式完成时固定上报 0/0/0；
+                    // 使用本地兼容实现，从最终 usage 分片提取并上报真实 token。
+                    .model(new LocalSpringAI(chatModel))
                     .description(agentConfig.getDescription())
                     .instruction(agentConfig.getInstruction())
                     .outputKey(agentConfig.getOutputKey())

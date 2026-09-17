@@ -6,7 +6,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * ReAct 执行结果 DTO
@@ -55,12 +54,12 @@ public class ReActResultDTO {
     /**
      * 工具调用列表
      */
-    private List<Map<String, Object>> toolCalls;
+    private List<ToolCallDTO> toolCalls;
 
     /**
      * 工具执行结果列表
      */
-    private List<Map<String, Object>> toolResults;
+    private List<ToolResultDTO> toolResults;
 
     /**
      * 错误信息（如有）

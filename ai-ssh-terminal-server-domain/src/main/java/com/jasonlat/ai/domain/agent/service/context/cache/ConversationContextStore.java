@@ -106,6 +106,13 @@ public class ConversationContextStore {
         return state == null ? null : state.getOriginalTask();
     }
 
+    /** 用户明确切换任务时，更新后续 Prompt 使用的当前任务描述。 */
+    public void updateCurrentTask(String sessionId, String taskDescription) {
+        if (!isBlank(sessionId) && !isBlank(taskDescription)) {
+            getOrCreate(sessionId).updateCurrentTask(taskDescription);
+        }
+    }
+
     /** 追加一个会话里程碑，超过上限时淘汰最早的记录。 */
     public void addMilestone(String sessionId, MilestoneVO milestone) {
         if (isBlank(sessionId) || milestone == null) {
@@ -298,6 +305,10 @@ public class ConversationContextStore {
 
         private synchronized String getOriginalTask() {
             return originalTask;
+        }
+
+        private synchronized void updateCurrentTask(String taskDescription) {
+            originalTask = taskDescription;
         }
 
         private synchronized ConversationContextSnapshot snapshot() {

@@ -100,6 +100,7 @@ public class ChatContextService implements IChatContextService {
                 .currentUser((String) finalCtx.get("currentUser"))
                 .currentDirectory((String) finalCtx.get("currentDirectory"))
                 .serverInfo((String) finalCtx.get("serverInfo"))
+                .uptime((String) finalCtx.get("uptime"))
                 .milestoneVOS((List<MilestoneVO>) finalCtx.get("milestoneVOS"))
                 .toolResultSummary((String) finalCtx.get("toolResultSummary"))
                 .taskDescription((String) finalCtx.get("taskDescription"))

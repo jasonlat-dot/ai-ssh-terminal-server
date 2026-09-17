@@ -13,9 +13,11 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.model.SessionSnapshot;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -68,9 +70,10 @@ import java.util.stream.Collectors;
  *
  * <p>你可以把它理解成：放在 ADK Session 前面的一道“净化器 + 限流器 + 修剪器”。
  * 目标不是把所有历史都留下，而是让框架层会话<strong>干净、轻量、可控</strong>，
- * 同时避免与业务侧 {@code ChatContextService} 管理的上下文发生重复和打架。
+ * 同时避免与业务侧 {@code ConversationContextStore} 管理的上下文发生重复和打架。
  */
 @Component
+@Slf4j
 public class CustomAdkSessionService implements BaseSessionService {
 
     /**
@@ -85,12 +88,110 @@ public class CustomAdkSessionService implements BaseSessionService {
     /** 最多保留的用户轮次数；轮次是比“消息条数”更自然的对话单位。 */
     private static final int MAX_TURNS = 4;
 
-    /** appName -> userId -> sessionId -> SessionSnapshot */
+    /**
+     * 运行期 Session 三级索引：appName -> userId -> sessionId -> SessionSnapshot。
+     * 三级键共同构成 ADK Session 的隔离边界，不能只使用 sessionId 建立全局索引。
+     */
     private final ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, SessionSnapshot>>> sessions = new ConcurrentHashMap<>();
     /** 预留的 user 级别状态存储。 */
     private final ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, Object>>> userState = new ConcurrentHashMap<>();
     /** 预留的 app 级别状态存储。 */
     private final ConcurrentMap<String, ConcurrentMap<String, Object>> appState = new ConcurrentHashMap<>();
+
+    /**
+     * 用业务层裁剪后的历史重建下一次 ADK invocation 的只读起点。
+     *
+     * <p>ConversationContextStore 才是跨请求历史的唯一事实来源；这里保存的 events
+     * 只是 ADK 本次执行所需的投影。旧 invocation 的 FunctionCall/FunctionResponse
+     * 会在这里被覆盖，但本次 runAsync 内仍可正常追加并驱动 ADK 自己的 ReAct 循环。</p>
+     *
+     * <p>工具结果不直接投影为孤立 FunctionResponse，避免破坏 ADK 协议配对；它们由
+     * ToolResultProvider 以摘要形式进入动态 Prompt。</p>
+     */
+    public void prepareInvocation(
+            String appName,
+            String userId,
+            String sessionId,
+            List<Map<String, Object>> businessHistory,
+            String terminalSessionId) {
+
+        SessionSnapshot snapshot = findSnapshot(appName, userId, sessionId);
+        if (snapshot == null) {
+            throw new IllegalStateException("session not found: " + appName + "/" + userId + "/" + sessionId);
+        }
+
+        List<Event> projectedEvents = new ArrayList<>();
+        if (businessHistory != null) {
+            for (Map<String, Object> message : businessHistory) {
+                Event event = projectBusinessMessage(message);
+                if (event != null) {
+                    projectedEvents.add(event);
+                }
+            }
+        }
+
+        /*
+         * prepareInvocation 与 appendEvent 都会成组修改 events/state/updateTime。
+         * ConcurrentMap 和 CopyOnWriteArrayList 只能保证单次操作安全，无法保证这一组操作原子，
+         * 因此仍以 snapshot 作为锁，避免同一 Session 的投影和事件追加相互穿插。
+         */
+        synchronized (snapshot) {
+            snapshot.getRawEvents().clear();
+            snapshot.getRawEvents().addAll(projectedEvents);
+            if (terminalSessionId == null || terminalSessionId.isBlank()) {
+                snapshot.getState().remove(SshExecuteAdkTool.TERMINAL_SESSION_STATE_KEY);
+            } else {
+                snapshot.getState().put(SshExecuteAdkTool.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+            }
+            snapshot.setLastUpdateTime(Instant.now());
+        }
+        log.info("ADK invocation 已准备 appName={}, userId={}, sessionId={}, terminalSessionId={}, businessMessages={}, projectedEvents={}",
+                appName, userId, sessionId,
+                terminalSessionId, businessHistory == null ? 0 : businessHistory.size(), projectedEvents.size());
+    }
+
+    /**
+     * 将业务消息转换为本次 ADK invocation 可读取的基础文本事件。
+     *
+     * <p>这里只投影 user 与 assistant/model 文本。业务历史中的 tool 消息如果脱离原始
+     * FunctionCall 直接投影，会形成孤立 FunctionResponse，因此由工具摘要通过动态 Prompt
+     * 提供，而不是伪造 ADK 工具协议事件。</p>
+     *
+     * @param message ConversationContextStore 中的一条业务消息
+     * @return 可投影的 ADK Event；空内容或不支持的角色返回 null
+     */
+    private Event projectBusinessMessage(Map<String, Object> message) {
+        if (message == null) {
+            return null;
+        }
+        String role = Objects.toString(message.get("role"), "");
+        String content = Objects.toString(message.get("content"), "");
+        if (content.isBlank()) {
+            return null;
+        }
+
+        String adkRole;
+        String author;
+        if ("user".equalsIgnoreCase(role)) {
+            adkRole = "user";
+            author = "user";
+        } else if ("assistant".equalsIgnoreCase(role) || "model".equalsIgnoreCase(role)) {
+            adkRole = "model";
+            author = "assistant";
+        } else {
+            return null;
+        }
+
+        return Event.builder()
+                .id(Event.generateEventId())
+                .author(author)
+                .content(Content.builder()
+                        .role(adkRole)
+                        .parts(List.of(Part.fromText(content)))
+                        .build())
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
 
     /**
      * 创建一个新的轻量 Session 快照。
@@ -166,6 +267,7 @@ public class CustomAdkSessionService implements BaseSessionService {
             return Maybe.empty();
         }
 
+        // 在副本上过滤，查询参数不能反向裁剪内部快照。
         List<Event> events = new ArrayList<>(snapshot.getRawEvents());
         if (configOpt.isPresent()) {
             GetSessionConfig config = configOpt.get();
@@ -230,6 +332,7 @@ public class CustomAdkSessionService implements BaseSessionService {
             if (appSessions != null) {
                 ConcurrentMap<String, SessionSnapshot> userSessions = appSessions.get(userId);
                 if (userSessions != null) {
+                    // 仅删除目标快照；父级空 Map 保留，避免并发创建会话时发生索引竞争。
                     userSessions.remove(sessionId);
                 }
             }
@@ -362,6 +465,7 @@ public class CustomAdkSessionService implements BaseSessionService {
     private Session toSession(SessionSnapshot snapshot, Optional<List<Event>> eventsOverride) {
         List<Event> events = eventsOverride.orElseGet(snapshot::getRawEvents);
         Session session = Session.builder(snapshot.getSessionKey())
+                // state 有意共享：ToolContext 对 state 的修改必须能回到同一快照；events 则必须隔离。
                 .state(snapshot.getState())
                 // 当前 invocation 使用独立列表；appendEvent 会分别更新 live Session 和快照。
                 .events(new ArrayList<>(events))
@@ -736,6 +840,10 @@ public class CustomAdkSessionService implements BaseSessionService {
         return "user".equalsIgnoreCase(resolveRole(event)) && !hasFunctionResponse(event);
     }
 
+    /**
+     * 按 Part 类型识别 FunctionResponse，不能只检查 role。
+     * ADK 通常把工具响应包装在 role=user 的 Content 中，但它不代表新的用户轮次。
+     */
     private boolean hasFunctionResponse(Event event) {
         return event.content()
                 .flatMap(Content::parts)

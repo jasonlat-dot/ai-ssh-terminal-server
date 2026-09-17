@@ -15,11 +15,18 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service("myTestPlugin")
 public class MyTestPlugin extends BasePlugin {
+
+    /** 按 invocation 汇总各次模型请求的 token，等 Agent 完整结束后只打印一次。 */
+    private final ConcurrentMap<String, InvocationUsage> invocationUsages = new ConcurrentHashMap<>();
 
     public MyTestPlugin(String name) {
         super(name);
@@ -54,6 +61,12 @@ public class MyTestPlugin extends BasePlugin {
             log.info("插件日志-🤖 智能体完成 | agentName:{} | invocationId:{}",
                     agent.name(),
                     callbackContext.invocationId());
+            InvocationUsage usage = invocationUsages.remove(callbackContext.invocationId());
+            if (usage != null && usage.total.get() > 0) {
+                log.info("插件日志-🧠 本次智能体 Token 总消耗 | invocationId:{} | input:{} | output:{} | total:{}",
+                        callbackContext.invocationId(),
+                        usage.input.get(), usage.output.get(), usage.total.get());
+            }
         });
     }
 
@@ -68,6 +81,15 @@ public class MyTestPlugin extends BasePlugin {
                     callbackContext.agentName(),
                     request.model().orElse("default"),
                     toolNames);
+            /*
+             * 这里记录的是 ADK 完成 system instruction、历史消息、当前消息和工具结果
+             * 组装之后，真正交给模型适配器的 LlmRequest。一次 ReAct 可能调用模型多次，
+             * 因而同一 invocationId 下会看到多条日志；后续日志会包含工具返回结果。
+             */
+            log.debug("上下文日志-📤 ADK 最终大模型请求 | invocationId:{} | agent:{} | request:{}",
+                    callbackContext.invocationId(),
+                    callbackContext.agentName(),
+                    request.toJson());
         });
     }
 
@@ -80,12 +102,40 @@ public class MyTestPlugin extends BasePlugin {
                     contentText,
                     llmResponse.turnComplete().orElse(false));
 
-            llmResponse.usageMetadata().ifPresent(usage -> {
-                log.info("插件日志-🧠 Token 消耗 | input:{} | output:{}",
-                        usage.promptTokenCount(),
-                        usage.candidatesTokenCount());
-            });
+            llmResponse.usageMetadata().ifPresent(usage -> recordUsage(
+                    callbackContext,
+                    usage.promptTokenCount().orElse(0),
+                    usage.candidatesTokenCount().orElse(0),
+                    usage.totalTokenCount().orElse(0)));
         });
+
+    }
+
+    private void recordUsage(CallbackContext callbackContext, int input, int output, int total) {
+        // 流式中间分片通常携带 0/0/0；真正的 usage 只在结束分片出现。
+        if (input <= 0 && output <= 0 && total <= 0) {
+            return;
+        }
+        log.info("插件日志-🧠 Token 消耗 | input:{} | output:{} | total:{}", input, output, total);
+        invocationUsages
+                .computeIfAbsent(callbackContext.invocationId(), ignored -> new InvocationUsage())
+                .addOnce(callbackContext.eventId(), input, output, total);
+    }
+
+    private static final class InvocationUsage {
+        private final Set<String> recordedModelEvents = ConcurrentHashMap.newKeySet();
+        private final AtomicInteger input = new AtomicInteger();
+        private final AtomicInteger output = new AtomicInteger();
+        private final AtomicInteger total = new AtomicInteger();
+
+        private void addOnce(String eventId, int inputTokens, int outputTokens, int totalTokens) {
+            if (!recordedModelEvents.add(eventId)) {
+                return;
+            }
+            input.addAndGet(inputTokens);
+            output.addAndGet(outputTokens);
+            total.addAndGet(totalTokens > 0 ? totalTokens : inputTokens + outputTokens);
+        }
     }
 
     @Override

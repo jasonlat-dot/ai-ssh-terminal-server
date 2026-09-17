@@ -13,6 +13,7 @@ public class PromptContextVO {
     private String osInfo;
     private String currentUser;
     private String currentDirectory;
+    private String uptime;
 
     /**
      * 执行命令

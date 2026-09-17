@@ -128,8 +128,7 @@ public class SshAgentMvpTest {
         log.info("4. AI 对话会话已创建 chatSessionId={}", chatSessionId);
 
         // 5. 绑定终端会话到 ThreadLocal（核心！executeCommand 工具从这里取 terminalSessionId）
-        SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-        log.info("5. ThreadLocal 已绑定终端会话");
+        log.info("5. 终端会话将随每次请求传递");
 
         log.info("========== MVP 初始化完成，可以开始对话了 ==========\n");
     }
@@ -162,8 +161,6 @@ public class SshAgentMvpTest {
 
             try {
                 // 每次对话前重新绑定 ThreadLocal（防止异步线程丢失）
-                SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-
                 System.out.print("AI > ");
                 Flowable<Event> events = chatService.handleMessageStream(
                         AGENT_ID, USER_ID, chatSessionId, input, terminalSessionId);
@@ -192,8 +189,6 @@ public class SshAgentMvpTest {
      */
     @Test
     public void test_singleChat() throws InterruptedException {
-        SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
-
         String message = "使用docker ps查看服务器docker有哪些容器在运行";
         log.info("发送消息: {}", message);
 

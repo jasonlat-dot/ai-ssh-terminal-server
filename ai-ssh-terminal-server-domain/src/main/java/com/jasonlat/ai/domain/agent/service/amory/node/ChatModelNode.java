@@ -138,6 +138,8 @@ public class ChatModelNode extends AbstractAmorySupport {
                 .defaultOptions(OpenAiChatOptions.builder()
                         // 不要让 spring ai 内部调用工具 否则google adk 拿不到工具结果
                         .internalToolExecutionEnabled(false)
+                        // OpenAI 流式响应默认不一定返回 usage；开启后最后一个分片会携带 token 统计。
+                        .streamUsage(true)
                         .model(chatModelConfig.getModel())
                         .toolCallbacks(toolCallbacks)
                         .build())
