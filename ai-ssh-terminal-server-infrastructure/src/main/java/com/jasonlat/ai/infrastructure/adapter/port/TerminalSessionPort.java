@@ -12,18 +12,13 @@ import org.springframework.stereotype.Component;
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 
 /**
@@ -161,8 +156,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             /*
              * 保存 Terminal session。
              */
-            terminalSessions.put(sessionId, context
-            );
+            terminalSessions.put(sessionId, context);
 
             /*
              * 保存 connection 当前对应的 terminal session。
@@ -250,9 +244,10 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
          * a12bc3
          * 所以增加独立 writeLock。
          */
+        // 优化：锁内只保留IO操作
+        byte[] bytes = command.getBytes(StandardCharsets.UTF_8);
         synchronized (context.writeLock) {
             try {
-                byte[] bytes = command.getBytes(StandardCharsets.UTF_8);
                 context.outputStream.write(bytes);
                 /*
                  * Terminal 输入应该立即发送，
@@ -313,18 +308,28 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * RS(\036) 和 US(\037) 包住边界；结束标记同时携带 $?，让上层既得到输出，
              * 也能知道命令是否成功。eval 的参数经过单引号转义，避免破坏包装脚本结构。
              */
+//            String shellCommand = "printf '\\036SSH_AGENT_START_" + token + "\\037\\n'; "
+//                    + "eval '" + escapeForSingleQuotedShell(command) + "'; "
+//                    + "__ssh_agent_exit_code=$?; "
+//                    + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\r";
             String shellCommand = "printf '\\036SSH_AGENT_START_" + token + "\\037\\n'; "
+                    + "set -o pipefail; "
                     + "eval '" + escapeForSingleQuotedShell(command) + "'; "
                     + "__ssh_agent_exit_code=$?; "
-                    + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\r";
+                    + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\n";
+
 
             try {
                 write(sessionId, shellCommand);
 
                 /*
                  * 当前线程等待的是 AgentCommandCapture.result，不是 readAsync()。
-                 * SSH Reader 在后台持续读取并同时喂给 Agent 捕获器和前端 outputBuffer，
-                 * 因此前端长轮询与这里不会再互相替换或消费数据。
+                    - 后台 Reader 线程持续读到 SSH 输出，进入`capture.accept(incoming)`
+                    - `accept`内部扫描流，匹配开始标记，开始收集输出
+                    - 当 Reader 读到**结束标记 `SSH_AGENT_END_token:exitcode`**
+                      - 解析 exitCode
+                      - 把收集好的命令输出，调用 `capture.result.complete(最终文本)`
+                      - Future 完成 → **主线程的 get () 唤醒，拿到返回字符串**
                  */
                 return capture.result.get(timeoutSeconds, TimeUnit.SECONDS);
             } catch (TimeoutException e) {

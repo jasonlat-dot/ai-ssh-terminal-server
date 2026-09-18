@@ -115,22 +115,21 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     /**
      * 发送步数结束事件
      */
-    protected boolean sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, boolean shouldContinue, int totalToolCalls) {
+    protected boolean sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, int totalToolCalls) {
         try {
             ReActEventDTO.StepInfo stepInfo = new ReActEventDTO.StepInfo();
             stepInfo.setCurrentStep(currentStep);
             stepInfo.setMaxSteps(maxSteps);
-            stepInfo.setShouldContinue(shouldContinue);
             stepInfo.setTotalToolCalls(totalToolCalls);
 
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.ROUND_END.getCode());
             event.setStepInfo(stepInfo);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
-            log.info("ReAct链路-SSE round_end 已发送 | currentStep:{} | maxSteps:{} | "
-                            + "shouldContinue:{} | totalToolCalls:{}",
-                    currentStep, maxSteps, shouldContinue, totalToolCalls);
+            log.info("ReAct链路-SSE round_end 已发送 | currentStep:{} | maxSteps:{} | totalToolCalls:{}",
+                    currentStep, maxSteps, totalToolCalls);
             return true;
+
         } catch (Exception e) {
             log.warn("ReAct链路-SSE round_end 发送失败 | currentStep:{} | totalToolCalls:{} | reason:{}",
                     currentStep, totalToolCalls, e.getMessage());
@@ -158,19 +157,19 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
         }
     }
 
-    /** 发送可被前端直接识别的错误事件。 */
-    protected boolean sendErrorEvent(ResponseBodyEmitter emitter, String message) {
+    /**
+     * 发送可被前端直接识别的错误事件。
+     */
+    protected void sendErrorEvent(ResponseBodyEmitter emitter, String message) {
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.ERROR.getCode());
             event.setContent(message);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             log.info("ReAct链路-SSE error 已发送 | messageLength:{}", safeLength(message));
-            return true;
         } catch (Exception e) {
             log.warn("ReAct链路-SSE error 发送失败 | messageLength:{} | reason:{}",
                     safeLength(message), e.getMessage());
-            return false;
         }
     }
 

@@ -9,6 +9,8 @@ import com.jasonlat.design.framework.tree.StrategyHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.regex.Pattern;
+
 /**
  * 单次 ADK invocation 的结束条件收口节点。
  *
@@ -70,7 +72,8 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
         }
 
         // 防御性检查：正常情况下设置 errorMessage 的节点也会同步设置 ERROR stopReason。
-        if (dynamicContext.getErrorMessage() != null) {
+        String errorMessage = dynamicContext.getErrorMessage();
+        if (errorMessage != null && !errorMessage.isEmpty()) {
             log.warn("ReAct链路-检测到错误状态 | sessionId:{} | error:{}",
                     dynamicContext.getChatSessionId(), dynamicContext.getErrorMessage());
             dynamicContext.setStopReason(StopReasonEnum.ERROR.getCode());
@@ -124,22 +127,21 @@ public class LoopDecisionNode extends AbstractAIAgentReActSupport {
     //  辅助方法
     // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * 检查是否包含终止指令
-     * 参考 WaLiCode streamingAgent.ts 的终止条件判断
-     */
+    private static final Pattern FINISH_COMMAND_PATTERN = Pattern.compile(
+            "(?im)^\\s*(?:"
+                    + "<finish>"
+                    + "|\\[finish]"
+                    + "|action\\s*:\\s*finish"
+                    + ")\\s*[.!。！]?\\s*$"
+    );
+
     private boolean containsFinishCommand(String content) {
         if (content == null || content.isBlank()) {
             return false;
         }
-
-        String lowerContent = content.toLowerCase();
-        boolean containsFinish = lowerContent.contains("<finish>")
-                || lowerContent.contains("[finish]")
-                || lowerContent.contains("action: finish");
-        log.debug("ReAct链路-finish 指令检查完成 | contentLength:{} | matched:{}",
-                content.length(), containsFinish);
-        return containsFinish;
+        boolean matched = FINISH_COMMAND_PATTERN.matcher(content).find();
+        log.debug("ReAct链路-finish 指令检查完成 | contentLength:{} | matched:{}", content.length(), matched);
+        return matched;
     }
 
     private long elapsedMillis(long startNanos) {

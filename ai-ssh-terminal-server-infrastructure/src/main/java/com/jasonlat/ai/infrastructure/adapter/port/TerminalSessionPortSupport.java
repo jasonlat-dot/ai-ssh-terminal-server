@@ -374,6 +374,11 @@ public class TerminalSessionPortSupport {
             return displayPrefix + displayOutput + afterMarker;
         }
 
+        /**
+         * 从 `pending`（标记解析缓冲区）取出指定长度的文本，
+         * 删掉 pending 里已经消费掉的内容；同时把这份文本存入专门给 Agent 的`output`缓冲区，
+         * 并做 Agent 侧最大输出上限保护。返回值交给前端终端渲染。
+         */
         private String consumeOutput(int length) {
             if (length <= 0) return "";
             String value = pending.substring(0, length);
@@ -391,6 +396,11 @@ public class TerminalSessionPortSupport {
             return value;
         }
 
+        /**
+         * 只保留 StringBuilder 末尾最多
+         * 「marker 长度」的字符，删掉前面所有内容。
+         * 用来防止跨分片时标记被拆断，保留有可能构成标记的尾部片段。
+         */
         private static void retainPossibleMarkerPrefix(StringBuilder value, String marker) {
             int overlap = markerPrefixOverlap(value, marker);
             if (value.length() > overlap) value.delete(0, value.length() - overlap);
@@ -510,11 +520,13 @@ public class TerminalSessionPortSupport {
                     log.warn("Terminal输出缓冲区溢出，丢弃部分旧数据 sessionId={} oldSize={} incomingSize={} maxSize={}",
                             context.sessionId, currentSize, terminalOutput.length(), MAX_OUTPUT_BUFFER_SIZE
                     );
+                } else {
+                    /*
+                     * 缓冲区足够保存本次 SSH 输出。
+                     */
+                    context.outputBuffer.append(terminalOutput);
                 }
-                /*
-                 * 保存本次 SSH 输出。
-                 */
-                context.outputBuffer.append(terminalOutput);
+
             }
 
 
@@ -875,8 +887,7 @@ public class TerminalSessionPortSupport {
                      * 直接继续下一次 read 即可。
                      * 千万不要重新启动新的 reader Thread。
                      */
-                    log.debug("Terminal reader SocketTimeout，继续等待 sessionId={}", context.sessionId
-                    );
+                    log.debug("Terminal reader SocketTimeout，继续等待 sessionId={}", context.sessionId);
                     continue;
                 }
 

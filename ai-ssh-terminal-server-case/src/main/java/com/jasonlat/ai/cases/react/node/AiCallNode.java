@@ -117,12 +117,14 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                         + "enrichedLength:{} | addedLength:{} | durationMs:{}",
                 context.getChatSessionId(), safeLength(userMessage), safeLength(enrichedMessage),
                 Math.max(0, safeLength(enrichedMessage) - safeLength(userMessage)), elapsedMillis(promptStartNanos));
+
         Content userContent = Content.builder()
                 .role("user")
                 .parts(List.of(Part.fromText(enrichedMessage)))
                 .build();
         log.debug("上下文日志-📝 本次 ADK 当前用户消息 | sessionId:{} | userContent:{}",
                 context.getChatSessionId(), userContent.toJson());
+
         // maxLlmCalls 限制的是 ADK 内部真实模型调用次数，而不是外层 Node 的执行次数。
         RunConfig runConfig = RunConfig.builder()
                 .streamingMode(RunConfig.StreamingMode.SSE)
@@ -130,6 +132,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 .build();
         log.debug("ReAct链路-RunConfig 构建完成 | sessionId:{} | streamingMode:{} | maxLlmCalls:{}",
                 context.getChatSessionId(), RunConfig.StreamingMode.SSE, context.getMaxLlmCalls());
+
         ResponseBodyEmitter emitter = context.getEmitter();
         // fullText 用于 SSE 累计正文和最终 DTO；assistantSegment 只保存尚未写入历史的连续文本段。
         StringBuilder fullText = new StringBuilder();
@@ -141,11 +144,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 context.getChatSessionId(), context.getUserId(), context.getTerminalSessionId(),
                 trimmedHistory.size(), context.getMaxLlmCalls());
         try {
-            Iterator<Event> events = runner.runAsync(context.getUserId(),
-                    context.getChatSessionId(), userContent, runConfig).blockingIterable().iterator();
 
-            while (events.hasNext()) {
-                Event event = events.next();
+            for (Event event : runner.runAsync(context.getUserId(),
+                    context.getChatSessionId(), userContent, runConfig).blockingIterable()) {
                 ensureNotCancelled(context);
                 eventCount++;
 
@@ -165,6 +166,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     log.debug("ReAct链路-处理 assistant 文本增量 | sessionId:{} | sequence:{} | "
                                     + "chunkLength:{} | accumulatedLength:{}",
                             context.getChatSessionId(), eventCount, eventText.length(), fullText.length());
+
                     if (!sendTextEvent(emitter, eventText, fullText.toString())) {
                         context.getCancelled().set(true);
                         log.warn("ReAct链路-文本 SSE 发送失败，标记取消 | sessionId:{} | sequence:{}",
@@ -222,8 +224,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 外层 step 表示一次完整 ADK invocation；内部发生多少次 LLM/工具调用由 ADK 管理。
         context.incrementStep();
         context.getResult().setTotalSteps(context.getStep());
-        boolean roundEndSent = sendRoundEndEvent(emitter, context.getStep(), context.getMaxSteps(), false,
-                context.getTotalToolCallCount().get());
+        boolean roundEndSent = sendRoundEndEvent(emitter, context.getStep(), context.getMaxSteps(), context.getTotalToolCallCount().get());
+
         log.info("ReAct链路-AiCallNode 完成 | sessionId:{} | events:{} | toolCalls:{} | "
                         + "toolResults:{} | textLength:{} | historySize:{} | roundEndSent:{} | "
                         + "stopReason:{} | error:{} | durationMs:{}",

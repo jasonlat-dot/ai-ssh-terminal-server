@@ -38,13 +38,17 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
     @Override
     protected ReActResultDTO doApply(ChatRequest request, DefaultReActFactory.DynamicContext context) throws Exception {
+
         long nodeStartNanos = System.nanoTime();
+
         List<ToolCallDTO> calls = context.getCurrentToolCalls();
         List<ToolResultDTO> results = context.getCurrentToolResults();
+
         log.info("ReAct链路-ToolCallNode 开始 | sessionId:{} | calls:{} | results:{} | "
                         + "roundToolCalls:{} | totalToolCalls:{}",
                 context.getChatSessionId(), sizeOf(calls), sizeOf(results),
                 context.getRoundToolCallCount().get(), context.getTotalToolCallCount().get());
+
         // 不能依赖数组下标：并行/多工具事件可能乱序，必须使用 ADK toolCallId 关联。
         ToolResultReconciler.Reconciliation reconciliation =
                 ToolResultReconciler.reconcile(calls, results);
@@ -60,12 +64,14 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
                             + "resultLength:{}",
                     context.getChatSessionId(), call.id(), call.name(), safeLength(result.content()));
             promptService.detectAndRecordMilestone(context.getChatSessionId(), "tool", result.content());
+
             log.debug("ReAct链路-调用工具摘要归档 | sessionId:{} | toolCallId:{} | toolName:{} | "
                             + "commandLength:{} | resultLength:{}",
                     context.getChatSessionId(), call.id(), call.name(), command.length(),
                     safeLength(result.content()));
             chatContextService.pushToolResult(
                     context.getChatSessionId(), call.name(), command, result.content());
+
             log.info("ADK 工具结果已归档 sessionId={}, id={}, name={}, status={}, outputLength={}",
                     context.getChatSessionId(), call.id(), call.name(), result.status(),
                     result.content() == null ? 0 : result.content().length());
@@ -78,27 +84,24 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
         for (ToolCallDTO call : reconciliation.missing()) {
             String command = resolveCommand(call.args());
             String error = "ADK 未返回工具结果: " + call.name();
+
             context.getCurrentToolResults().add(new ToolResultDTO(
                     call.id(), call.name(), error, command, ToolStatusEnum.ERROR.getCode()));
-            boolean resultSent = sendToolResultEvent(
-                    context.getEmitter(), call.id(), error, ToolStatusEnum.ERROR);
+            boolean resultSent = sendToolResultEvent(context.getEmitter(), call.id(), error, ToolStatusEnum.ERROR);
+
             promptService.detectAndRecordMilestone(context.getChatSessionId(), "tool", error);
             chatContextService.pushToolResult(context.getChatSessionId(), call.name(), command, error);
+
             log.error("ReAct链路-ADK 工具结果缺失 | sessionId:{} | toolCallId:{} | toolName:{} | "
                             + "syntheticResultSent:{}",
                     context.getChatSessionId(), call.id(), call.name(), resultSent);
         }
 
-        if (!reconciliation.missing().isEmpty()) {
-            context.setErrorMessage("有 " + reconciliation.missing().size() + " 个工具调用缺少 FunctionResponse");
-            context.setStopReason(StopReasonEnum.ERROR.getCode());
-            log.warn("ReAct链路-ToolCallNode 设置终止原因 | sessionId:{} | stopReason:{} | error:{}",
-                    context.getChatSessionId(), context.getStopReason(), context.getErrorMessage());
-        }
         log.info("ReAct链路-ToolCallNode 完成 | sessionId:{} | matched:{} | missing:{} | "
                         + "toolResults:{} | durationMs:{}",
                 context.getChatSessionId(), reconciliation.matched().size(), reconciliation.missing().size(),
                 context.getCurrentToolResults().size(), elapsedMillis(nodeStartNanos));
+
         return router(request, context);
     }
 
