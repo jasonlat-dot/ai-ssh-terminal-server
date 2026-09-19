@@ -308,6 +308,18 @@ public class HybridReducer extends AbstractReducerSupport {
     /**
      * 判断一条 assistant 消息是否为工具调用入口消息。
      *
+     * <p>案例：
+     * <pre>
+     *   messageA = {role=assistant, tool_calls=[{id=call_1, type=...}]}
+     *              -> true  （assistant 且有 tool_calls，是工具调用入口）
+     *
+     *   messageB = {role=assistant, content="根据磁盘情况，建议清理日志"}
+     *              -> false （assistant 但没有 tool_calls，是普通回复）
+     *
+     *   messageC = {role=tool, tool_call_id=call_1, content="磁盘 80%"}
+     *              -> false （role 不是 assistant）
+     * </pre>
+     *
      * @param message 待判断消息
      * @return true 表示该消息包含 tool_calls
      */
@@ -319,8 +331,16 @@ public class HybridReducer extends AbstractReducerSupport {
     /**
      * 判断消息是否存在非空 tool_calls 列表。
      *
+     * <p>案例：
+     * <pre>
+     *   messageA = {role=assistant, tool_calls=[{id=call_1, type="bash"}]}  -> true
+     *   messageB = {role=assistant, content="直接回复，无工具调用"}             -> false（无 tool_calls 字段）
+     *   messageC = {role=assistant, tool_calls=[]}                          -> false（tool_calls 为空列表）
+     *   messageD = {role=tool, content="结果"}                               -> false（role 不是 assistant）
+     * </pre>
+     *
      * @param message 待判断消息
-     * @return true 表示存在 tool_calls
+     * @return true 表示消息中存在非空 tool_calls 列表
      */
     private boolean hasToolCalls(Map<String, Object> message) {
         Object toolCalls = message.get("tool_calls");
@@ -329,6 +349,21 @@ public class HybridReducer extends AbstractReducerSupport {
 
     /**
      * 提取 assistant 工具调用消息中的全部 tool_call_id。
+     *
+     * <p>案例：
+     * <pre>
+     *   message = {role=assistant, tool_calls=[
+     *                {id="call_1", function={name="bash"}},
+     *                {id="call_2", function={name="read_file"}}
+     *              ]}
+     *   -> {"call_1", "call_2"}
+     *
+     *   message = {role=assistant, tool_calls=[]}
+     *   -> {} （空列表，返回空集合）
+     *
+     *   message = {role=user, content="hello"}
+     *   -> {} （无 tool_calls 字段，返回空集合）
+     * </pre>
      *
      * @param message assistant 工具调用消息
      * @return tool_call_id 集合
@@ -352,43 +387,6 @@ public class HybridReducer extends AbstractReducerSupport {
         return toolCallIds;
     }
 
-    /**
-     * 判断一条消息是否属于当前工具调用组的 tool result。
-     *
-     * <p>案例：
-     * <pre>
-     *   当前组 toolCallIds = {"call_1"}
-     *
-     *   messageA = {role=tool, tool_call_id=call_1} -> true
-     *   messageB = {role=tool, tool_call_id=call_2} -> false
-     * </pre>
-     *
-     * @param message 待匹配消息
-     * @param toolCallIds 当前工具调用组的 id 集合
-     * @return true 表示该消息是匹配结果
-     */
-    private boolean isMatchingToolResult(Map<String, Object> message, Set<String> toolCallIds) {
-        String role = stringValue(message.get("role"));
-        String type = stringValue(message.get("type"));
-        if (!"tool".equals(role) && !"tool_result".equals(type)) {
-            return false;
-        }
-        String toolCallId = stringValue(message.get("tool_call_id"));
-        if (toolCallId.isEmpty()) {
-            toolCallId = stringValue(message.get("tool_use_id"));
-        }
-        return !toolCallId.isEmpty() && toolCallIds.contains(toolCallId);
-    }
-
-    /**
-     * 安全获取对象字符串值，避免 null 干扰判断逻辑。
-     *
-     * @param value 原始对象
-     * @return 非 null 字符串
-     */
-    private String stringValue(Object value) {
-        return value == null ? "" : String.valueOf(value);
-    }
 
     /**
      * 消息组。

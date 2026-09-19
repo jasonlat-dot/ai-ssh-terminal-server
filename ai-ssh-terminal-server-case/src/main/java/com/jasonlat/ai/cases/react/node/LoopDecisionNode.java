@@ -17,8 +17,6 @@ import java.util.regex.Pattern;
  * <p>当前架构由 ADK 在 {@code runAsync} 内完成模型与工具的 ReAct 循环，本节点不会再路由
  * 回 AiCallNode。它只把取消、保护阈值、显式 finish、错误或正常完成统一转换为 stopReason，
  * 再交给 UserFeedbackNode 生成最终结果。</p>
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Component("reactLoopDecisionNode")

@@ -40,13 +40,29 @@ public class MilestoneTracker {
     /**
      * 检测并记录里程碑事件。
      * <p>
-     * 规则来自 {@code ai.agent.context.milestone.rules}，先按 priority 降序匹配；
-     * 相同优先级保持 YAML 中的声明顺序。一次消息只记录第一条命中的规则。
-     *
-     * @param sessionId 会话 ID，按会话隔离里程碑
-     * @param role      消息角色："user" 或 "tool"
-     * @param content   消息内容，为 null 或空时直接返回
-     */
+     * 按角色分别识别关键事件，记录到会话级缓存。
+     * <p>
+     * 案例 1：用户纠偏
+     * <pre>
+     *   detectAndRecord("session-001", "user", "不对，应该是看 /var/log/nginx/error.log")
+     *   -> 匹配 "不对|不是这样|改一下|换个思路"
+     *   -> 记录 TASK_CHANGE: "不对，应该是看 /var/log/nginx/error.log"
+     * </pre>
+     * <p>
+     * 案例 2：工具报错
+     * <pre>
+     *   detectAndRecord("session-001", "tool", "Error: permission denied")
+     *   -> 匹配 "error|failed|exception"
+     *   -> 记录 ERROR: "Error: permission denied"
+     * </pre>
+     * <p>
+     * 案例 3：任务完成
+     * <pre>
+     *   detectAndRecord("session-001", "user", "完成了，帮大忙了！")
+     *   -> 匹配 "完成了|搞定|结束"
+     *   -> 记录 TASK_COMPLETE: "搞定，帮大忙了！"
+     * </pre>
+     * */
     public void detectAndRecord(String sessionId, String role, String content) {
         if (!properties.isEnabled()
                 || sessionId == null || sessionId.isBlank()
@@ -68,7 +84,7 @@ public class MilestoneTracker {
                     .timestamp(System.currentTimeMillis())
                     .build();
             push(sessionId, milestone);
-            if (rule.type() == MilestoneVO.Type.TASK_CHANGE && "user".equals(normalizedRole)) {
+            if ((rule.type() == MilestoneVO.Type.TASK_CHANGE || rule.type().equals(MilestoneVO.Type.TASK_COMPLETE)) && "user".equals(normalizedRole)) {
                 conversationContextStore.updateCurrentTask(sessionId, content);
                 log.info("会话当前任务已更新 sessionId={}, ruleId={}", sessionId, rule.id());
             }

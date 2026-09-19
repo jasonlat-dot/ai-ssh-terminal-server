@@ -56,6 +56,20 @@ public interface IPromptService {
      */
     String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory);
 
+    /**
+     * 构建带动态上下文前缀的富化消息（含意图标签）。
+     *
+     * @param userMessage       原始用户消息
+     * @param sessionId         会话 ID
+     * @param userId            用户 ID
+     * @param terminalSessionId 终端会话 ID
+     * @param recentCommands    最近执行命令
+     * @param messageHistory    对话历史
+     * @param intentLabel       意图标签（由意图识别系统提供，可为 null）
+     * @return 富化后的消息
+     */
+    String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory, String intentLabel);
+
 
     /**
      * 清除指定会话的里程碑记录

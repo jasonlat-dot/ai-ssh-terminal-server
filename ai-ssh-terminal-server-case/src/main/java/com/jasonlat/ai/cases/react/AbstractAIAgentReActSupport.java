@@ -38,7 +38,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
     protected <T> T getBean(String beanName) {
         T bean = (T) applicationContext.getBean(beanName);
         log.debug("ReAct链路-解析路由 Bean | beanName:{} | beanType:{}",
-                beanName, bean == null ? null : bean.getClass().getSimpleName());
+                beanName, bean.getClass().getSimpleName());
         return bean;
     }
 

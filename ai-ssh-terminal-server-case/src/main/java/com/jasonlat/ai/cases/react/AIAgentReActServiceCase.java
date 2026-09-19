@@ -49,7 +49,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Override
     public ResponseBodyEmitter chatStream(ChatRequest requestDTO) {
         long requestStartNanos = System.nanoTime();
-        // 1. 创建 SSE 发射器（10 分钟超时）
+        // 1. 创建 SSE 发射器（30 分钟超时）
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(30 * 60 * 1000L);
 
         try {

@@ -55,7 +55,28 @@ public class DynamicPromptBuilder {
      * 在 Agent 装配阶段就固定了，运行期改不了，因此把动态上下文拼在用户消息前面。
      * <p>
      * 三类上下文"有才拼、没有不拼"：第一轮对话无历史时返回空串，不塞空标题浪费 token。
+     * <p>
+     * 案例 1：有环境信息和里程碑
+     * <pre>
+     *   ctx = PromptContextVO {
+     *     serverInfo="192.168.1.100",
+     *     osInfo="Linux 5.15.0",
+     *     currentUser="root",
+     *     currentDirectory="/var/log/nginx",
+     *     milestoneVOS=[{type=ERROR, content="permission denied"}],
+     *     intentLabel="DIAGNOSE"
+     *   }
+     *   返回：
+     *   "[系统环境]\n服务器: 192.168.1.100\n系统: Linux 5.15.0\n用户: root\n目录: /var/log/nginx\n\n[关键事件]\n- [ERROR] permission denied\n\n[用户意图]\nDIAGNOSE\n"
+     * </pre>
      *
+     * <p>
+     * 案例 2：无动态信息（返回空串）
+     * <pre>
+     *   ctx = PromptContextVO {}  // 所有字段为空
+     *
+     *   返回：""  // 不返回空标题，避免浪费 token
+     * </pre>
      * @param ctx 动态上下文，为 null 时返回空串
      *化消息前缀文本，无内容时返回空串
      */
@@ -104,6 +125,14 @@ public class DynamicPromptBuilder {
         }
 
         if (!hasContent) return "";
+
+        // 意图标签（由意图识别系统经 PromptContextVO.intentLabel 注入，让 AI 感知用户当前意图）
+        // 输出形如 "[用户意图]\nDIAGNOSE\n"，仅做提示不做强制路由。
+        if (!isEmpty(ctx.getIntentLabel())) {
+            log.info("意图识别:{}", ctx.getIntentLabel());
+            sb.append("\n[用户意图]\n").append(ctx.getIntentLabel()).append("\n");
+        }
+
 
         String prefix = sb.toString();
         log.debug("构建消息前缀，长度: {}", prefix.length());

@@ -1,5 +1,6 @@
 package com.jasonlat.ai.cases.react.facotry;
 
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.ai.trigger.api.dto.ToolCallDTO;
 import com.jasonlat.ai.trigger.api.dto.ToolResultDTO;
@@ -151,6 +152,17 @@ public class DefaultReActFactory {
         /** 正常发送 done 后置为 true，避免 onCompletion 将正常完成误判为断连。 */
         @Builder.Default
         private AtomicBoolean completed = new AtomicBoolean(false);
+
+        // ══════════════════════════════════════════════════════════
+        //  意图状态（Phase 3: 意图识别系统）
+        // ══════════════════════════════════════════════════════════
+
+        /** 当前意图名称（IntentTypeEnumVO 的 name()，注入 Prompt 前缀用） */
+        private String currentIntent;
+
+        /** 当前意图识别完整结果（供反馈回路 reportFeedback 读取与重分类回写） */
+        private IntentResultVO currentIntentResult;
+
 
         // ══════════════════════════════════════════════════════════
         //  结果对象（供 UserFeedbackNode 使用）

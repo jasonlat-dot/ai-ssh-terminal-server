@@ -1,9 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.amory.node;
 
 import com.google.adk.agents.BaseAgent;
-import com.google.adk.agents.SequentialAgent;
 import com.google.adk.plugins.BasePlugin;
-import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.runner.Runner;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
@@ -66,6 +64,9 @@ public class RunnerNode extends AbstractAmorySupport {
                 .agentDesc(agentDesc)
                 .sessionExpireSeconds(aiAgentConfigTableVO.getSessionExpireSeconds())
                 .runner(Runner)
+                // 透传 Agent 的 API 配置与模型名，供意图识别等旁路能力复用（见 AiAgentRegisterVO）。这样就都统一了，都用一套LLM配置
+                .openAiApi(dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(appName)))
+                .chatModelName(aiAgentConfigTableVO.getModule().getChatModel().getModel())
                 .build();
 
         // 注册到Spring容器

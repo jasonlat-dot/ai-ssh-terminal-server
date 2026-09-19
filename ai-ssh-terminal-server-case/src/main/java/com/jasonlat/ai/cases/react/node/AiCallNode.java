@@ -11,10 +11,15 @@ import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
+import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
+import com.jasonlat.ai.domain.agent.service.intent.IntentService;
 import com.jasonlat.ai.domain.agent.service.util.AgentUtils;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -29,7 +34,6 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -54,6 +58,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     private IPromptService promptService;
     @Resource
     private IChatContextService chatContextService;
+    @Resource
+    private IIntentService intentService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest request, DefaultReActFactory.DynamicContext context) throws Exception {
@@ -73,12 +79,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
 
         Runner runner = registration.getRunner();
-        String userMessage = request.getMessage();
-        log.info("ReAct链路-Agent Runner 获取完成 | sessionId:{} | agentId:{} | appName:{} | "
-                        + "runnerType:{} | sessionServiceType:{} | durationMs:{}",
-                context.getChatSessionId(), context.getAgentId(), runner.appName(),
-                runner.getClass().getSimpleName(), runner.sessionService().getClass().getSimpleName(),
-                elapsedMillis(lookupStartNanos));
+        String userMessage = getLastUserMessage(request, context);
+
         // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
         context.resetRoundBuffers();
         context.resetRoundToolCalls();
@@ -88,6 +90,35 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                         + "currentToolResults:{} | roundToolCalls:{}",
                 context.getChatSessionId(), context.getCurrentToolCalls().size(),
                 context.getCurrentToolResults().size(), context.getRoundToolCallCount().get());
+
+        // [Phase 3] 意图识别 —— 注入当前 Agent 的 API 配置后，再识别用户意图
+        // 复用智能体自己的模型配置，不单独配置意图识别模型
+        // 步骤：①configure 注入 API → ②classify 识别 → ③存入上下文 → ④不硬路由
+        IntentRequestVO.IntentRequestVOBuilder intentRequestVOBuilder = IntentRequestVO.builder()
+                .userId(context.getUserId())
+                .chatSessionId(context.getChatSessionId())
+                .userMessage(userMessage);
+        if (registration.getOpenAiApi() != null) {
+            intentRequestVOBuilder.llmIntentOpenAiApi(registration.getOpenAiApi());
+            intentRequestVOBuilder.llmIntentModelName(registration.getChatModelName());
+        }
+        IntentResultVO intentResult = intentService.classify(intentRequestVOBuilder.build());
+        log.info("识别到用户意图: {}, 置信度: {}, 候选: {}, 重分类: {}",
+                intentResult.getIntent().getLabel(),
+                intentResult.getConfidence(),
+                intentResult.getCandidateIntents(),
+                intentResult.isReclassified());
+
+        // 将意图保存到上下文供后续使用
+        context.setCurrentIntent(intentResult.getIntent().name());
+        context.setCurrentIntentResult(intentResult);
+
+        // COMPOUND / UNKNOWN / 低置信度：交给主模型自行判断，不再硬路由
+        if (intentResult.getIntent().equals(IntentTypeEnumVO.COMPOUND)) {
+            log.info("复合意图，候选 {} —— 交由主模型拆解", intentResult.getCandidateIntents());
+        } else if (intentResult.getIntent().equals(IntentTypeEnumVO.UNKNOWN) || intentResult.getConfidence() < 0.5) {
+            log.info("意图不确定 ({}，conf={}) —— 全交主模型决策", intentResult.getIntent(), intentResult.getConfidence());
+        }
 
         /*
          * 业务历史是唯一事实来源，ADK Session 只是本次调用的临时投影。
@@ -100,15 +131,17 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         long trimStartNanos = System.nanoTime();
         log.info("ReAct链路-调用历史裁剪 | sessionId:{} | inputMessages:{} | tokenBudget:{}",
                 context.getChatSessionId(), historySizeBeforeTrim, 0);
+
         List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(context.getMessageHistory(), 0);
         context.setMessageHistory(new ArrayList<>(trimmedHistory));
         log.info("ReAct链路-历史裁剪完成 | sessionId:{} | before:{} | after:{} | removed:{} | durationMs:{}",
                 context.getChatSessionId(), historySizeBeforeTrim, trimmedHistory.size(),
                 Math.max(0, historySizeBeforeTrim - trimmedHistory.size()), elapsedMillis(trimStartNanos));
-        log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
-                context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
+
         // 同步覆盖 ADK 临时 Session：只投影裁剪后的历史和本次工具所需的终端会话 ID。
         prepareAdkInvocation(runner, context, trimmedHistory);
+        log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
+                context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
 
         // 动态 Prompt 只增强“本次用户消息”；原始消息仍保存在业务历史中，便于后续业务分析。
         long promptStartNanos = System.nanoTime();
@@ -321,10 +354,13 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
             // SshExecuteAdkTool 的稳定协议为 output/command/success；缺少 success 时按失败处理。
             Map<String, Object> result = response.response().orElse(Map.of());
+
             String output = String.valueOf(result.getOrDefault("output", ""));
             String command = String.valueOf(result.getOrDefault("command", ""));
+
             boolean success = Boolean.TRUE.equals(result.get("success"));
             ToolStatusEnum status = success ? ToolStatusEnum.SUCCESS : ToolStatusEnum.ERROR;
+
             context.getCurrentToolResults().add(new ToolResultDTO(id, name, output, command, status.getCode()));
             accepted++;
             // tool 消息必须紧跟对应 assistant.tool_calls，下一次业务请求才能还原完整工具上下文。
@@ -337,9 +373,71 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                             + "status:{} | commandLength:{} | outputLength:{} | historySize:{} | sseSent:{}",
                     context.getChatSessionId(), id, name, status.getCode(), command.length(), output.length(),
                     context.getMessageHistory().size(), toolResultSent);
+
+            // 反馈回路：根据工具结果判定当前意图是否走偏，必要时重分类
+            handleIntentFeedback(context, output);
         }
         log.info("ReAct链路-FunctionResponse 处理完成 | sessionId:{} | accepted:{} | currentTotal:{}",
                 context.getChatSessionId(), accepted, context.getCurrentToolResults().size());
+    }
+
+    /**
+     * 获取最新的一条用户消息
+     */
+    private String getLastUserMessage(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) {
+        // 第一轮使用请求参数中的消息
+        if (dynamicContext.getStep() == 0) {
+            return requestParameter.getMessage();
+        }
+
+        // 后续轮次从历史记录中获取最后一条 user 消息
+        List<Map<String, Object>> history = dynamicContext.getMessageHistory();
+        for (int i = history.size() - 1; i >= 0; i--) {
+            Map<String, Object> msg = history.get(i);
+            if ("user".equals(msg.get("role"))) {
+                return (String) msg.get("content");
+            }
+        }
+
+        return requestParameter.getMessage();
+    }
+
+    /**
+     * 反馈回路：根据工具执行结果判定当前意图是否需要重分类。
+     * <p>
+     * 仅在本轮已有意图识别结果时触发；reportFeedback 返回非 null 表示已重分类，
+     * 此时更新 DynamicContext 的当前意图，使后续步骤（Prompt 注入、路由）使用新意图。
+     * <p>
+     * 流程：
+     * <pre>
+     *   工具执行完(result)
+     *     ├─ 无本轮意图结果 → 直接返回
+     *     ├─ 判定 success（非空 && 不像意图走偏）
+     *     └─ intentService.reportFeedback(...)
+     *          ├─ 返回 null  → 维持原意图
+     *          └─ 返回新结果 → 更新 currentIntent / currentIntentResult
+     * </pre>
+     * 案例：意图 CONFIGURE，工具结果 "No such file" → success=false →
+     *       reportFeedback 用候选 MONITOR 递补 → 后续 Prompt 注入 [用户意图] 监控查看。
+     */
+    private void handleIntentFeedback(DefaultReActFactory.DynamicContext dynamicContext, String toolResult) {
+        IntentResultVO lastIntent = dynamicContext.getCurrentIntentResult();
+        if (lastIntent == null) {
+            return;
+        }
+        // 复用 IntentService 的失败特征判定，保持两处逻辑一致
+        boolean success = toolResult != null && !toolResult.isBlank()
+                && !IntentService.looksLikeIntentMismatch(toolResult);
+
+        IntentResultVO reclassified = intentService.reportFeedback(
+                dynamicContext.getChatSessionId(), lastIntent, success, toolResult);
+        if (reclassified != null) {
+            log.info("反馈回路触发重分类: {} -> {} (conf={})",
+                    lastIntent.getIntent(), reclassified.getIntent(), reclassified.getConfidence());
+
+            dynamicContext.setCurrentIntent(reclassified.getIntent().name());
+            dynamicContext.setCurrentIntentResult(reclassified);
+        }
     }
 
     private String extractAssistantText(Event event) {
@@ -378,17 +476,30 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
     }
 
+    /**
+     * 构建注入了动态上下文的用户消息
+     * 委托 IPromptService 完成环境采集、里程碑获取、前缀构建
+     * <p>
+     * 意图注入路径：dynamicContext.currentIntent → buildEnrichedMessage(intentLabel)
+     * → PromptContextVO.intentLabel → DynamicPromptBuilder 输出 "[用户意图] xxx" 前缀，
+     * 让主模型感知当前意图但不强制路由。
+     */
     private String buildEnrichedMessage(String userMessage, DefaultReActFactory.DynamicContext context) {
-        log.debug("ReAct链路-调用里程碑识别 | sessionId:{} | role:user | contentLength:{}",
-                context.getChatSessionId(), safeLength(userMessage));
+        log.debug("ReAct链路-调用里程碑识别 | sessionId:{} | role:user | contentLength:{}", context.getChatSessionId(), safeLength(userMessage));
+
+        // 构建带动态上下文前缀的富化消息
         promptService.detectAndRecordMilestone(context.getChatSessionId(), "user", userMessage);
         log.debug("ReAct链路-调用动态 Prompt 构建 | sessionId:{} | recentCommands:{} | historySize:{}",
                 context.getChatSessionId(), sizeOf(context.getRecentCommands()), sizeOf(context.getMessageHistory()));
+
+        // 构建注入了动态上下文的用户消息
         String enrichedMessage = promptService.buildEnrichedMessage(
                 userMessage, context.getChatSessionId(), context.getUserId(),
-                context.getTerminalSessionId(), context.getRecentCommands(), context.getMessageHistory());
-        log.debug("ReAct链路-动态 Prompt 服务返回 | sessionId:{} | contentLength:{}",
-                context.getChatSessionId(), safeLength(enrichedMessage));
+                context.getTerminalSessionId(), context.getRecentCommands(),
+                context.getMessageHistory(), context.getCurrentIntent());
+        log.debug("ReAct链路-动态 Prompt 服务返回 | sessionId:{} | enrichedUserMessage:{}",
+                context.getChatSessionId(), truncate(enrichedMessage, 256));
+
         return enrichedMessage;
     }
 

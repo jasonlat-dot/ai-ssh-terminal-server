@@ -1,6 +1,5 @@
 package com.jasonlat.ai.domain.agent.service.prompt;
 
-import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.PromptContextVO;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
@@ -34,10 +33,6 @@ public class PromptService implements IPromptService {
     /** 里程碑追踪器——检测并缓存用户纠偏、任务切换等关键事件，供动态 Prompt 引用 */
     @Resource
     private MilestoneTracker milestoneTracker;
-
-    /** SSH 终端服务——提供实时命令执行通道，用于采集远程环境信息（uname/whoami/pwd） */
-    @Resource
-    private ISshTerminalService sshTerminalService;
 
     /** 上下文管理服务——聚合各 ContextProvider 输出，组装 PromptContextVO */
     @Resource
@@ -96,15 +91,19 @@ public class PromptService implements IPromptService {
      */
     @Override
     public String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory) {
-        // 1. 通过 ChatContextService 采集上下文
+        // 向后兼容：无意图标签的重载，委托给带 intentLabel 的版本（传 null）
+        return buildEnrichedMessage(userMessage, sessionId, userId, terminalSessionId, recentCommands, messageHistory, null);
+    }
+
+
+    @Override
+    public String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory, String intentLabel) {
+        // 意图标签流转：intentLabel → PromptContextVO.intentLabel → DynamicPromptBuilder 前缀
         PromptContextVO promptContextVO = chatContextService.buildPromptContext(sessionId, userId, terminalSessionId, messageHistory);
-
-        // 追加来自 Case 层的 recentCommands
         promptContextVO.setRecentCommands(recentCommands);
+        promptContextVO.setIntentLabel(intentLabel);
 
-        // 2. 生成消息前缀
         String prefix = dynamicPromptBuilder.buildMessagePrefix(promptContextVO);
-
         if (prefix.isEmpty()) {
             return userMessage;
         }
