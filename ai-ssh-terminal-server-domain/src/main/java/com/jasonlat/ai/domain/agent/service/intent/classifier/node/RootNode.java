@@ -29,7 +29,7 @@ public class RootNode extends AbstractIntentClassifierSupport {
     @Override
     protected IntentResultVO doApply(IntentRequestVO requestParameter, DefaultClassifyFactory.DynamicContext dynamicContext) throws Exception {
         // 缓存键：会话 + 消息哈希，5 分钟内同一消息直接复用结果，避免重复分类开销
-        String cacheKey = requestParameter.getChatSessionId() + ":" + hashMessage(requestParameter.getUserMessage());
+        String cacheKey = classifyCache.cacheKey(requestParameter.getChatSessionId(), requestParameter.getUserMessage());
         dynamicContext.setCacheKey(cacheKey);
 
         // 连续失败次数过多：跳过规则层，直接 LLM 兜底，门槛放宽
@@ -45,18 +45,7 @@ public class RootNode extends AbstractIntentClassifierSupport {
         return router(requestParameter, dynamicContext);
     }
 
-    /**
-     * 将消息转为缓存键用的哈希值（十六进制字符串）。
-     * <p>
-     * 使用 {@link String#hashCode()} 的十六进制表示，非加密哈希，
-     * 仅用于缓存键拼接，不与消息原文一一对应。
-     *
-     * @param message 用户消息
-     * @return 十六进制哈希字符串
-     */
-    private String hashMessage(String message) {
-        return Integer.toHexString(message.hashCode());
-    }
+
 
 
     @Override

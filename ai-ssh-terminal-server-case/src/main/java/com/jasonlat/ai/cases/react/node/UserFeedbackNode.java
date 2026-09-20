@@ -3,6 +3,7 @@ package com.jasonlat.ai.cases.react.node;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
+import com.jasonlat.ai.domain.agent.service.ILongTermMemoryService;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -24,6 +25,8 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private ConversationContextStore conversationContextStore;
+    @Resource
+    private ILongTermMemoryService longTermMemoryService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {
@@ -151,6 +154,7 @@ public class UserFeedbackNode extends AbstractAIAgentReActSupport {
                     dynamicContext.getMessageHistory(),
                     dynamicContext.getRecentCommands()
             );
+
 
             log.info(
                     "ReAct链路-业务会话回写完成 | sessionId:{} | historySize:{} | recentCommands:{} | durationMs:{}",

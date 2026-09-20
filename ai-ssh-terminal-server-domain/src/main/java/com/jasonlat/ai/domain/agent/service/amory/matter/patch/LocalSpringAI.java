@@ -11,6 +11,8 @@ import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.springai.MessageConverter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.StreamingChatModel;
@@ -28,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class LocalSpringAI extends BaseLlm {
 
+    private static final Logger log = LoggerFactory.getLogger(LocalSpringAI.class);
     private final ChatModel chatModel;
     private final StreamingChatModel streamingChatModel;
     private final ObjectMapper objectMapper;
@@ -159,6 +162,7 @@ public class LocalSpringAI extends BaseLlm {
 
         try {
             Prompt prompt = messageConverter.toLlmPrompt(llmRequest);
+            log.debug("SpringAI chat Prompt: {}", prompt.toString());
             observabilityHandler.logRequest(prompt.toString(), model());
 
             ChatResponse chatResponse = chatModel.call(prompt);
@@ -192,6 +196,7 @@ public class LocalSpringAI extends BaseLlm {
                 emitter -> {
                     try {
                         Prompt prompt = messageConverter.toLlmPrompt(llmRequest);
+                        log.debug("SpringAI streaming Prompt: {}", prompt.toString());
                         observabilityHandler.logRequest(prompt.toString(), model());
 
                         Flux<ChatResponse> responseFlux = streamingChatModel.stream(prompt);

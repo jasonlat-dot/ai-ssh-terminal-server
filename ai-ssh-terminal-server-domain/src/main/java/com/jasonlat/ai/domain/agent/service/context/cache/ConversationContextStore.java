@@ -3,7 +3,6 @@ package com.jasonlat.ai.domain.agent.service.context.cache;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.springframework.stereotype.Component;
 

@@ -1,15 +1,13 @@
 package com.jasonlat.ai.domain.agent.service.prompt.dynamic;
 
+import com.jasonlat.ai.domain.agent.adapter.repository.IChatHistoryRepository;
 import com.jasonlat.ai.domain.agent.model.valobj.properties.AgentContextProperties;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -23,6 +21,7 @@ public class MilestoneTracker {
     private final ConversationContextStore conversationContextStore;
     private final AgentContextProperties.Milestone properties;
     private final List<CompiledMilestoneRule> rules;
+    private final IChatHistoryRepository chatHistoryRepository;
 
     /**
      * 创建里程碑追踪器，并在应用启动时完成规则校验和正则预编译。
@@ -30,10 +29,11 @@ public class MilestoneTracker {
      */
     public MilestoneTracker(
             ConversationContextStore conversationContextStore,
-            AgentContextProperties contextProperties) {
+            AgentContextProperties contextProperties, IChatHistoryRepository chatHistoryRepository) {
 
         this.conversationContextStore = conversationContextStore;
         this.properties = contextProperties.getMilestone();
+        this.chatHistoryRepository = chatHistoryRepository;
         this.rules = compileRules(this.properties.getRules());
     }
 
@@ -106,6 +106,14 @@ public class MilestoneTracker {
      */
     private void push(String sessionId, MilestoneVO milestoneVO) {
         conversationContextStore.addMilestone(sessionId, milestoneVO);
+
+        // 2. 数据库持久化：try-catch 旁路写入，失败不影响主流程。
+        // 旁路写入原则：记忆持久化是"锦上添花"而非"生死攸关"，不能因为 DB 异常导致 Agent 不可用。
+        try {
+            chatHistoryRepository.saveMilestone(sessionId, milestoneVO);
+        } catch (Exception e) {
+            log.error("保存里程碑失败 sessionId={}", sessionId, e);
+        }
     }
 
     /**
@@ -116,7 +124,25 @@ public class MilestoneTracker {
      * @return 里程碑列表（按时间正序），无数据时返回空列表
      */
     public List<MilestoneVO> getRecent(String sessionId, int limit) {
-        return conversationContextStore.getRecentMilestones(sessionId, limit);
+        List<MilestoneVO> recentMilestones = conversationContextStore.getRecentMilestones(sessionId, limit);
+        if (!recentMilestones.isEmpty()) {
+            return recentMilestones;
+        }
+
+        // 降级到 DB 查询
+        try {
+            recentMilestones = chatHistoryRepository.getRecentMilestones(sessionId, limit);
+            if (recentMilestones != null && !recentMilestones.isEmpty()) {
+                // DB 查询返回的是倒序，这里转为正序返回
+                List<MilestoneVO> reversed = new ArrayList<>(recentMilestones);
+                Collections.reverse(reversed);
+                return reversed;
+            }
+        } catch (Exception e) {
+            log.error("获取近期里程碑失败 sessionId={}", sessionId, e);
+        }
+
+        return recentMilestones;
     }
 
     /**

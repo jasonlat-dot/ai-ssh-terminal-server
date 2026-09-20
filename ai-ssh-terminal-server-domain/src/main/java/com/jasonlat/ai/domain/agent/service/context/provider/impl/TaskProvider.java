@@ -1,5 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
+import com.jasonlat.ai.domain.agent.model.valobj.intent.TaskStateVO;
+import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProviderOrder;
@@ -47,6 +49,9 @@ public class TaskProvider implements ContextProvider {
     @Resource
     private ConversationContextStore conversationContextStore;
 
+    @Resource
+    private IIntentService intentService;
+
     @Override
     public String getName() {
         return "task";
@@ -65,6 +70,16 @@ public class TaskProvider implements ContextProvider {
     @Override
     public Map<String, Object> provide(String sessionId, String userId, String terminalSessionId, List<Map<String, Object>> messageHistory) {
         Map<String, Object> result = new HashMap<>();
+
+        // 优先从 TaskStateVO 获取：TaskStateVO 的任务描述是经过意图分类系统"验证"过的，
+        // 比从消息历史中推断更准确。分类时如果识别为业务意图，就把当前消息设为任务描述。
+        TaskStateVO taskState = intentService.getTaskState(sessionId);
+        if (taskState != null && taskState.getTaskDescription() != null && !taskState.getTaskDescription().isBlank()) {
+            result.put("taskDescription", taskState.getTaskDescription());
+            conversationContextStore.updateCurrentTask(sessionId, taskState.getTaskDescription());
+            return result;
+        }
+
         /*
          * 从消息历史中提取本次会话的任务描述。
          * messageHistory 中通常包含多种角色的消息，例如：

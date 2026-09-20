@@ -14,8 +14,10 @@ import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.TaskStateVO;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
 import com.jasonlat.ai.domain.agent.service.IIntentService;
+import com.jasonlat.ai.domain.agent.service.ILongTermMemoryService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
@@ -60,6 +62,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     private IChatContextService chatContextService;
     @Resource
     private IIntentService intentService;
+    @Resource
+    private ILongTermMemoryService longTermMemoryService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest request, DefaultReActFactory.DynamicContext context) throws Exception {
@@ -80,6 +84,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         Runner runner = registration.getRunner();
         String userMessage = getLastUserMessage(request, context);
+        // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
+        context.appendUserMessage(userMessage);
 
         // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
         context.resetRoundBuffers();
@@ -112,6 +118,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 将意图保存到上下文供后续使用
         context.setCurrentIntent(intentResult.getIntent().name());
         context.setCurrentIntentResult(intentResult);
+        // 分类后同步任务态：处理 CONTINUE 续接、非业务意图跳过、新任务创建/覆盖。
+        syncTaskStateAfterClassification(context, userMessage, intentResult);
 
         // COMPOUND / UNKNOWN / 低置信度：交给主模型自行判断，不再硬路由
         if (intentResult.getIntent().equals(IntentTypeEnumVO.COMPOUND)) {
@@ -151,12 +159,25 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 context.getChatSessionId(), safeLength(userMessage), safeLength(enrichedMessage),
                 Math.max(0, safeLength(enrichedMessage) - safeLength(userMessage)), elapsedMillis(promptStartNanos));
 
+
+
         Content userContent = Content.builder()
                 .role("user")
                 .parts(List.of(Part.fromText(enrichedMessage)))
                 .build();
         log.debug("上下文日志-📝 本次 ADK 当前用户消息 | sessionId:{} | userContent:{}",
                 context.getChatSessionId(), userContent.toJson());
+
+        // 用户消息落库 + 长期记忆提取（用户侧）：委托领域服务完成"消息落库 + 偏好记忆提取"闭环，
+        // case 层不再直接调用仓储层。仅首轮（step==0）落库 user 消息，避免多轮循环重复写入。
+        longTermMemoryService.saveUserMessage(
+                context.getUserId(),
+                context.getChatSessionId(),
+                userMessage,
+                context.getCurrentIntent(),
+                context.getStep() == 0
+        );
+
 
         // maxLlmCalls 限制的是 ADK 内部真实模型调用次数，而不是外层 Node 的执行次数。
         RunConfig runConfig = RunConfig.builder()
@@ -257,6 +278,16 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 外层 step 表示一次完整 ADK invocation；内部发生多少次 LLM/工具调用由 ADK 管理。
         context.incrementStep();
         context.getResult().setTotalSteps(context.getStep());
+
+        if (!fullText.isEmpty()) {
+            // 助手回复落库 + 结论记忆提取：委托领域服务完成闭环。
+            longTermMemoryService.saveAssistantMessage(
+                    context.getUserId(),
+                    context.getChatSessionId(),
+                    fullText.toString()
+            );
+        }
+
         boolean roundEndSent = sendRoundEndEvent(emitter, context.getStep(), context.getMaxSteps(), context.getTotalToolCallCount().get());
 
         log.info("ReAct链路-AiCallNode 完成 | sessionId:{} | events:{} | toolCalls:{} | "
@@ -287,7 +318,6 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         log.info("ReAct链路-ADK Session 投影完成 | sessionId:{} | projectedMessages:{} | durationMs:{}",
                 context.getChatSessionId(), sizeOf(priorHistory), elapsedMillis(startNanos));
     }
-
 
 
     private List<Map<String, Object>> handleFunctionCalls(
@@ -369,7 +399,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             if ("executeCommand".equals(name) && !command.isBlank()) {
                 context.addRecentCommand(truncate(command, 256));
             }
-            log.info("ReAct链路-工具结果已登记 | sessionId:{} | toolCallId:{} | toolName:{} | "
+            log.info("ReAct链路-工具结果已登记到 DynamicContext | sessionId:{} | toolCallId:{} | toolName:{} | "
                             + "status:{} | commandLength:{} | outputLength:{} | historySize:{} | sseSent:{}",
                     context.getChatSessionId(), id, name, status.getCode(), command.length(), output.length(),
                     context.getMessageHistory().size(), toolResultSent);
@@ -437,7 +467,132 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
             dynamicContext.setCurrentIntent(reclassified.getIntent().name());
             dynamicContext.setCurrentIntentResult(reclassified);
+
+            updateTaskStateAfterFeedback(dynamicContext, success, reclassified);
         }
+    }
+
+    /**
+     * 分类后同步任务态：处理 CONTINUE 续接、非业务意图跳过、新任务创建/覆盖。
+     * <p>
+     * 策略：
+     * <ul>
+     *   <li>CONTINUE：如有进行中任务态则校准步骤索引、清除失败标记，并回写 currentIntent 为根意图</li>
+     *   <li>UNKNOWN/CHAT：不维护任务态，直接返回</li>
+     *   <li>其他业务意图：无任务态/已完成/意图变更 → 创建新 TaskStateVO；否则复用并刷新</li>
+     * </ul>
+     *
+     * @param lastUserMessage 最新用户消息（作为任务描述）
+     * @param intentResult   本轮意图识别结果
+     */
+    private void syncTaskStateAfterClassification(DefaultReActFactory.DynamicContext dynamicContext,
+                                                  String lastUserMessage, IntentResultVO intentResult) {
+        if (intentResult == null) {
+            return;
+        }
+
+        String sessionId = dynamicContext.getChatSessionId();
+        IntentTypeEnumVO intent = intentResult.getIntent();
+        TaskStateVO taskState = intentService.getTaskState(sessionId);
+
+        if (intent.equals(IntentTypeEnumVO.CONTINUE)) {
+            if (taskState != null && !taskState.isCompleted()) {
+                if (taskState.getCurrentStepIndex() < 0) {
+                    taskState.setCurrentStepIndex(0);
+                }
+                taskState.setLastFeedbackFailed(false);
+                intentService.updateTaskState(sessionId, taskState);
+                if (taskState.getRootIntent() != null) {
+                    dynamicContext.setCurrentIntent(taskState.getRootIntent().name());
+                }
+            }
+            return;
+        }
+
+        if (intent == IntentTypeEnumVO.UNKNOWN || intent == IntentTypeEnumVO.CHAT) {
+            return;
+        }
+
+        boolean shouldReplace = taskState == null
+                || taskState.isCompleted()
+                || taskState.getRootIntent() != intent;
+
+        if (shouldReplace) {
+            List<String> steps = new ArrayList<>();
+            steps.add(lastUserMessage);
+            taskState = TaskStateVO.builder()
+                    .taskDescription(lastUserMessage)
+                    .rootIntent(intent)
+                    .steps(steps)
+                    .currentStepIndex(0)
+                    .completed(false)
+                    .lastFeedbackFailed(false)
+                    .build();
+        } else {
+            if (taskState.getTaskDescription() == null || taskState.getTaskDescription().isBlank()) {
+                taskState.setTaskDescription(lastUserMessage);
+            }
+            if (taskState.getSteps() == null || taskState.getSteps().isEmpty()) {
+                taskState.setSteps(new ArrayList<>(List.of(lastUserMessage)));
+            }
+            if (taskState.getCurrentStepIndex() < 0) {
+                taskState.setCurrentStepIndex(0);
+            }
+            taskState.setCompleted(false);
+            taskState.setLastFeedbackFailed(false);
+        }
+
+        intentService.updateTaskState(sessionId, taskState);
+    }
+
+    /**
+     * 反馈后更新任务态：成功推进步骤索引，失败标记 lastFeedbackFailed，
+     * 重分类时替换 rootIntent。
+     * <p>
+     * 流程：
+     * <pre>
+     *   工具反馈回调
+     *     ├─ 无任务态 → 直接返回
+     *     ├─ reclassified 非 null 且非兜底意图 → 替换 rootIntent
+     *     ├─ success=true → currentStepIndex++ 或标记 completed
+     *     └─ success=false → lastFeedbackFailed=true
+     * </pre>
+     *
+     * @param success      本轮工具执行是否成功
+     * @param reclassified  反馈回路重分类结果，可为 null
+     */
+    private void updateTaskStateAfterFeedback(DefaultReActFactory.DynamicContext dynamicContext,
+                                              boolean success, IntentResultVO reclassified) {
+        TaskStateVO taskState = intentService.getTaskState(dynamicContext.getChatSessionId());
+        if (taskState == null) {
+            return;
+        }
+
+        if (reclassified != null
+                && reclassified.getIntent() != null
+                && reclassified.getIntent() != IntentTypeEnumVO.UNKNOWN
+                && reclassified.getIntent() != IntentTypeEnumVO.CONTINUE
+                && reclassified.getIntent() != IntentTypeEnumVO.CHAT) {
+            taskState.setRootIntent(reclassified.getIntent());
+        }
+
+        taskState.setLastFeedbackFailed(!success);
+
+        if (success) {
+            if (taskState.getSteps() == null || taskState.getSteps().isEmpty()) {
+                taskState.setSteps(new ArrayList<>(List.of(taskState.getTaskDescription())));
+            }
+            if (taskState.getCurrentStepIndex() < 0) {
+                taskState.setCurrentStepIndex(0);
+            }
+            if (taskState.getCurrentStepIndex() >= taskState.getSteps().size() - 1) {
+                taskState.setCompleted(true);
+            } else {
+                taskState.setCurrentStepIndex(taskState.getCurrentStepIndex() + 1);
+            }
+        }
+
+        intentService.updateTaskState(dynamicContext.getChatSessionId(), taskState);
     }
 
     private String extractAssistantText(Event event) {

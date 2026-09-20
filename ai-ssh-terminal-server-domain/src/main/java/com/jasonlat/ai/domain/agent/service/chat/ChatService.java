@@ -3,9 +3,13 @@ package com.jasonlat.ai.domain.agent.service.chat;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.runner.Runner;
+import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.adapter.repository.IChatHistoryRepository;
 import com.jasonlat.ai.domain.agent.model.entity.ChatCommandEntity;
+import com.jasonlat.ai.domain.agent.model.entity.ChatMessageEntity;
+import com.jasonlat.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.model.valobj.properties.AiAgentAutoConfigProperties;
@@ -39,6 +43,11 @@ public class ChatService implements IChatService {
 
     @Resource
     private SessionCache sessionCache;
+    @Resource
+    private CustomAdkSessionService customAdkSessionService;
+
+    @Resource
+    private IChatHistoryRepository chatHistoryRepository;
 
     @Override
     public boolean validateSession(String agentId, String userId, String sessionId) {
@@ -47,9 +56,35 @@ public class ChatService implements IChatService {
         if (StringUtils.isBlank(storeSessionId)) {
             // 兜底处理 - 删除session缓存
             sessionCache.invalidate(agentId, userId, sessionId);
-            return false;
+            // 服务重启等原因导致session缓存丢失 重建缓存
+            rebuildSession(agentId, userId, sessionId);
         }
         return true;
+    }
+
+    private void rebuildSession(String agentId, String userId, String sessionId) {
+        // 获取智能体注册信息
+        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(agentId);
+        if (null == aiAgentRegisterVO) {
+            throw new AppException(ResponseCode.CLIENT_A0301.getInfo());
+        }
+        String appName = aiAgentRegisterVO.getAppName();
+        sessionCache.put(agentId, userId, sessionId, aiAgentRegisterVO.getSessionExpireSeconds());
+        customAdkSessionService.putSession(appName, userId, null, sessionId);
+
+        // 会话元数据落库：try-catch 旁路写入，DB 写入失败不影响 ADK Session 创建。
+        // 旁路原则：如果 DB 异常（如表不存在），只是 DB 里没有这条记录，不影响 Agent 正常运行。
+        try {
+            chatHistoryRepository.saveSession(ChatSessionEntity.builder()
+                    .id(sessionId)
+                    .agentId(agentId)
+                    .userId(userId)
+                    .title("新会话")
+                    .messageCount(0)
+                    .build());
+        } catch (Exception e) {
+            log.error("保存会话元数据失败 sessionId={}", sessionId, e);
+        }
     }
 
     @Override
@@ -71,6 +106,36 @@ public class ChatService implements IChatService {
     @Override
     public String createSession(ChatCommandEntity chatCommandEntity) {
         return createSession(chatCommandEntity.getAgentId(), chatCommandEntity.getUserId());
+    }
+
+
+    /**
+     * 查询用户会话列表（2-7 新增）。
+     * <p>
+     * 为前端历史记录功能提供后端支撑，默认返回最多 20 条。
+     *
+     * @param agentId 智能体 ID
+     * @param userId  用户 ID
+     * @param limit   最大返回条数，≤0 时默认 20
+     * @return 会话列表
+     */
+    @Override
+    public List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit) {
+        return chatHistoryRepository.querySessionList(agentId, userId, limit > 0 ? limit : 20);
+    }
+
+    /**
+     * 查询会话消息列表。
+     * <p>
+     * 为前端历史消息展示提供后端支撑，默认返回最多 100 条。
+     *
+     * @param sessionId 会话 ID
+     * @param limit     最大返回条数，≤0 时默认 100
+     * @return 消息列表（时间正序）
+     */
+    @Override
+    public List<ChatMessageEntity> queryMessageList(String sessionId, int limit) {
+        return chatHistoryRepository.queryMessageList(sessionId, limit > 0 ? limit : 100);
     }
 
     @Override

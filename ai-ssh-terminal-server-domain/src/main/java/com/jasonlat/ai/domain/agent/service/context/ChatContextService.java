@@ -104,6 +104,10 @@ public class ChatContextService implements IChatContextService {
                 .milestoneVOS((List<MilestoneVO>) finalCtx.get("milestoneVOS"))
                 .toolResultSummary((String) finalCtx.get("toolResultSummary"))
                 .taskDescription((String) finalCtx.get("taskDescription"))
+                .toolResultSummary((String) finalCtx.get("toolResultSummary"))
+                // 长期记忆摘要：由 LongTermMemoryProvider(order=25) 召回并注入，
+                // 经 DynamicPromptBuilder 渲染为 [长期记忆] 段落拼到用户消息前面。
+                .longTermMemorySummary((String) finalCtx.get("longTermMemorySummary"))
                 .build();
     }
 
@@ -111,7 +115,7 @@ public class ChatContextService implements IChatContextService {
      * 在 token 预算内裁剪消息历史
      *
      * @param history     原始消息历史
-     * @param tokenBudget token 预算（<=0 时使用默认值 8000K）
+     * @param tokenBudget token 预算（<=0 时使用默认值）
      * @return 裁剪后的消息历史
      */
     @Override

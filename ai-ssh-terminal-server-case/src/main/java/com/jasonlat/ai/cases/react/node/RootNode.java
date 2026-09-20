@@ -2,7 +2,9 @@ package com.jasonlat.ai.cases.react.node;
 
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
+import com.jasonlat.ai.domain.agent.model.entity.ChatMessageEntity;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
+import com.jasonlat.ai.domain.agent.service.memory.LongTermMemoryService;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.design.framework.tree.StrategyHandler;
@@ -10,6 +12,10 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -28,6 +34,8 @@ public class RootNode extends AbstractAIAgentReActSupport {
 
     @Resource
     private ConversationContextStore conversationContextStore;
+    @Resource
+    private LongTermMemoryService longTermMemoryService;
 
     private static final int DEFAULT_MAX_STEPS = 50;
     private static final int DEFAULT_MAX_LLM_CALLS = 20;
@@ -56,15 +64,21 @@ public class RootNode extends AbstractAIAgentReActSupport {
                 sessionId, snapshot.getMessageHistory().size(), snapshot.getRecentCommands().size(),
                 snapshot.getOriginalTask() != null && !snapshot.getOriginalTask().isBlank(),
                 elapsedMillis(loadStartNanos));
+        List<Map<String, Object>> historyMessages = snapshot.getMessageHistory();
+        if (historyMessages.isEmpty()) {
+            // 本地缓存没有 降级为从数据库中查询
+            log.info("userid: {} | chatSessionId: {} | 从db恢复长期记忆。", userId, sessionId);
+            historyMessages.addAll(getRecentHistoryMessagesFromDB(sessionId, 50));
+        }
 
         dynamicContext.setChatSessionId(sessionId);
         dynamicContext.setUserId(userId);
         dynamicContext.setAgentId(agentId);
         dynamicContext.setTerminalSessionId(terminalSessionId);
-        dynamicContext.setMessageHistory(snapshot.getMessageHistory());
+        dynamicContext.setMessageHistory(historyMessages);
         dynamicContext.setRecentCommands(snapshot.getRecentCommands());
-        dynamicContext.setCurrentToolCalls(new java.util.ArrayList<>());
-        dynamicContext.setCurrentToolResults(new java.util.ArrayList<>());
+        dynamicContext.setCurrentToolCalls(new ArrayList<>());
+        dynamicContext.setCurrentToolResults(new ArrayList<>());
         dynamicContext.setCurrentStep(new AtomicInteger(0));
         dynamicContext.setMaxSteps(DEFAULT_MAX_STEPS);
         dynamicContext.setMaxLlmCalls(DEFAULT_MAX_LLM_CALLS);
@@ -104,5 +118,28 @@ public class RootNode extends AbstractAIAgentReActSupport {
 
     private long elapsedMillis(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000L;
+    }
+
+    private List<Map<String, Object>> getRecentHistoryMessagesFromDB(String sessionId, int limit) {
+        if (limit < 0) limit = 50;
+        // 冷启动恢复：从 DB 加载最近 50 条历史消息，恢复对话上下文。
+        // 这样即使服务重启，用户之前排查的上下文也能接上，而不是从空开始。
+        List<Map<String, Object>> history = new ArrayList<>();
+        // 冷启动恢复：委托领域服务从 DB 加载最近 50 条历史消息，恢复对话上下文，
+        // case 层不再直接调用仓储层。
+        List<ChatMessageEntity> recentMessages = longTermMemoryService.getRecentMessages(sessionId, limit);
+        for (ChatMessageEntity msg : recentMessages) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("role", msg.getRole());
+            map.put("content", msg.getContent() != null ? msg.getContent() : "");
+            // tool 消息需要补全 tool_call_id 和 name，供 ADK 框架正确关联
+            if ("tool".equals(msg.getRole()) && msg.getToolCallId() != null) {
+                map.put("tool_call_id", msg.getToolCallId());
+                map.put("name", msg.getToolName());
+            }
+            history.add(map);
+        }
+
+        return history;
     }
 }

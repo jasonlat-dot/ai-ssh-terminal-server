@@ -6,6 +6,7 @@ import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.ToolResultReconciler;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
+import com.jasonlat.ai.domain.agent.service.ILongTermMemoryService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -35,6 +36,8 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
     private IPromptService promptService;
     @Resource
     private IChatContextService chatContextService;
+    @Resource
+    private ILongTermMemoryService longTermMemoryService;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest request, DefaultReActFactory.DynamicContext context) throws Exception {
@@ -75,6 +78,15 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
             log.info("ADK 工具结果已归档 sessionId={}, id={}, name={}, status={}, outputLength={}",
                     context.getChatSessionId(), call.id(), call.name(), result.status(),
                     result.content() == null ? 0 : result.content().length());
+
+            longTermMemoryService.saveToolMessage(
+                    context.getUserId(),
+                    context.getChatSessionId(),
+                    call.name(),
+                    call.id(),
+                    result.content(),
+                    !isFailureContent(result.content())
+            );
         }
 
         /*
@@ -91,6 +103,18 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
 
             promptService.detectAndRecordMilestone(context.getChatSessionId(), "tool", error);
             chatContextService.pushToolResult(context.getChatSessionId(), call.name(), command, error);
+
+            // 工具结果落库 + 长期记忆提取：委托领域服务完成"消息落库（role=tool, priority=HIGH）
+            // + 环境/软件/失败信号记忆提取"闭环，case 层不再直接调用仓储层。
+            longTermMemoryService.saveToolMessage(
+                    context.getUserId(),
+                    context.getChatSessionId(),
+                    call.name(),
+                    call.id(),
+                    error,
+                    false
+            );
+
 
             log.error("ReAct链路-ADK 工具结果缺失 | sessionId:{} | toolCallId:{} | toolName:{} | "
                             + "syntheticResultSent:{}",
@@ -131,6 +155,29 @@ public class ToolCallNode extends AbstractAIAgentReActSupport {
                 context.getChatSessionId());
         return getBean("reactLoopDecisionNode");
     }
+
+    /**
+     * 判断工具输出内容是否包含失败特征（error、failed、permission denied 等）。
+     * <p>
+     * 用于长期记忆提取时判断 success 参数：如果工具执行状态为 success 但内容包含失败信号，
+     * 也会被 recordToolObservation 记录为 TROUBLESHOOTING_CASE。
+     *
+     * @param content 工具执行输出内容
+     * @return true 表示内容包含失败特征
+     */
+    private boolean isFailureContent(String content) {
+        if (content == null) {
+            return false;
+        }
+        String normalized = content.toLowerCase();
+        return normalized.contains("error")
+                || normalized.contains("failed")
+                || normalized.contains("not found")
+                || normalized.contains("no such")
+                || normalized.contains("permission denied")
+                || normalized.contains("connection refused");
+    }
+
 
     private long elapsedMillis(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000L;

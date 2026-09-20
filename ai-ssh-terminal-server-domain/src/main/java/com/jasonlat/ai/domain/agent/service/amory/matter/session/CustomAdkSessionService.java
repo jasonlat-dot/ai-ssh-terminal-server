@@ -217,6 +217,20 @@ public class CustomAdkSessionService implements BaseSessionService {
      */
     @Override
     public Single<Session> createSession(String appName, String userId, ConcurrentMap<String, Object> initialState, String sessionId) {
+        SessionSnapshot snapshot = buildAndStoreSessionSnapshot(appName, userId, initialState, sessionId);
+        return Single.just(toSession(snapshot, Optional.empty()));
+    }
+
+    public void putSession(String appName, String userId, ConcurrentMap<String, Object> initialState, String sessionId) {
+        buildAndStoreSessionSnapshot(appName, userId, initialState, sessionId);
+    }
+
+    /**
+     * 公共抽取方法：构建Snapshot + 写入三层内存map（sessions / userState / appState）
+     */
+    private SessionSnapshot buildAndStoreSessionSnapshot(String appName, String userId,
+                                                         ConcurrentMap<String, Object> initialState,
+                                                         String sessionId) {
         String finalSessionId = (sessionId == null || sessionId.isBlank()) ? UUID.randomUUID().toString() : sessionId;
 
         State state = new State(initialState == null ? new ConcurrentHashMap<>() : initialState);
@@ -227,16 +241,21 @@ public class CustomAdkSessionService implements BaseSessionService {
                 .lastUpdateTime(Instant.now())
                 .build();
 
+        // 写入 sessions 三层嵌套map
         sessions.computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
                 .put(finalSessionId, snapshot);
 
+        // 初始化userState
         userState.computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(userId, k -> new ConcurrentHashMap<>());
+
+        // 初始化appState
         appState.computeIfAbsent(appName, k -> new ConcurrentHashMap<>());
 
-        return Single.just(toSession(snapshot, Optional.empty()));
+        return snapshot;
     }
+
 
     /**
      * 查询指定会话，并按配置返回事件子集。
@@ -518,7 +537,9 @@ public class CustomAdkSessionService implements BaseSessionService {
         }
 
         if (isActualUserMessage(event)) {
-            return sanitizeUserEvent(event);
+            // 必须保留完整富化消息，否则动态上下文会在模型调用前被删除。
+            return event.toBuilder().build();
+//            return sanitizeUserEvent(event);
         }
 
         String role = resolveRole(event);

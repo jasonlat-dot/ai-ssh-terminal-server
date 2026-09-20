@@ -41,6 +41,8 @@ public class DynamicPromptBuilder {
         appendRecentCommands(sb, ctx);
         appendMilestones(sb, ctx);
         appendToolResultSummary(sb, ctx);
+        appendLongTermMemorySummary(sb, ctx);
+        appendIntentLabel(sb, ctx);
 
         String result = sb.toString();
         log.debug("动态 Prompt 构建完成，长度: {} (基础: {}, 动态: {})",
@@ -111,6 +113,11 @@ public class DynamicPromptBuilder {
             hasContent = true;
         }
 
+        if (!isEmpty(ctx.getToolResultSummary())) {
+            sb.append("\n[最近工具结果摘要]\n").append(ctx.getToolResultSummary()).append("\n");
+            hasContent = true;
+        }
+
         if (ctx.getMilestoneVOS() != null && !ctx.getMilestoneVOS().isEmpty()) {
             sb.append("\n[关键事件]\n");
             for (MilestoneVO m : ctx.getMilestoneVOS()) {
@@ -119,25 +126,52 @@ public class DynamicPromptBuilder {
             hasContent = true;
         }
 
-        if (!isEmpty(ctx.getToolResultSummary())) {
-            sb.append("\n[最近工具结果摘要]\n").append(ctx.getToolResultSummary()).append("\n");
+        if (!isEmpty(ctx.getLongTermMemorySummary())) {
+            sb.append("\n[长期记忆]\n").append(ctx.getLongTermMemorySummary()).append("\n");
             hasContent = true;
         }
-
-        if (!hasContent) return "";
 
         // 意图标签（由意图识别系统经 PromptContextVO.intentLabel 注入，让 AI 感知用户当前意图）
         // 输出形如 "[用户意图]\nDIAGNOSE\n"，仅做提示不做强制路由。
         if (!isEmpty(ctx.getIntentLabel())) {
             log.info("意图识别:{}", ctx.getIntentLabel());
             sb.append("\n[用户意图]\n").append(ctx.getIntentLabel()).append("\n");
+            hasContent = true;
         }
 
+        if (!hasContent) return "";
 
         String prefix = sb.toString();
         log.debug("构建消息前缀，长度: {}", prefix.length());
         return prefix;
     }
+
+
+    /**
+     * 追加长期记忆段落。
+     * <p>
+     * 将 LongTermMemoryProvider 召回的长期记忆摘要渲染为 [长期记忆] 段落，
+     * 拼到用户消息前面，让主模型感知用户偏好、环境信息、软件版本、排查经验等。
+     */
+    private void appendLongTermMemorySummary(StringBuilder sb, PromptContextVO ctx) {
+        if (isEmpty(ctx.getLongTermMemorySummary())) {
+            return;
+        }
+        sb.append("\n\n## 长期记忆\n");
+        sb.append(ctx.getLongTermMemorySummary()).append("\n");
+    }
+
+    /**
+     * 追加用户意图标签段落
+     */
+    private void appendIntentLabel(StringBuilder sb, PromptContextVO ctx) {
+        if (isEmpty(ctx.getIntentLabel())) {
+            return;
+        }
+        sb.append("\n\n## 用户意图\n");
+        sb.append(ctx.getIntentLabel()).append("\n");
+    }
+
 
     /**
      * 将环境信息以 Markdown 格式追加到 StringBuilder 中。

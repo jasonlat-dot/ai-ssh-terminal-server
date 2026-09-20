@@ -54,4 +54,21 @@ public class ClassifyCache {
         cache.put(cacheKey, newCacheEntry(resultVO, System.currentTimeMillis() + 5 * 60 * 1000 ));
     }
 
+
+    public String cacheKey(String sessionId, String userMessage) {
+        return sessionId + ":" + hashMessage(userMessage);
+    }
+
+    /**
+     * 将消息转为缓存键用的哈希值（十六进制字符串）。
+     * <p>
+     * 使用 {@link String#hashCode()} 的十六进制表示，非加密哈希，
+     * 仅用于缓存键拼接，不与消息原文一一对应。
+     *
+     * @param message 用户消息
+     * @return 十六进制哈希字符串
+     */
+    private String hashMessage(String message) {
+        return Integer.toHexString(message.hashCode());
+    }
 }

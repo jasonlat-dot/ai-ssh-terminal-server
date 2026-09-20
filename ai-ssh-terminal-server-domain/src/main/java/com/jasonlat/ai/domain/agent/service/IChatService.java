@@ -2,6 +2,8 @@ package com.jasonlat.ai.domain.agent.service;
 
 import com.google.adk.events.Event;
 import com.jasonlat.ai.domain.agent.model.entity.ChatCommandEntity;
+import com.jasonlat.ai.domain.agent.model.entity.ChatMessageEntity;
+import com.jasonlat.ai.domain.agent.model.entity.ChatSessionEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import io.reactivex.rxjava3.core.Flowable;
 
@@ -28,6 +30,17 @@ public interface IChatService {
     List<String> handleMessage(ChatCommandEntity chatCommandEntity);
 
     Flowable<Event> handleMessageStream(ChatCommandEntity chatCommandEntity);
+
+    /**
+     * 查询用户会话列表
+     */
+    List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit);
+
+    /**
+     * 查询会话消息列表
+     */
+    List<ChatMessageEntity> queryMessageList(String sessionId, int limit);
+
 
     /**
      * 处理消息（流式）
