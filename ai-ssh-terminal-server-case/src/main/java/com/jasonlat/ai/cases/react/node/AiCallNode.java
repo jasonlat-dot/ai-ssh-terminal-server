@@ -84,8 +84,6 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         Runner runner = registration.getRunner();
         String userMessage = getLastUserMessage(request, context);
-        // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
-        context.appendUserMessage(userMessage);
 
         // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
         context.resetRoundBuffers();
@@ -148,6 +146,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         // 同步覆盖 ADK 临时 Session：只投影裁剪后的历史和本次工具所需的终端会话 ID。
         prepareAdkInvocation(runner, context, trimmedHistory);
+
+        // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
+        context.appendUserMessage(userMessage);
         log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
                 context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
 

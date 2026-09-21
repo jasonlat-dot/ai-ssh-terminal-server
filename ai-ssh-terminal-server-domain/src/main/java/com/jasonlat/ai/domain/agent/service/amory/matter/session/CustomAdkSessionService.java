@@ -52,20 +52,17 @@ import java.util.stream.Collectors;
  * <p>这类“富化消息”适合发给模型做推理，但并不适合再被 ADK 原样存回 Session。
  * 如果直接回灌，会带来几个典型问题：
  * <pre>
- *   1. 用户原始问题被动态前缀污染
- *   2. 相同上下文在业务层和框架层重复保存
- *   3. tool / assistant 长文本让 Session 持续膨胀
- *   4. 对话轮次越来越长，后续取历史成本越来越高
+ *   1. 相同上下文在业务层和框架层重复保存
+ *   2. tool / assistant 长文本让 Session 持续膨胀
+ *   3. 对话轮次越来越长，后续取历史成本越来越高
  * </pre>
  *
  * <p>所以，这个类相对“原生 ADK Session 使用方式”，做了几项有意识的简化：
  * <pre>
  *   1. 只保留运行期轻量 Session，不做持久化落库
- *   2. 不追求保存完整原文历史，而是保存“够用”的净化后历史
- *   3. 不把动态 Prompt 前缀原样写回 Session，避免上下文重复
- *   4. 不保留无限长的 tool/assistant 文本，而是按类型截断
- *   5. 不保留无限轮对话，而是只保留最近 MAX_TURNS 轮、最多 MAX_EVENTS 条
- *   6. 只同步 event 中真正有价值的 stateDelta，维持最新运行态 state
+ *   2. 不保留无限长的 tool/assistant 文本，而是按类型截断
+ *   3. 不保留无限轮对话，而是只保留最近 MAX_TURNS 轮、最多 MAX_EVENTS 条
+ *   4. 只同步 event 中真正有价值的 stateDelta，维持最新运行态 state
  * </pre>
  *
  * <p>你可以把它理解成：放在 ADK Session 前面的一道“净化器 + 限流器 + 修剪器”。
@@ -430,8 +427,8 @@ public class CustomAdkSessionService implements BaseSessionService {
         Event liveEvent = normalizeEvent(event);
 
         /*
-         * 先调用 ADK 默认实现，把事件和 stateDelta 写进本次 invocation 正在使用的
-         * Session。工具执行后的下一次模型请求正是从这个对象读取 FunctionResponse；
+         * 先调用 ADK 默认实现，把事件和 stateDelta 写进本次 invocation 正在使用的 Session。
+         * 工具执行后的下一次模型请求正是从这个对象读取 FunctionResponse；
          * 如果只更新自定义快照，当前 Session 会一直停留在工具调用之前。
          */
         return BaseSessionService.super.appendEvent(session, liveEvent)
@@ -552,101 +549,6 @@ public class CustomAdkSessionService implements BaseSessionService {
         return event;
     }
 
-    /**
-     * 对 user 事件做净化，去掉动态 Prompt 前缀，只保留原始用户问题。
-     *
-     * <p>这一步是“避免上下文重复”的关键动作之一。
-     * 因为环境信息、最近命令、关键事件等内容，业务层已经维护了一份，
-     * 不应该再在框架层 Session 里无限重复保存。
-     *
-     * <p>案例：
-     * <pre>
-     *   输入：
-     *   [系统环境]
-     *   系统: Linux
-     *   [关键事件]
-     *   - permission denied
-     *   ---
-     *   请继续查看 error.log
-     *
-     *   输出：
-     *   请继续查看 error.log
-     * </pre>
-     *
-     * @param event user 事件
-     * @return 净化后的事件
-     */
-    private Event sanitizeUserEvent(Event event) {
-        String text = event.stringifyContent();
-        if (text.isBlank()) {
-            return event;
-        }
-
-        String actualUserMessage = stripDynamicPrefix(text);
-        if (actualUserMessage.equals(text)) {
-            return event;
-        }
-
-        Event sanitized = event.toBuilder().build();
-        Content content = sanitized.content().orElse(Content.builder().role("user").build());
-        String role = content.role().orElse("user");
-        sanitized.setContent(Content.builder()
-                .role(role)
-                .parts(List.of(Part.fromText(actualUserMessage)))
-                .build());
-        return sanitized;
-    }
-
-    /**
-     * 从文本中剥离动态注入前缀。
-     *
-     * <p>优先按 {@code \n---\n} 分隔线切分；若没有分隔线，
-     * 再根据典型前缀段落标签做启发式判断。
-     *
-     * <p>案例 1：
-     * <pre>
-     *   [系统环境]
-     *   ...
-     *   ---
-     *   帮我分析日志
-     *
-     *   结果：帮我分析日志
-     * </pre>
-     *
-     * <p>案例 2：
-     * <pre>
-     *   [关键事件]
-     *   - 工具执行失败
-     *   再试一次 ls /var/log
-     *
-     *   结果：再试一次 ls /var/log
-     * </pre>
-     *
-     * @param text 原始文本
-     * @return 剥离前缀后的文本
-     */
-    private String stripDynamicPrefix(String text) {
-        if (text.contains("\n---\n")) {
-            String[] parts = text.split("\\n---\\n", 2);
-            return parts.length == 2 ? parts[1].trim() : text;
-        }
-
-        boolean looksLikeInjectedPrefix = text.startsWith("[系统环境]")
-                || text.startsWith("[最近执行的命令]")
-                || text.startsWith("[关键事件]")
-                || text.startsWith("[当前任务]");
-        if (!looksLikeInjectedPrefix) {
-            return text;
-        }
-
-        int splitIndex = text.lastIndexOf('\n');
-        if (splitIndex < 0 || splitIndex >= text.length() - 1) {
-            return text;
-        }
-
-        String tail = text.substring(splitIndex + 1).trim();
-        return tail.isEmpty() ? text : tail;
-    }
 
     /**
      * 截断过长的事件文本。

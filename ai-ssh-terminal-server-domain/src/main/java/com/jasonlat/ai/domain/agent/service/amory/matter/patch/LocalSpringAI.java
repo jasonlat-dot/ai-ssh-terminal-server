@@ -338,7 +338,7 @@ public class LocalSpringAI extends BaseLlm {
         if (response.content().isPresent() && response.content().get().parts().isPresent()) {
             return response.content().get().parts().get().stream()
                     .map(part -> part.text().orElse(""))
-                    .filter(text -> text != null && !text.isEmpty())
+                    .filter(text -> !text.isEmpty())
                     .findFirst()
                     .orElse("");
         }

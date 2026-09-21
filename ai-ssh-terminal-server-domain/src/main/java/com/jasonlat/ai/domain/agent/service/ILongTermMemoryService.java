@@ -3,6 +3,7 @@ package com.jasonlat.ai.domain.agent.service;
 import com.jasonlat.ai.domain.agent.model.entity.ChatMessageEntity;
 import com.jasonlat.ai.domain.agent.model.entity.LongTermMemoryEntity;
 import com.jasonlat.ai.domain.agent.service.context.provider.impl.LongTermMemoryProvider;
+import com.jasonlat.ai.domain.agent.service.memory.LongTermMemoryService;
 
 import java.util.List;
 
@@ -18,7 +19,7 @@ import java.util.List;
  *   <li>{@link LongTermMemoryProvider} 调用 {@link #buildMemorySummary} 构建注入 Prompt 的摘要</li>
  * </ul>
  *
- * @see cn.bugstack.ai.domain.agent.service.memory.LongTermMemoryService
+ * @see LongTermMemoryService
  */
 public interface ILongTermMemoryService {
 

@@ -38,9 +38,9 @@ public class RootNode extends AbstractAIAgentReActSupport {
     private LongTermMemoryService longTermMemoryService;
 
     private static final int DEFAULT_MAX_STEPS = 50;
-    private static final int DEFAULT_MAX_LLM_CALLS = 20;
-    private static final int DEFAULT_MAX_TOOL_CALLS = 200;
-    private static final int DEFAULT_MAX_TOOL_CALLS_PER_ROUND = 10;
+    private static final int DEFAULT_MAX_LLM_CALLS = 256;
+    private static final int DEFAULT_MAX_TOOL_CALLS = 256;
+    private static final int DEFAULT_MAX_TOOL_CALLS_PER_ROUND = 36;
 
     @Override
     protected ReActResultDTO doApply(ChatRequest requestParameter, DefaultReActFactory.DynamicContext dynamicContext) throws Exception {

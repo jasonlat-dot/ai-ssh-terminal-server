@@ -10,8 +10,10 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.factory.Defa
 import com.jasonlat.ai.domain.agent.service.amory.matter.skills.IToolSkillsCreateService;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -133,16 +135,25 @@ public class ChatModelNode extends AbstractAmorySupport {
             });
         }
 
+        // 构建对话模型
+        OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
+                .model(chatModelConfig.getModel())
+                .toolCallbacks(toolCallbacks)
+                // 不要让 spring ai 内部调用工具 否则google adk 拿不到工具结果
+                .internalToolExecutionEnabled(false)
+                // 开启流式 usage 统计：OpenAI 协议要求 stream_options.include_usage=true，
+                // 末块才返回完整 usage（含 prompt_tokens_details.cached_tokens 缓存命中）。
+                .streamUsage(true);
+
+        // 推理强度（仅推理模型生效，非推理模型忽略）
+        String reasoningEffort = chatModelConfig.getReasoningEffort();
+        if (StringUtils.isNotBlank(reasoningEffort)) {
+            optionsBuilder.reasoningEffort(reasoningEffort);
+        }
+
         return OpenAiChatModel.builder()
                 .openAiApi(openAiApi)
-                .defaultOptions(OpenAiChatOptions.builder()
-                        // 不要让 spring ai 内部调用工具 否则google adk 拿不到工具结果
-                        .internalToolExecutionEnabled(false)
-                        // OpenAI 流式响应默认不一定返回 usage；开启后最后一个分片会携带 token 统计。
-                        .streamUsage(true)
-                        .model(chatModelConfig.getModel())
-                        .toolCallbacks(toolCallbacks)
-                        .build())
+                .defaultOptions(optionsBuilder.build())
                 .build();
     }
 

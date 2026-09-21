@@ -17,7 +17,7 @@ import java.util.Map;
 /**
  * 终端状态上下文提供者（order=10，最先执行）
  * <p>
- * 功能：通过 SSH 终端实时采集远程服务器的环境信息（OS/用户/工作目录/运行时长），
+ * 功能：通过 SSH 终端实时采集远程服务器的环境信息（OS/用户/工作目录），
  * 让模型"知道自己在哪台机器上操作"。该逻辑从 PromptService 下沉至此。
  * <p>
  * 运行过程：
@@ -31,10 +31,9 @@ import java.util.Map;
  *        +-- "uname -srm"  --> osInfo          （操作系统/架构）
  *        +-- "whoami"      --> currentUser     （当前登录用户）
  *        +-- "pwd"         --> currentDirectory（当前工作目录）
- *        +-- "uptime"      --> uptime          （运行时长）
  *        |
  *        v
- *   Map{osInfo, currentUser, currentDirectory, uptime}
+ *   Map{osInfo, currentUser, currentDirectory}
  *        |
  *        v
  *   ChatContextService 合并 --> PromptContextVO --> 消息前缀 [系统环境]
@@ -94,11 +93,6 @@ public class TerminalStateProvider implements ContextProvider {
         String pwd = safeExec(terminalSessionId, "pwd");
         if (StringUtils.hasText(pwd)) {
             result.put("currentDirectory", pwd);
-        }
-
-        String uptime = safeExec(terminalSessionId, "uptime -p 2>/dev/null || uptime");
-        if (StringUtils.hasText(uptime)) {
-            result.put("uptime", uptime);
         }
 
         return result;

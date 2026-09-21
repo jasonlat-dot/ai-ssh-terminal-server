@@ -114,19 +114,23 @@ public class TaskProvider implements ContextProvider {
                     .ifPresent(m -> {
                         String content = (String) m.get("content");
                         if (content != null) {
-                            result.put("taskDescription", stripDynamicPrefix(content));
+                            result.put("taskDescription", stripDynamicSuffix(content));
                         }
                     });
         }
         return result;
     }
 
-    private String stripDynamicPrefix(String text) {
+    private String stripDynamicSuffix(String text) {
         if (text == null) return null;
+        // 判断文本是否包含分隔标记：换行 + --- + 换行
         if (text.contains("\n---\n")) {
+            // 最多分割成2段，只在第一次出现 \n---\n 的地方切割
             String[] parts = text.split("\\n---\\n", 2);
-            return parts.length == 2 ? parts[1].trim() : text;
+            // 如果成功切成2块，返回**前面那一段**，并且trim去除首尾空白
+            return parts.length == 2 ? parts[0].trim() : text;
         }
+        // 没有找到分隔标记，原样返回原文
         return text;
     }
 }

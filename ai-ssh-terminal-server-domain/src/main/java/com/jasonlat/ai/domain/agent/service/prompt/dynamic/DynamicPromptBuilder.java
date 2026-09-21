@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * 翻译成模型可读的结构化文本，提供两种构建方式：
  * <ul>
  *   <li>{@link #build} —— 追加到 system instruction 末尾</li>
- *   <li>{@link #buildMessagePrefix} —— 构建为用户消息前缀（当前使用）</li>
+ *   <li>{@link #buildMessageSuffix} —— 构建为用户消息前缀（当前使用）</li>
  * </ul>
  */
 @Slf4j
@@ -82,7 +82,7 @@ public class DynamicPromptBuilder {
      * @param ctx 动态上下文，为 null 时返回空串
      *化消息前缀文本，无内容时返回空串
      */
-    public String buildMessagePrefix(PromptContextVO ctx) {
+    public String buildMessageSuffix(PromptContextVO ctx) {
         if (ctx == null) return "";
 
         StringBuilder sb = new StringBuilder();
@@ -141,9 +141,9 @@ public class DynamicPromptBuilder {
 
         if (!hasContent) return "";
 
-        String prefix = sb.toString();
-        log.debug("构建消息前缀，长度: {}", prefix.length());
-        return prefix;
+        String suffix = sb.toString();
+        log.debug("构建消息后缀，长度: {}", suffix.length());
+        return suffix;
     }
 
 
@@ -151,7 +151,7 @@ public class DynamicPromptBuilder {
      * 追加长期记忆段落。
      * <p>
      * 将 LongTermMemoryProvider 召回的长期记忆摘要渲染为 [长期记忆] 段落，
-     * 拼到用户消息前面，让主模型感知用户偏好、环境信息、软件版本、排查经验等。
+     * 拼到用户消息后面，让主模型感知用户偏好、环境信息、软件版本、排查经验等。
      */
     private void appendLongTermMemorySummary(StringBuilder sb, PromptContextVO ctx) {
         if (isEmpty(ctx.getLongTermMemorySummary())) {

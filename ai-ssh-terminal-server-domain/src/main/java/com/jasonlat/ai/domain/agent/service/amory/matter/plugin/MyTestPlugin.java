@@ -106,17 +106,18 @@ public class MyTestPlugin extends BasePlugin {
                     callbackContext,
                     usage.promptTokenCount().orElse(0),
                     usage.candidatesTokenCount().orElse(0),
+                    usage.cachedContentTokenCount().orElse(0),
                     usage.totalTokenCount().orElse(0)));
         });
 
     }
 
-    private void recordUsage(CallbackContext callbackContext, int input, int output, int total) {
+    private void recordUsage(CallbackContext callbackContext, int input, int output, int cache, int total) {
         // 流式中间分片通常携带 0/0/0；真正的 usage 只在结束分片出现。
         if (input <= 0 && output <= 0 && total <= 0) {
             return;
         }
-        log.info("插件日志-🧠 Token 消耗 | input:{} | output:{} | total:{}", input, output, total);
+        log.info("插件日志-🧠 Token 消耗 | input:{} | output:{} | cache:{} | total:{}", input, output, cache, total);
         invocationUsages
                 .computeIfAbsent(callbackContext.invocationId(), ignored -> new InvocationUsage())
                 .addOnce(callbackContext.eventId(), input, output, total);

@@ -44,7 +44,7 @@ import java.util.Map;
  *        |     buildPromptContext(sessionId, userId, terminalSessionId, history)
  *        |        |
  *        |        +--> for provider in providers(按order排序, 跳过disabled):
- *        |        |        TerminalState(10)  {osInfo, currentUser, currentDirectory, uptime}
+ *        |        |        TerminalState(10)  {osInfo, currentUser, currentDirectory}
  *        |        |        Task(20)           {taskDescription}
  *        |        |        Milestone(30)      {milestoneVOS}
  *        |        |        ToolResult(40)     {toolResultSummary}
