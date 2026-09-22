@@ -21,6 +21,7 @@ import com.jasonlat.ai.domain.agent.service.ILongTermMemoryService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.intent.IntentService;
 import com.jasonlat.ai.domain.agent.service.util.AgentUtils;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 单次 ADK invocation 的执行与事件桥接节点。
@@ -313,9 +315,14 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     context.getChatSessionId(), runner.sessionService().getClass().getName());
             throw new IllegalStateException("Runner must use CustomAdkSessionService for business-managed history");
         }
+
+        ConcurrentHashMap<String, Object> contextHashMap = new ConcurrentHashMap<>();
+        // 终端ID
+        contextHashMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, context.getTerminalSessionId());
+
         sessionService.prepareInvocation(
                 runner.appName(), context.getUserId(), context.getChatSessionId(),
-                priorHistory, context.getTerminalSessionId());
+                priorHistory, contextHashMap);
         log.info("ReAct链路-ADK Session 投影完成 | sessionId:{} | projectedMessages:{} | durationMs:{}",
                 context.getChatSessionId(), sizeOf(priorHistory), elapsedMillis(startNanos));
     }

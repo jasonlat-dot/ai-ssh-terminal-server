@@ -3,7 +3,6 @@ package com.jasonlat.ai.test.trigger;
 
 import com.google.adk.events.Event;
 import com.jasonlat.ai.domain.agent.service.IChatService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;

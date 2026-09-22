@@ -6,7 +6,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.SshExecuteAdkTool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

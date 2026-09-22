@@ -6,6 +6,7 @@ import com.google.adk.agents.InvocationContext;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
+import com.google.adk.tools.AgentTool;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.Content;
@@ -142,6 +143,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> beforeToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.info("插件日志-🧩 子Agent派发开始 | parentAgent:{} | subAgent:{} | request:{} | invocationId:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(toolArgs),
+                        toolContext.invocationId());
+                return;
+            }
             log.info("插件日志-🔧 工具调用开始 | tool:{} | agent:{} | args:{}",
                     tool.name(),
                     toolContext.agentName(),
@@ -152,6 +161,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> afterToolCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Map<String, Object> result) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.info("插件日志-🧩 子Agent派发完成 | parentAgent:{} | subAgent:{} | result:{} | invocationId:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(result),
+                        toolContext.invocationId());
+                return;
+            }
             log.info("插件日志-🔧 工具调用完成 | tool:{} | agent:{} | result:{}",
                     tool.name(),
                     toolContext.agentName(),
@@ -162,6 +179,14 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Map<String, Object>> onToolErrorCallback(BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Throwable error) {
         return Maybe.fromAction(() -> {
+            if (tool instanceof AgentTool agentTool) {
+                log.error("插件日志-🧩 子Agent派发异常 | parentAgent:{} | subAgent:{} | request:{} | error:{}",
+                        toolContext.agentName(),
+                        agentTool.getAgent().name(),
+                        formatArgs(toolArgs),
+                        error.getMessage(), error);
+                return;
+            }
             log.error("插件日志-🔧 工具调用异常 | tool:{} | agent:{} | args:{} | error:{}",
                     tool.name(),
                     toolContext.agentName(),

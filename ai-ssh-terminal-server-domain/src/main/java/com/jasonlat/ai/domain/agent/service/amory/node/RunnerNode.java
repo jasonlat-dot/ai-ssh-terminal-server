@@ -7,6 +7,7 @@ import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
+import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
 import com.jasonlat.ai.types.exception.AppException;
@@ -30,6 +31,8 @@ public class RunnerNode extends AbstractAmorySupport {
 
     @Resource
     private CustomRunnerFactory customRunnerFactory;
+    @Resource
+    private LlmSubAgentCatalog agentCatalog;
 
     /**
      * 业务流程处理方法
@@ -68,6 +71,8 @@ public class RunnerNode extends AbstractAmorySupport {
                 .openAiApi(dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(appName)))
                 .chatModelName(aiAgentConfigTableVO.getModule().getChatModel().getModel())
                 .build();
+        // 把装配完成的子 Agent 分组登记到注册表，供子 Agent 派发时按名称查找
+        agentCatalog.register(agentId, dynamicContext.getAgentGroup());
 
         // 注册到Spring容器
         beanUtils.registerBean(agentId, AiAgentRegisterVO.class, aiAgentRegisterVO);

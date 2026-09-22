@@ -13,7 +13,8 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.model.SessionSnapshot;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl.SshExecuteAdkTool;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.SshExecuteAdkTool;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
@@ -21,14 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -112,6 +106,15 @@ public class CustomAdkSessionService implements BaseSessionService {
             List<Map<String, Object>> businessHistory,
             String terminalSessionId) {
 
+        ConcurrentHashMap<String, Object> contextMap = new ConcurrentHashMap<>();
+        contextMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+
+        prepareInvocation(appName, userId, sessionId, businessHistory, contextMap);
+    }
+
+    public void prepareInvocation(String appName, String userId, String sessionId,
+                                  List<Map<String, Object>> businessHistory,  ConcurrentHashMap<String, Object> context) {
+
         SessionSnapshot snapshot = findSnapshot(appName, userId, sessionId);
         if (snapshot == null) {
             throw new IllegalStateException("session not found: " + appName + "/" + userId + "/" + sessionId);
@@ -135,16 +138,13 @@ public class CustomAdkSessionService implements BaseSessionService {
         synchronized (snapshot) {
             snapshot.getRawEvents().clear();
             snapshot.getRawEvents().addAll(projectedEvents);
-            if (terminalSessionId == null || terminalSessionId.isBlank()) {
-                snapshot.getState().remove(SshExecuteAdkTool.TERMINAL_SESSION_STATE_KEY);
-            } else {
-                snapshot.getState().put(SshExecuteAdkTool.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
-            }
             snapshot.setLastUpdateTime(Instant.now());
+            // 存放动态数据
+            snapshot.getState().putAll(context);
         }
-        log.info("ADK invocation 已准备 appName={}, userId={}, sessionId={}, terminalSessionId={}, businessMessages={}, projectedEvents={}",
-                appName, userId, sessionId,
-                terminalSessionId, businessHistory == null ? 0 : businessHistory.size(), projectedEvents.size());
+
+        log.info("ADK invocation 已准备 appName={}, userId={}, sessionId={}", appName, userId, sessionId);
+
     }
 
     /**

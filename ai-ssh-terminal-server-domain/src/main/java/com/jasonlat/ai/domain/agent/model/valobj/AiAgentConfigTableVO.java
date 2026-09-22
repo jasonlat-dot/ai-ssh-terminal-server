@@ -89,6 +89,8 @@ public class AiAgentConfigTableVO {
             /** 输出参数 */
             private String outputKey;
 
+            private List<String> subAgents;
+
             /** 自定义 - AI API 配置 可为空，不配置就取默认 */
             private AiApi aiApi;
 
@@ -117,6 +119,12 @@ public class AiAgentConfigTableVO {
         public static class ChatModel {
             /** 模型名称 */
             private String model;
+
+            public String getModelOrDefault(String options) {
+                if (StringUtils.isNotBlank(model)) return model;
+                return options;
+            }
+
             /**
              * 推理强度；minimal、low、medium、high（仅推理模型生效，非推理模型忽略）
              */

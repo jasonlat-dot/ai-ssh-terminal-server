@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.impl;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh;
 
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
@@ -28,8 +28,6 @@ import java.util.Optional;
 @Slf4j
 @Service("sshExecuteAdkTool")
 public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
-
-    public static final String TERMINAL_SESSION_STATE_KEY = "terminalSessionId";
 
     private static final FunctionDeclaration DECLARATION = FunctionDeclaration.builder()
             .name("executeCommand")
