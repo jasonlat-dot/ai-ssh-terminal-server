@@ -5,6 +5,7 @@ import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.*;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
@@ -75,29 +76,45 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
         return Single.fromCallable(() -> {
-            String command = String.valueOf(args.getOrDefault("command", ""));
-            Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
-            String terminalSessionId = terminalValue instanceof String value ? value : null;
+            Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
+            AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
+            try {
+                if (cancellation != null) cancellation.registerCurrentThread();
+                String command = String.valueOf(args.getOrDefault("command", ""));
+                Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
+                String terminalSessionId = terminalValue instanceof String value ? value : null;
 
-            String agentName = (String) toolContext.state().get(AdkToolProvider.RUNNER_AGENT_NAME);
+                String agentName = (String) toolContext.state().get(AdkToolProvider.RUNNER_AGENT_NAME);
+                if (agentName == null || agentName.isBlank()) {
+                    agentName = toolContext.agentName();
+                }
+                String rootSessionId = (String) toolContext.state().get(AdkToolProvider.PARENT_SESSION_ID);
+                String agentCallId = (String) toolContext.state().get(AdkToolProvider.NESTED_AGENT_CALL_ID);
+                String parentToolCallId = (String) toolContext.state().get(AdkToolProvider.PARENT_TOOL_CALL_ID);
+                String callId = toolContext.functionCallId().orElseGet(() -> "ssh_" + Event.generateEventId());
 
+                publishToolEvent(rootSessionId, toolContext.invocationId(), callId,
+                        args, agentName, agentCallId, parentToolCallId, false);
 
-            publishToolEvent(terminalSessionId, toolContext.invocationId(), args, agentName);
+                log.info("SSH 工具调用开始 agentName:{} invocationId={}, toolCallId={}, terminalSessionId={}, command={}",
+                        agentName, toolContext.invocationId(), toolContext.functionCallId().orElse(""),
+                        terminalSessionId, command);
+                Map<String, Object> executeResult = executeForTerminal(terminalSessionId, command);
+                if (cancellation != null) cancellation.throwIfCancelled();
 
-            log.info("SSH 工具调用开始 invocationId={}, toolCallId={}, terminalSessionId={}, command={}",
-                    toolContext.invocationId(), toolContext.functionCallId().orElse(""),
-                    terminalSessionId, command);
-            Map<String, Object> executeResult = executeForTerminal(terminalSessionId, command);
-
-            publishToolEvent(terminalSessionId, toolContext.invocationId(),  executeResult, agentName);
-            return executeResult;
+                publishToolEvent(rootSessionId, toolContext.invocationId(), callId,
+                        executeResult, agentName, agentCallId, parentToolCallId, true);
+                return executeResult;
+            } finally {
+                if (cancellation != null) cancellation.unregisterCurrentThread();
+            }
         });
     }
 
     /**
      * 真实业务执行入口。终端 ID 由 ADK 适配层提供，方法本身不感知 ToolContext。
      */
-    private Map<String, Object> executeForTerminal(String terminalSessionId, String command) {
+    private Map<String, Object> executeForTerminal(String terminalSessionId, String command) throws InterruptedException {
         String safeCommand = command == null ? "" : command;
         CommandSafetyDecision decision = commandSafetyPolicy.evaluate(safeCommand);
         if (!decision.isAllowed()) {
@@ -141,6 +158,10 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
             log.info("SSH 工具调用完成 terminalSessionId={}, success={}, outputLength={}",
                     terminalSessionId, success, output == null ? 0 : output.length());
             return result;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            log.info("SSH 命令因对话停止而中断 terminalSessionId={}, command={}", terminalSessionId, safeCommand);
+            throw interrupted;
         } catch (Exception exception) {
             log.error("SSH 命令执行异常 terminalSessionId={}, command={}",
                     terminalSessionId, safeCommand, exception);
@@ -157,19 +178,25 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
      * SSH 工具的执行结果不一定会作为父 Runner 的原始 functionResponse 返回，
      * 因此这里构造标准 ADK Event，并按终端会话投递给当前 SSE 监听器。
      */
-    private void publishToolEvent(String terminalSessionId, String toolInvocationId, Map<String, Object> payload, String author) {
-
-        if (terminalSessionId == null || terminalSessionId.isBlank()) {
+    private void publishToolEvent(String rootSessionId, String toolInvocationId, String callId,
+                                  Map<String, Object> payload, String author,
+                                  String agentCallId, String parentToolCallId, boolean result) {
+        if (agentEventPublisher == null || rootSessionId == null || rootSessionId.isBlank()) {
             return;
         }
-        Content content = Content.fromParts(Part.fromFunctionCall("executeCommand", payload));
+        Part part = result
+                ? Part.builder().functionResponse(FunctionResponse.builder()
+                        .id(callId).name("executeCommand").response(payload).build()).build()
+                : Part.builder().functionCall(FunctionCall.builder()
+                        .id(callId).name("executeCommand").args(payload).build()).build();
         Event event = Event.builder()
                 .id(Event.generateEventId())
                 .invocationId(toolInvocationId)
                 .author(author != null && !author.isBlank() ? author : "executeCommand")
-                .content(content)
+                .content(Content.fromParts(part))
                 .build();
-        agentEventPublisher.publishToTerminal(terminalSessionId, event, true);
+        agentEventPublisher.publishToSession(rootSessionId, event,
+                agentCallId, parentToolCallId, author);
     }
 
     private boolean isExecutionSuccessful(String output) {

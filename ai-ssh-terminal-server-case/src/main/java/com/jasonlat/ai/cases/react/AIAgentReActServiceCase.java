@@ -1,10 +1,12 @@
 package com.jasonlat.ai.cases.react;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.agents.RunConfig;
 import com.jasonlat.ai.cases.IAIAgentReActServiceCase;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.ReActStreamCancellation;
 import com.jasonlat.ai.cases.react.node.RootNode;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import jakarta.annotation.Resource;
@@ -15,8 +17,10 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 /**
  * AI 智能体 ReAct 执行服务实现
@@ -38,8 +42,44 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource
     private ThreadPoolExecutor threadPoolExecutor;
 
+    @Resource
+    private AgentEventPublisher agentEventPublisher;
+
+    @Resource
+    private ObjectMapper objectMapper;
+
     /** 同一个会话串行执行，不同会话可以并发，避免业务历史相互覆盖。 */
     private final ConcurrentHashMap<String, ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<ActiveStream>> activeStreams = new ConcurrentHashMap<>();
+
+    private record ActiveStream(String agentId, String userId, Runnable cancel, ResponseBodyEmitter emitter) {
+    }
+
+    @Override
+    public boolean stopChat(String agentId, String userId, String sessionId) {
+        if (agentId == null || userId == null || sessionId == null) return false;
+        Set<ActiveStream> streams = activeStreams.get(sessionId);
+        if (streams == null) return false;
+        boolean stopped = false;
+        for (ActiveStream stream : streams) {
+            if (!stream.agentId().equals(agentId) || !stream.userId().equals(userId)) continue;
+            stream.cancel().run();
+            try {
+                stream.emitter().complete();
+            } catch (IllegalStateException ignored) {
+                log.debug("停止对话时 SSE 已关闭 | sessionId:{}", sessionId);
+            }
+            stopped = true;
+        }
+        return stopped;
+    }
+
+    private void unregisterStream(String sessionId, ActiveStream stream) {
+        activeStreams.computeIfPresent(sessionId, (ignored, streams) -> {
+            streams.remove(stream);
+            return streams.isEmpty() ? null : streams;
+        });
+    }
 
     /**
      * 流式对话（ReAct 模式）
@@ -52,6 +92,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         long requestStartNanos = System.nanoTime();
         // 1. 创建 SSE 发射器（30 分钟超时）
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(30 * 60 * 1000L);
+        AtomicReference<ActiveStream> activeStreamRef = new AtomicReference<>();
 
         try {
             log.info("ReAct链路-请求接收 | mode:stream | sessionId:{} | userId:{} | agentId:{} | "
@@ -86,13 +127,21 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                         requestDTO.getSessionId(), task != null, taskCancelled,
                         dynamicContext.getCompleted().get());
             };
-            emitter.onTimeout(cancelTask);
-            emitter.onError(error -> cancelTask.run());
-            emitter.onCompletion(cancelTask);
+            ActiveStream activeStream = new ActiveStream(requestDTO.getAgentId(), requestDTO.getUserId(), cancelTask, emitter);
+            activeStreamRef.set(activeStream);
+            activeStreams.compute(requestDTO.getSessionId(), (ignored, streams) -> {
+                Set<ActiveStream> registered = streams == null ? ConcurrentHashMap.newKeySet() : streams;
+                registered.add(activeStream);
+                return registered;
+            });
+            Runnable unregister = () -> unregisterStream(requestDTO.getSessionId(), activeStream);
+            emitter.onTimeout(() -> { cancelTask.run(); unregister.run(); });
+            emitter.onError(error -> { cancelTask.run(); unregister.run(); });
+            emitter.onCompletion(() -> { cancelTask.run(); unregister.run(); });
             log.debug("ReAct链路-SSE 回调注册完成 | sessionId:{}", requestDTO.getSessionId());
 
             Future<?> task = threadPoolExecutor.submit(
-                    () -> executeStream(requestDTO, dynamicContext, emitter));
+                    () -> executeStream(requestDTO, dynamicContext, emitter, activeStream));
             taskRef.set(task);
             log.info("ReAct链路-后台任务已提交 | sessionId:{} | activeThreads:{} | queuedTasks:{} | "
                             + "submitDurationMs:{}",
@@ -105,6 +154,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             }
 
         } catch (Exception e) {
+            if (activeStreamRef.get() != null) unregisterStream(requestDTO.getSessionId(), activeStreamRef.get());
             log.error("ReAct链路-流式请求初始化失败 | sessionId:{} | durationMs:{}",
                     requestDTO.getSessionId(), elapsedMillis(requestStartNanos), e);
             emitter.completeWithError(e);
@@ -150,18 +200,32 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
     private void executeStream(ChatRequest requestDTO,
                                DefaultReActFactory.DynamicContext context,
-                               ResponseBodyEmitter emitter) {
+                               ResponseBodyEmitter emitter,
+                               ActiveStream activeStream) {
         String sessionId = requestDTO.getSessionId();
         long executionStartNanos = System.nanoTime();
         // saveExecutionState 采用整份会话状态回写，同一 session 必须串行，避免后完成的旧快照覆盖新历史。
         ReentrantLock lock = sessionLocks.computeIfAbsent(sessionId, ignored -> new ReentrantLock());
         long lockWaitStartNanos = System.nanoTime();
+        boolean listenerRegistered = false;
         try {
             log.debug("ReAct链路-等待会话锁 | sessionId:{} | locked:{} | queuedThreads:{}",
                     sessionId, lock.isLocked(), lock.getQueueLength());
             lock.lockInterruptibly();
             log.info("ReAct链路-获得会话锁 | sessionId:{} | waitMs:{}",
                     sessionId, elapsedMillis(lockWaitStartNanos));
+
+            // /chat_stream 的 emitter 由 Case 创建；在执行前订阅当前会话，
+            // 子 Runner 和 SSH 工具的事件才能进入同一条 JSON 行流。
+            NestedAgentEventForwarder forwarder = new NestedAgentEventForwarder(objectMapper);
+            agentEventPublisher.registerSession(sessionId, new Consumer<AgentEventPublisher.PublishedEvent>() {
+                @Override
+                public void accept(AgentEventPublisher.PublishedEvent event) {
+                    // 就是lambda里面的执行逻辑
+                    forwarder.forward(emitter, event);
+                }
+            });
+            listenerRegistered = true;
 
             log.info("ReAct链路-进入 RootNode | sessionId:{}", sessionId);
             ReActResultDTO result = rootNode.apply(requestDTO, context);
@@ -185,6 +249,10 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 log.debug("ReAct链路-SSE 已关闭，忽略重复异常完成 | sessionId:{}", sessionId);
             }
         } finally {
+            unregisterStream(sessionId, activeStream);
+            if (listenerRegistered) {
+                agentEventPublisher.unregisterSession(sessionId);
+            }
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
                 log.debug("ReAct链路-释放会话锁 | sessionId:{} | queuedThreads:{}",

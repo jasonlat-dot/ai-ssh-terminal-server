@@ -147,6 +147,77 @@ public class AgentController implements IAgentService {
         }
     }
 
+    /** 历史会话按最近活动时间倒序返回。 */
+    @Override
+    @GetMapping("/query_session_list")
+    public Response<List<ChatSessionResponse>> querySessionList(
+            @RequestParam("agentId") String agentId, @RequestParam("userId") String userId,
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        try {
+            if (StringUtils.isAnyBlank(agentId, userId)) {
+                return Response.error("智能体 ID 和用户 ID 不能为空");
+            }
+            int safeLimit = limit <= 0 ? 20 : Math.min(limit, 50);
+            List<ChatSessionResponse> sessions = chatService.querySessionList(agentId, userId, safeLimit)
+                    .stream()
+                    .map(session -> new ChatSessionResponse(session.getId(), session.getTitle(),
+                            session.getMessageCount(), session.getCreatedAt(), session.getUpdatedAt()))
+                    .toList();
+            return Response.success(ResponseCode.SUCCESS.getInfo(), sessions);
+        } catch (Exception exception) {
+            log.error("查询会话列表失败 agentId:{} userId:{}", agentId, userId, exception);
+            return Response.error(ResponseCode.UN_ERROR.getInfo());
+        }
+    }
+
+    /** 读取消息前校验 sessionId 是否确实属于该用户和 Agent。 */
+    @Override
+    @GetMapping("/query_message_list")
+    public Response<List<ChatMessageResponse>> queryMessageList(
+            @RequestParam("agentId") String agentId, @RequestParam("userId") String userId,
+            @RequestParam("sessionId") String sessionId,
+            @RequestParam(value = "limit", defaultValue = "100") int limit) {
+        try {
+            if (StringUtils.isAnyBlank(agentId, userId, sessionId)
+                    || !chatService.ownsSession(agentId, userId, sessionId)) {
+                return Response.<List<ChatMessageResponse>>builder()
+                        .code(ResponseCode.SESSION_NOT_EXIST.getCode())
+                        .info(ResponseCode.SESSION_NOT_EXIST.getInfo())
+                        .build();
+            }
+            int safeLimit = limit <= 0 ? 100 : Math.min(limit, 500);
+            List<ChatMessageResponse> messages = chatService.queryMessageList(sessionId, safeLimit)
+                    .stream()
+                    .map(message -> new ChatMessageResponse(message.getId(), message.getRole(),
+                            message.getContent(), message.getToolName(), message.getToolCallId(),
+                            message.getCreatedAt()))
+                    .toList();
+            return Response.success(ResponseCode.SUCCESS.getInfo(), messages);
+        } catch (Exception exception) {
+            log.error("查询会话消息失败 sessionId:{} userId:{}", sessionId, userId, exception);
+            return Response.error(ResponseCode.UN_ERROR.getInfo());
+        }
+    }
+
+    /** 主动停止正在运行的流式请求；执行层按 agentId/userId/sessionId 三者匹配。 */
+    @Override
+    @PostMapping("/stop_chat")
+    public Response<Boolean> stopChat(@RequestBody SessionDataRequest request) {
+        if (request == null || StringUtils.isAnyBlank(request.getAgentId(), request.getUserId(), request.getSessionId())) {
+            return Response.error("智能体 ID、用户 ID 和会话 ID 不能为空");
+        }
+        try {
+            boolean stopped = agentReActServiceCase.stopChat(
+                    request.getAgentId(), request.getUserId(), request.getSessionId());
+            log.info("主动停止对话 | agentId:{} | userId:{} | sessionId:{} | stopped:{}",
+                    request.getAgentId(), request.getUserId(), request.getSessionId(), stopped);
+            return Response.success(ResponseCode.SUCCESS.getInfo(), stopped);
+        } catch (Exception exception) {
+            log.error("主动停止对话失败 sessionId:{}", request.getSessionId(), exception);
+            return Response.error(ResponseCode.UN_ERROR.getInfo());
+        }
+    }
+
     @Override
     @RequestMapping(value = "/chat", method = RequestMethod.POST)
     public Response<ChatResponse> chat(@RequestBody ChatRequest request) {

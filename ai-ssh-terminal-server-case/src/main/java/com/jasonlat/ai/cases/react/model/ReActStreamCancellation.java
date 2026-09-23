@@ -17,6 +17,7 @@ public final class ReActStreamCancellation {
             return false;
         }
         context.getCancelled().set(true);
+        context.getRunCancellation().cancel();
         return task != null && task.cancel(true);
     }
 }

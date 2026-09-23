@@ -34,10 +34,16 @@ public class AgentExecutionContext {
      */
     String parentSessionKey;
 
+    /** 父 Agent 本次批量/规划派发的工具调用 ID。 */
+    String parentToolCallId;
+
     /**
      * 父会话绑定的 SSH 终端会话 ID，派发时透传给 SshExecuteAdkTool 的 ThreadLocal
      */
     String terminalSessionId;
+
+    /** 父请求的取消信号；并发派发任务不能只依赖父线程的中断状态。 */
+    AgentRunCancellation cancellation;
 
     /**
      * 当前执行的任务 ID（预留）

@@ -3,7 +3,10 @@ package com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents;
 import com.google.adk.events.Event;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionCall;
+import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 
 import java.util.Map;
@@ -37,14 +40,18 @@ public final class SubAgentDispatchEventPublisher {
      * 发布子 Agent 派发工具的 function call 事件。
      */
     void publishCall(ToolContext toolContext, String toolName, Map<String, Object> args) {
-        publish(toolContext, toolName, Part.fromFunctionCall(toolName, args));
+        String callId = callId(toolContext);
+        publish(toolContext, toolName, callId, Part.builder()
+                .functionCall(FunctionCall.builder().id(callId).name(toolName).args(args).build()).build());
     }
 
     /**
      * 发布子 Agent 派发工具的 function response 事件。
      */
     void publishResponse(ToolContext toolContext, String toolName, Map<String, Object> result) {
-        publish(toolContext, toolName, Part.fromFunctionResponse(toolName, result));
+        String callId = callId(toolContext);
+        publish(toolContext, toolName, callId, Part.builder()
+                .functionResponse(FunctionResponse.builder().id(callId).name(toolName).response(result).build()).build());
     }
 
     /**
@@ -52,13 +59,16 @@ public final class SubAgentDispatchEventPublisher {
      * <p>
      * 优先按父 invocation 路由；如果 ToolContext 不可用，则由发布器按唯一活跃会话兜底，避免并发会话串流。
      */
-    private void publish(ToolContext toolContext, String toolName, Part part) {
+    private void publish(ToolContext toolContext, String toolName, String callId, Part part) {
         if (agentEventPublisher == null) {
             return;
         }
 
         String invocationId = toolContext == null ? null : toolContext.invocationId();
-        String sessionId = toolContext == null ? null : toolContext.sessionId();
+        Object rootSession = toolContext == null ? null
+                : toolContext.state().get(AdkToolProvider.PARENT_SESSION_ID);
+        String sessionId = rootSession instanceof String value ? value
+                : toolContext == null ? null : toolContext.sessionId();
         String agentName = toolContext == null ? null : toolContext.agentName();
         String author = agentName == null || agentName.isBlank() || UNKNOWN.equals(agentName)
                 ? toolName
@@ -71,10 +81,11 @@ public final class SubAgentDispatchEventPublisher {
                 .content(Content.fromParts(part))
                 .build();
 
-        if (invocationId != null && !invocationId.isBlank() && !UNKNOWN.equals(invocationId)) {
-            agentEventPublisher.publish(invocationId, sessionId, event, true);
-        } else {
-            agentEventPublisher.publishToOnlyActiveSession(event, true);
-        }
+        agentEventPublisher.publishToSession(sessionId, event, null, callId, author);
+    }
+
+    private String callId(ToolContext toolContext) {
+        return toolContext == null ? "dispatch_" + Event.generateEventId()
+                : toolContext.functionCallId().orElseGet(() -> "dispatch_" + toolContext.invocationId());
     }
 }

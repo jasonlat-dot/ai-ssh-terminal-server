@@ -22,6 +22,8 @@ public interface IChatService {
 
     List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit);
 
+    boolean ownsSession(String agentId, String userId, String sessionId);
+
     /**
      * 查询会话消息列表
      */

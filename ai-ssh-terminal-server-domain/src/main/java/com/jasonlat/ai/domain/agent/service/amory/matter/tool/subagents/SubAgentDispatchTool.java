@@ -4,24 +4,25 @@ import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.Runner;
-import com.google.adk.sessions.Session;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.*;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.disposables.Disposable;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
@@ -101,49 +102,65 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
 
         String request = String.valueOf(args.getOrDefault("request", ""));
         String invocationId = UUID.randomUUID().toString();
+        String parentInvocationId = toolContext.invocationId();
+        Object rootSessionValue = toolContext.state().get(PARENT_SESSION_ID);
+        String parentSessionId = rootSessionValue instanceof String value ? value : toolContext.sessionId();
+        Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
+        AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
+        String functionCallId = toolContext.functionCallId().orElse("call_" + invocationId);
+        publishSyntheticFunctionCall(parentInvocationId, parentSessionId, functionCallId, request);
 
         Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
         String terminalSessionId = terminalValue instanceof String value ? value : null;
         if (terminalSessionId == null || terminalSessionId.isBlank()) {
-            return Single.just(Map.of(
+            Map<String, Object> result = Map.of(
                     "success", false,
-                    "error", "父 Agent 未绑定 SSH 终端会话"));
+                    "error", "父 Agent 未绑定 SSH 终端会话");
+            publishSyntheticFunctionResponse(parentInvocationId, parentSessionId, functionCallId, result);
+            return Single.just(result);
         }
         String userId = toolContext.userId();
         String childSessionId = "subAgent-" + invocationId;
         Runner runner = runnerFactory.create(subAgent, subAgent.name(), List.of());
 
-        Map<String, Object> initialState = new ConcurrentHashMap<>();
-        initialState.put(TERMINAL_SESSION_STATE_KEY, terminalSessionId);
-
         log.info("子Agent派发开始 | subAgent:{} | request:{} | invocationId:{}", subAgent.name(), request, invocationId);
         Content content = Content.fromParts(Part.fromText(request));
 
-        String parentInvocationId = toolContext.invocationId();
-        String parentSessionId = toolContext.sessionId();
-        String functionCallId = toolContext.functionCallId().orElse("call_" + invocationId);
-        // 父 Runner 的 function call 可能未进入同一事件流，先补发调用事件，保证 UI 展示完整。
-        publishSyntheticFunctionCall(parentInvocationId, parentSessionId, functionCallId, request);
-
+        ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
+        initialState.put(TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+        initialState.put(RUNNER_AGENT_NAME, subAgent.name());
+        initialState.put(NESTED_AGENT_CALL_ID, functionCallId);
+        initialState.put(PARENT_TOOL_CALL_ID, functionCallId);
+        if (cancellation != null) initialState.put(RUN_CANCELLATION, cancellation);
+        if (parentSessionId != null && !parentSessionId.isBlank()) {
+            initialState.put(PARENT_SESSION_ID, parentSessionId);
+        }
         RunConfig runConfig = RunConfig.builder()
-                .autoCreateSession(true)
+                .autoCreateSession(false)
+                .streamingMode(RunConfig.StreamingMode.SSE)
                 .build();
 
-        return Single.defer(() ->
-                        runner.sessionService().createSession(
-                                runner.appName(), userId, initialState, childSessionId))
+        AtomicReference<Disposable> subscription = new AtomicReference<>();
+        return Single.defer(() -> {
+                    if (cancellation != null) cancellation.throwIfCancelled();
+                    return runner.sessionService().createSession(
+                            runner.appName(), userId, initialState, childSessionId);
+                })
                 .flatMapPublisher(session -> {
+                    if (cancellation != null) cancellation.throwIfCancelled();
                     log.info("子Agent Session 创建成功 | sessionKey:{} | terminalSessionId:{}",
                             session.sessionKey(), terminalSessionId);
                     return runner.runAsync(userId, childSessionId, content, runConfig);
                 })
                 .doOnNext(event -> {
+                    if (cancellation != null) cancellation.throwIfCancelled();
                     if (agentEventPublisher != null) {
-                        publishEvent(parentInvocationId, parentSessionId, event);
+                        publishEvent(parentSessionId, event, functionCallId);
                     }
                 })
                 .toList()
                 .map(events -> {
+                    if (cancellation != null) cancellation.throwIfCancelled();
                     Map<String, Object> result = toResult(events, invocationId);
                     publishSyntheticFunctionResponse(parentInvocationId, parentSessionId, functionCallId, result);
                     return result;
@@ -156,6 +173,13 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
                             "error", String.valueOf(error.getMessage()));
                     publishSyntheticFunctionResponse(parentInvocationId, parentSessionId, functionCallId, errResult);
                     return errResult;
+                })
+                .doOnSubscribe(disposable -> {
+                    subscription.set(disposable);
+                    if (cancellation != null) cancellation.registerSubscription(disposable);
+                })
+                .doFinally(() -> {
+                    if (cancellation != null) cancellation.unregisterSubscription(subscription.get());
                 });
 
     }
@@ -168,14 +192,18 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
         if (agentEventPublisher == null) {
             return;
         }
+        FunctionCall call = FunctionCall.builder()
+                .id(functionCallId)
+                .name(subAgent.name())
+                .args(Map.of("request", request))
+                .build();
         Event event = Event.builder()
                 .id(Event.generateEventId())
                 .invocationId(parentInvocationId)
                 .author(subAgent.name())
-                .content(Content.fromParts(Part.fromFunctionCall(
-                        subAgent.name(), Map.of("request", request))))
+                .content(Content.fromParts(Part.builder().functionCall(call).build()))
                 .build();
-        publishEvent(parentInvocationId, parentSessionId, event);
+        publishEvent(parentSessionId, event, functionCallId);
     }
 
     /**
@@ -189,35 +217,32 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
         if (agentEventPublisher == null) {
             return;
         }
+        FunctionResponse response = FunctionResponse.builder()
+                .id(functionCallId)
+                .name(subAgent.name())
+                .response(result)
+                .build();
         Event event = Event.builder()
                 .id(Event.generateEventId())
                 .invocationId(parentInvocationId)
                 .author(subAgent.name())
-                .content(Content.fromParts(Part.fromFunctionResponse(
-                        subAgent.name(), result)))
+                .content(Content.fromParts(Part.builder().functionResponse(response).build()))
                 .build();
-        publishEvent(parentInvocationId, parentSessionId, event);
+        publishEvent(parentSessionId, event, functionCallId);
     }
 
     /**
      * 按父 invocation 优先、业务会话次之的方式路由事件；两者均不可用时保守兜底。
      */
-    private void publishEvent(String parentInvocationId, String parentSessionId, Event event) {
-        // 合成事件使用父 invocation/session 路由；无法获取父上下文时只投递到唯一活跃 SSE 会话。
-        if (parentInvocationId != null && !parentInvocationId.isBlank()) {
-            agentEventPublisher.publish(parentInvocationId, parentSessionId, event, true);
-        } else {
-            agentEventPublisher.publishToOnlyActiveSession(event, true);
-        }
+    private void publishEvent(String parentSessionId, Event event, String agentCallId) {
+        agentEventPublisher.publishToSession(parentSessionId, event,
+                agentCallId, agentCallId, subAgent.name());
     }
 
 
-    /** 取最后一个事件的文本内容作为子 Agent 的最终回复 */
+    /** 流式末尾可能是 usage/结束事件，需从模型文本片段还原最终回复。 */
     private Map<String, Object> toResult(List<Event> events, String invocationId) {
-        String result = events.isEmpty() ? "" :
-                events.get(events.size() - 1).content()
-                .map(Content::text)
-                .orElse("");
+        String result = SubAgentResultText.finalReply(events, subAgent.name());
 
         log.info("子Agent派发完成 | subAgent:{} | resultLength:{} | invocationId:{}", subAgent.name(), result.length(), invocationId);
 

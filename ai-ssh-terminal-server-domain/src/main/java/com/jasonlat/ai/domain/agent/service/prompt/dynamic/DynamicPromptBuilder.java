@@ -176,10 +176,16 @@ public class DynamicPromptBuilder {
                     .map(IntentTypeEnumVO::name)
                     .collect(java.util.stream.Collectors.joining(", "))).append("\n");
         }
-        if (result != null && result.getEntities() != null && !result.getEntities().isEmpty()) {
-            sb.append("- 实体: ").append(result.getEntities().entrySet().stream()
+        // 使用通配符读取，兼容旧缓存里由未经检查的 Map 强转留下的非 String 值。
+        Map<?, ?> entities = result == null ? null : result.getEntities();
+        if (entities != null && !entities.isEmpty()) {
+            String entityHint = entities.entrySet().stream()
+                    .filter(entry -> entry.getKey() != null && entry.getValue() != null)
                     .map(entry -> entry.getKey() + "=" + entry.getValue())
-                    .collect(java.util.stream.Collectors.joining(", "))).append("\n");
+                    .collect(java.util.stream.Collectors.joining(", "));
+            if (!entityHint.isEmpty()) {
+                sb.append("- 实体: ").append(entityHint).append("\n");
+            }
         }
         sb.append("- 使用原则: 该结果仅作参考，不得覆盖用户消息、历史结论和工具证据。\n");
         log.info("意图提示: {}, confidence: {}", primary, result == null ? "n/a" : result.getConfidence());

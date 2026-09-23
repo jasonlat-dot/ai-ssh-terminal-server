@@ -88,6 +88,12 @@ public interface IChatHistoryRepository {
      */
     List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit);
 
+    /** 按会话 ID、用户和 Agent 精确校验归属，避免仅凭 sessionId 读取他人消息。 */
+    boolean ownsSession(String agentId, String userId, String sessionId);
+
+    /** 只在仍为默认标题时写入首条用户消息摘要。 */
+    void updateSessionTitleIfDefault(String sessionId, String title);
+
     /**
      * 查询指定会话的消息列表（用于前端历史消息展示）
      *

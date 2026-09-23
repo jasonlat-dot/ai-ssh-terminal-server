@@ -2,6 +2,7 @@ package com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.orchest
 
 
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.TaskStatus;
@@ -64,9 +65,18 @@ public class DynamicAgentOrchestrator {
 
         // 并发额度：同一时刻最多 maxConcurrency 个任务在执行
         Semaphore concurrency = new Semaphore(Math.max(1, plan.getMaxConcurrency()));
+        AgentRunCancellation cancellation = context.getCancellation();
 
         // 调度循环：每轮执行一批"依赖已全部满足"的就绪任务
         while (tasks.values().stream().anyMatch(task -> task.getStatus() == TaskStatus.PENDING)) {
+            if (cancellation != null && cancellation.isCancelled()) {
+                tasks.values().stream().filter(task -> task.getStatus() == TaskStatus.PENDING)
+                        .forEach(task -> {
+                            task.setStatus(TaskStatus.SKIPPED);
+                            task.setError("对话已停止");
+                        });
+                break;
+            }
             // failFast：已有任务失败，不再调度新任务，剩余 PENDING 全部置 SKIPPED 后退出
             if (Boolean.TRUE.equals(plan.getFailFast())
                     && tasks.values().stream().anyMatch(task -> task.getStatus() == TaskStatus.FAILED)) {
@@ -108,14 +118,18 @@ public class DynamicAgentOrchestrator {
             // 并发执行本轮就绪任务：信号量限流，异常任务置 FAILED 不中断整体
             List<CompletableFuture<Void>> futures = readyTasks.stream()
                     .map(task -> CompletableFuture.runAsync(() -> {
+                        boolean acquired = false;
                         try {
+                            if (cancellation != null) cancellation.throwIfCancelled();
                             concurrency.acquire();
+                            acquired = true;
+                            if (cancellation != null) cancellation.throwIfCancelled();
                             dispatchService.execute(context, task);
                         } catch (Exception exception) {
                             task.setStatus(TaskStatus.FAILED);
                             task.setError(exception.getMessage());
                         } finally {
-                            concurrency.release();
+                            if (acquired) concurrency.release();
                         }
                     }, executor))
                     .toList();

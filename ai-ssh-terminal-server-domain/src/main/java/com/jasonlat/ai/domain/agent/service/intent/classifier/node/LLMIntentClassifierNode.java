@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.intent.classifier.node;
 
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.ConversationContextVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;
@@ -21,6 +22,7 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -271,20 +273,18 @@ public class LLMIntentClassifierNode extends AbstractIntentClassifierSupport {
      * @param response LLM 返回的原始文本
      * @return 解析后的 IntentResultVO，失败时返回 UNKNOWN
      */
-    @SuppressWarnings("unchecked")
     private IntentResultVO parseResponse(String response) {
 
         try {
             // 提取 JSON 部分
             String json = response.replaceAll("(?s).*?(\\{.*}).*", "$1");
-            Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<>() {});
 
             IntentTypeEnumVO intent = IntentTypeEnumVO.valueOf(
                     String.valueOf(parsed.get("intent")).toUpperCase());
             double confidence = parsed.containsKey("confidence")
                     ? Double.parseDouble(String.valueOf(parsed.get("confidence"))) : 0.5;
-            Map<String, String> entities = parsed.containsKey("entities")
-                    ? (Map<String, String>) parsed.get("entities") : Map.of();
+            Map<String, String> entities = normalizeEntities(parsed.get("entities"));
 
             List<IntentTypeEnumVO> candidates = List.of();
             if (parsed.containsKey("candidates")) {
@@ -314,6 +314,33 @@ public class LLMIntentClassifierNode extends AbstractIntentClassifierSupport {
                     .intent(IntentTypeEnumVO.UNKNOWN).confidence(0.0)
                     .entities(Map.of()).rawResponse(response).build();
         }
+    }
+
+    /**
+     * Jackson 将模型 JSON 解析为 Map<String, Object>；泛型强转不会检查 Map 中的值。
+     * 模型可能把多条命令放进数组，因此在边界处统一转成字符串，避免下游构建 Prompt 时
+     * 将 ArrayList 当作 String 读取而抛 ClassCastException。
+     */
+    private Map<String, String> normalizeEntities(Object rawEntities) {
+        if (rawEntities == null) {
+            return Map.of();
+        }
+        if (!(rawEntities instanceof Map<?, ?> rawMap)) {
+            log.warn("意图识别 entities 不是对象，已忽略 | type:{}", rawEntities.getClass().getSimpleName());
+            return Map.of();
+        }
+
+        Map<String, String> normalized = new LinkedHashMap<>();
+        rawMap.forEach((key, value) -> {
+            if (!(key instanceof String name) || name.isBlank() || value == null) {
+                return;
+            }
+            String text = value instanceof Map<?, ?> || value instanceof List<?>
+                    ? objectMapper.valueToTree(value).toString()
+                    : String.valueOf(value);
+            normalized.put(name, text);
+        });
+        return normalized;
     }
 
     /**

@@ -251,6 +251,15 @@ public class LongTermMemoryService implements ILongTermMemoryService {
             } catch (Exception e) {
                 log.warn("保存用户消息落库失败 sessionId={}", sessionId, e);
             }
+            try {
+                String title = message.replaceAll("\\s+", " ").trim();
+                if (title.length() > 80) {
+                    title = title.substring(0, 80) + "…";
+                }
+                chatHistoryRepository.updateSessionTitleIfDefault(sessionId, title);
+            } catch (Exception e) {
+                log.warn("更新会话标题失败 sessionId={}", sessionId, e);
+            }
         }
         recordUserMessage(userId, sessionId, message, intentLabel);
     }

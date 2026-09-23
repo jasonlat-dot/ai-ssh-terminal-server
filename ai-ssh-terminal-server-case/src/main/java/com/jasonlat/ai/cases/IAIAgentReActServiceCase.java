@@ -31,6 +31,9 @@ public interface IAIAgentReActServiceCase {
      */
     ResponseBodyEmitter chatStream(ChatRequest requestDTO);
 
+    /** 主动取消指定用户当前会话中正在执行的流式请求。 */
+    boolean stopChat(String agentId, String userId, String sessionId);
+
     /**
      * 普通对话（单轮，非流式）
      *

@@ -37,4 +37,9 @@ public interface IChatSessionDao {
      * @return 会话列表
      */
     List<ChatSessionPO> querySessionList(@Param("agentId") String agentId, @Param("userId") String userId, @Param("limit") int limit);
+
+    int countOwnedSession(@Param("agentId") String agentId, @Param("userId") String userId,
+                          @Param("sessionId") String sessionId);
+
+    void updateTitleIfDefault(@Param("sessionId") String sessionId, @Param("title") String title);
 }

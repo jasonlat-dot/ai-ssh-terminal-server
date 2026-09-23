@@ -19,6 +19,12 @@ public interface IAgentService {
 
     Response<CreateSessionResponse> createSession(CreateSessionRequest request);
 
+    Response<List<ChatSessionResponse>> querySessionList(String agentId, String userId, int limit);
+
+    Response<List<ChatMessageResponse>> queryMessageList(String agentId, String userId, String sessionId, int limit);
+
+    Response<Boolean> stopChat(SessionDataRequest request);
+
     Response<ChatResponse> chat(ChatRequest request);
 
     public ResponseBodyEmitter chatStream(ChatRequest request, HttpServletResponse response);

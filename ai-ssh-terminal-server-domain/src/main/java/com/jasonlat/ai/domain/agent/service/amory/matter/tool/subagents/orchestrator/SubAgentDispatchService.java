@@ -6,13 +6,17 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.Runner;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionCall;
+import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.TaskStatus;
 import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.SubAgentResultText;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.SubAgentDispatchTool;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
@@ -83,14 +87,18 @@ public class SubAgentDispatchService {
 
         List<CompletableFuture<Void>> futures = tasks.stream()
                 .map(task -> CompletableFuture.runAsync(() -> {
+                    boolean acquired = false;
                     try {
+                        if (context.getCancellation() != null) context.getCancellation().throwIfCancelled();
                         concurrency.acquire();
+                        acquired = true;
+                        if (context.getCancellation() != null) context.getCancellation().throwIfCancelled();
                         execute(context, task);
                     } catch (Exception exception) {
                         task.setStatus(TaskStatus.FAILED);
                         task.setError(exception.getMessage());
                     } finally {
-                        concurrency.release();
+                        if (acquired) concurrency.release();
                     }
                 }, executor))
                 .toList();
@@ -111,6 +119,17 @@ public class SubAgentDispatchService {
      * </ol>
      */
     public void execute(AgentExecutionContext context, DynamicTask task) {
+        AgentRunCancellation cancellation = context.getCancellation();
+        try {
+            if (cancellation != null) cancellation.registerCurrentThread();
+            executeRegistered(context, task, cancellation);
+        } finally {
+            if (cancellation != null) cancellation.unregisterCurrentThread();
+        }
+    }
+
+    private void executeRegistered(AgentExecutionContext context, DynamicTask task,
+                                   AgentRunCancellation cancellation) {
         task.setStatus(TaskStatus.RUNNING);
         String invocationId = UUID.randomUUID().toString();
         BaseAgent agent = agentCatalog.find(context.getAgentId(), task.getAgentName())
@@ -120,13 +139,20 @@ public class SubAgentDispatchService {
         if (agent == null) {
             task.setStatus(TaskStatus.FAILED);
             task.setError("agent not found: " + task.getAgentName());
+            String missingAgentCallId = "dispatch_" + invocationId + "_0";
+            publishAgentActivity(context, task, missingAgentCallId, null);
+            publishAgentActivity(context, task, missingAgentCallId,
+                    Map.of("success", false, "error", task.getError()));
             return;
         }
 
         // 最大尝试次数 = 首次执行 + 重试次数；maxRetries 做下限保护，避免 LLM 传负数
         int maxAttempts = 1 + Math.max(0, task.getMaxRetries() == null ? 0 : task.getMaxRetries());
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (cancellation != null) cancellation.throwIfCancelled();
             task.setAttempts(attempt);
+            String agentCallId = "dispatch_" + invocationId + "_" + attempt;
+            publishAgentActivity(context, task, agentCallId, null);
             try {
                 String terminalSessionId = context.getTerminalSessionId();
                 if (terminalSessionId == null || terminalSessionId.isBlank()) {
@@ -137,12 +163,22 @@ public class SubAgentDispatchService {
                 String userId = "subAgent-user-" + context.getUserId();
                 String childSessionId = "subAgent-" + invocationId + "-" + attempt;
 
-                Map<String, Object> initialState = new ConcurrentHashMap<>();
+                ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
                 initialState.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+                initialState.put(AdkToolProvider.RUNNER_AGENT_NAME, agent.name());
+                initialState.put(AdkToolProvider.NESTED_AGENT_CALL_ID, agentCallId);
+                if (cancellation != null) initialState.put(AdkToolProvider.RUN_CANCELLATION, cancellation);
+                if (context.getParentSessionKey() != null) {
+                    initialState.put(AdkToolProvider.PARENT_SESSION_ID, context.getParentSessionKey());
+                }
+                if (context.getParentToolCallId() != null) {
+                    initialState.put(AdkToolProvider.PARENT_TOOL_CALL_ID, context.getParentToolCallId());
+                }
 
                 Content content = Content.fromParts(Part.fromText(task.getRequest()));
                 RunConfig runConfig = RunConfig.builder()
                         .autoCreateSession(false)
+                        .streamingMode(RunConfig.StreamingMode.SSE)
                         .build();
 
                 List<Event> events = new ArrayList<>();
@@ -157,22 +193,29 @@ public class SubAgentDispatchService {
                         })
                         .timeout(Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
                         .blockingForEach(event -> {
+                            if (cancellation != null) cancellation.throwIfCancelled();
                             // 边执行边发布，前端可以实时看到子 Agent 的工具调用，而不是等待任务汇总后一次性返回（否则ui渲染效果就不咋地了，一坨一坨的）。
                             events.add(event);
-                            if (context.getParentSessionId() != null
-                                    && !context.getParentSessionId().isBlank()
-                                    && !"unknown".equals(context.getParentSessionId())) {
-                                agentEventPublisher.publish(
-                                        context.getParentSessionId(), context.getParentSessionKey(), event, true);
-                            } else {
-                                agentEventPublisher.publishToOnlyActiveSession(event, true);
-                            }
+                            agentEventPublisher.publishToSession(context.getParentSessionKey(), event,
+                                    agentCallId, context.getParentToolCallId(), agent.name());
                         });
 
-                task.setResult(toResult(events));
+                if (cancellation != null) cancellation.throwIfCancelled();
+                task.setResult(toResult(events, agent.name()));
                 task.setStatus(TaskStatus.COMPLETED);
+                publishAgentActivity(context, task, agentCallId,
+                        Map.of("success", true, "result", task.getResult() == null ? "" : task.getResult()));
                 return;
             } catch (Exception e) {
+                if ((cancellation != null && cancellation.isCancelled()) || Thread.currentThread().isInterrupted()) {
+                    task.setStatus(TaskStatus.FAILED);
+                    task.setError("对话已停止");
+                    log.info("子Agent已取消 | agent:{} | task:{} | attempt:{}",
+                            task.getAgentName(), task.getTaskId(), attempt);
+                    return;
+                }
+                publishAgentActivity(context, task, agentCallId,
+                        Map.of("success", false, "error", String.valueOf(e.getMessage())));
                 if (attempt < maxAttempts) {
                     long backoff = Math.min(MAX_BACKOFF_SECONDS, 1L << Math.min(attempt, 5));
                     log.warn("子Agent执行失败，{}秒后重试 | agent={} | task={} | attempt={}/{} | error={}",
@@ -188,6 +231,28 @@ public class SubAgentDispatchService {
 
     }
 
+    /** 每个批量任务有独立派发 ID，前端据此把并发子 Agent 的工具归组。 */
+    private void publishAgentActivity(AgentExecutionContext context, DynamicTask task,
+                                      String agentCallId, Map<String, Object> result) {
+        if (context.getParentSessionKey() == null) {
+            return;
+        }
+        Part part = result == null
+                ? Part.builder().functionCall(FunctionCall.builder()
+                        .id(agentCallId).name(task.getAgentName())
+                        .args(Map.of("request", task.getRequest())).build()).build()
+                : Part.builder().functionResponse(FunctionResponse.builder()
+                        .id(agentCallId).name(task.getAgentName())
+                        .response(result).build()).build();
+        Event event = Event.builder()
+                .id(Event.generateEventId())
+                .author(task.getAgentName())
+                .content(Content.fromParts(part))
+                .build();
+        agentEventPublisher.publishToSession(context.getParentSessionKey(), event,
+                agentCallId, context.getParentToolCallId(), task.getAgentName());
+    }
+
     /**
      * 退避等待：被中断时恢复中断标记并直接返回（任务让位给外层超时/取消语义）
      */
@@ -199,16 +264,9 @@ public class SubAgentDispatchService {
         }
     }
 
-    /**
-     * 拼接事件中全部文本片段作为任务执行结果（取空时返回空串）
-     */
-    private String toResult(List<Event> events) {
-        return events.isEmpty() ? "" : events.get(events.size() - 1).content()
-                .flatMap(Content::parts)
-                .flatMap(parts -> parts.stream()
-                        .map(part -> part.text().orElse(""))
-                        .reduce((left, right) -> left + right))
-                .orElse("");
+    /** 从流式事件中还原工具执行后的最终模型回复。 */
+    private String toResult(List<Event> events, String agentName) {
+        return SubAgentResultText.finalReply(events, agentName);
     }
 
 }

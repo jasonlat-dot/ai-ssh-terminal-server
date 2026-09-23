@@ -7,6 +7,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.orchestrator.DynamicAgentOrchestrator;
@@ -116,12 +117,16 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+        Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
+        AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
         String request = String.valueOf(args.getOrDefault("request", ""));
         // 先发布规划工具调用，再运行规划和 DAG 编排，前端可区分“规划中”和“执行中”。
         eventPublisher.publishCall(toolContext, name(), Map.of("request", request));
         try {
+            if (cancellation != null) cancellation.registerCurrentThread();
             // 1. 由独立规划器 LLM 生成 JSON 任务计划
             String planJson = plannerAgentBuilder.plan(openAiApi, modelName, request, allowedAgents);
+            if (cancellation != null) cancellation.throwIfCancelled();
 
             // 2. 解析（含白名单/非空校验）并做结构与依赖校验
             DynamicTaskPlan plan = planParser.parse(planJson, allowedAgents);
@@ -130,6 +135,7 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
 
             Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
             String terminalSessionId = terminalValue instanceof String value ? value : null;
+            if (cancellation != null) cancellation.throwIfCancelled();
 
             // 3. 构建执行上下文：透传父会话绑定的 SSH 终端会话
             // toolContext 可能为 null（如 LLM 直接触发工具调用而未经过完整 Runner 会话），需兜底
@@ -137,8 +143,10 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
                     .userId(toolContext.userId())
                     .agentId(toolContext.agentName())
                     .parentSessionId(toolContext.invocationId())
+                    .parentToolCallId(toolContext.functionCallId().orElse(null))
                     .parentSessionKey(toolContext.sessionId())
                     .terminalSessionId(terminalSessionId)
+                    .cancellation(cancellation)
                     .build();
 
             // 4. 交给编排器按 DAG 并发执行
@@ -153,6 +161,8 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
                     "error", String.valueOf(exception.getMessage()));
             eventPublisher.publishResponse(toolContext, name(), result);
             return Single.just(result);
+        } finally {
+            if (cancellation != null) cancellation.unregisterCurrentThread();
         }
     }
 

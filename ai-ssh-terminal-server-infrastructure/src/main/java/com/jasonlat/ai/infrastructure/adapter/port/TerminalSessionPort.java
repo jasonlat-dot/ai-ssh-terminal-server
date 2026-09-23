@@ -285,6 +285,11 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
          * 这个锁只限制 Agent 工具调用，不会停止 SSH Reader，也不会暂停前端 Long Poll。
          */
         synchronized (context.agentCommandLock) {
+            // synchronized 等锁期间不会因 interrupt 自动退出；进入后再次检查，
+            // 防止已停止的排队命令仍被写进远端 Shell。
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Agent 命令已取消");
+            }
             /* 每条命令使用独立 UUID，避免命令正文或历史终端输出意外命中边界。 */
             String token = UUID.randomUUID().toString();
             AgentCommandCapture capture = new AgentCommandCapture(
@@ -319,8 +324,16 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                     + "printf '\\n\\036SSH_AGENT_END_" + token + ":%s\\037\\n' \"$__ssh_agent_exit_code\"\n";
 
 
+            boolean commandSent = false;
             try {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Agent 命令已取消");
+                }
                 write(sessionId, shellCommand);
+                commandSent = true;
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Agent 命令已取消");
+                }
 
                 /*
                  * 当前线程等待的是 AgentCommandCapture.result，不是 readAsync()。
@@ -332,6 +345,20 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                       - Future 完成 → **主线程的 get () 唤醒，拿到返回字符串**
                  */
                 return capture.result.get(timeoutSeconds, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                // 仅中断本地等待并不会终止远端 Shell；必须向当前命令发送 Ctrl+C。
+                // 临时清除本线程的中断位，确保 SSH 写入不会因已中断而被拒绝；下方再恢复。
+                Thread.interrupted();
+                if (commandSent && !capture.result.isDone()) {
+                    capture.result.completeExceptionally(interrupted);
+                    try {
+                        write(sessionId, "\u0003");
+                    } catch (Exception interruptError) {
+                        log.warn("取消 Agent 命令时发送 Ctrl+C 失败 sessionId={}", sessionId, interruptError);
+                    }
+                }
+                Thread.currentThread().interrupt();
+                throw interrupted;
             } catch (TimeoutException e) {
                 /*
                  * 到达命令级总超时后先让 Agent Future 失败，再向远端发送 Ctrl+C，尽量终止

@@ -170,6 +170,16 @@ public class ChatHistoryRepository implements IChatHistoryRepository {
     }
 
     @Override
+    public boolean ownsSession(String agentId, String userId, String sessionId) {
+        return chatSessionDao.countOwnedSession(agentId, userId, sessionId) > 0;
+    }
+
+    @Override
+    public void updateSessionTitleIfDefault(String sessionId, String title) {
+        chatSessionDao.updateTitleIfDefault(sessionId, title);
+    }
+
+    @Override
     public List<ChatMessageEntity> queryMessageList(String sessionId, int limit) {
         return getRecentMessages(sessionId, limit);
     }

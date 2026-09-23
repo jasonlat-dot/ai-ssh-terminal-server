@@ -108,7 +108,7 @@ public class AgentToolNode extends AbstractAmorySupport {
                 if (subAgent == null) {
                     throw new IllegalArgumentException("sub agent not found: " + subAgentName);
                 }
-                adkTools.add(new SubAgentDispatchTool(subAgent, customRunnerFactory));
+                adkTools.add(new SubAgentDispatchTool(subAgent, customRunnerFactory, agentEventPublisher));
             }
 
             // 批量派发工具：主 Agent 自行拆解任务列表并发派发 2-11节，agentEventPublisher 推送。前后有好几个地方都要有这个。

@@ -1,6 +1,7 @@
 package com.jasonlat.ai.cases.react.facotry;
 
 import com.google.adk.agents.RunConfig;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.ai.trigger.api.dto.ToolCallDTO;
@@ -151,6 +152,10 @@ public class DefaultReActFactory {
         /** SSE 客户端断开或请求被取消。 */
         @Builder.Default
         private AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        /** 同一请求内父/子 Agent 及 SSH 工具共享的取消信号。 */
+        @Builder.Default
+        private AgentRunCancellation runCancellation = new AgentRunCancellation();
 
         /** 正常发送 done 后置为 true，避免 onCompletion 将正常完成误判为断连。 */
         @Builder.Default

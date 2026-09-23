@@ -167,6 +167,29 @@ public class AgentEventPublisher implements IAgentEventPublisher {
     }
 
     /**
+     * 按本次对话的业务会话投递子 Agent 活动。关联 ID 随事件一起传递，
+     * 不能用终端 ID 路由：同一个终端可能同时承载多条对话。
+     */
+    public void publishToSession(String sessionId, Event event, String agentCallId,
+                                 String parentToolCallId, String sourceAgent) {
+        if (sessionId == null || sessionId.isBlank() || event == null) {
+            log.debug("跳过未绑定业务会话的子 Agent 事件 | sessionId={} | eventId={}",
+                    sessionId, event == null ? null : event.id());
+            return;
+        }
+        Consumer<PublishedEvent> listener = sessionListeners.get(sessionId);
+        if (listener == null) {
+            log.debug("子 Agent 事件未命中会话监听器 | sessionId={} | eventId={}", sessionId, event.id());
+            return;
+        }
+        try {
+            listener.accept(new PublishedEvent(event, true, agentCallId, parentToolCallId, sourceAgent));
+        } catch (RuntimeException exception) {
+            log.warn("子 Agent 事件投递失败 | sessionId={} | eventId={}", sessionId, event.id(), exception);
+        }
+    }
+
+    /**
      * 最终投递入口；这里统一记录路由结果，并保证单个监听器异常不会中断 Agent 主流程。
      * `nested = true`：当前这个事件，**是子 Agent（child Agent）产生 / 发出来的
      * `nested = false`：事件是**顶层主 Agent 自己产生**的，不是子 Agent
@@ -192,7 +215,11 @@ public class AgentEventPublisher implements IAgentEventPublisher {
     /**
      * 对外发布的不可变事件包装，携带是否来自嵌套 Agent 的标记。
      */
-    public record PublishedEvent(Event event, boolean nested) {
+    public record PublishedEvent(Event event, boolean nested, String agentCallId,
+                                 String parentToolCallId, String sourceAgent) {
+        public PublishedEvent(Event event, boolean nested) {
+            this(event, nested, null, null, null);
+        }
     }
 
 }

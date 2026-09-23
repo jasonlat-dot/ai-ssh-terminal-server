@@ -23,6 +23,18 @@
         WHERE id = #{sessionId}
     </update>
 
+    <update id="updateTitleIfDefault">
+        UPDATE chat_session
+        SET title = #{title}
+        WHERE id = #{sessionId} AND (title IS NULL OR title = '新会话')
+    </update>
+
+    <select id="countOwnedSession" resultType="int">
+        SELECT COUNT(1)
+        FROM chat_session
+        WHERE id = #{sessionId} AND agent_id = #{agentId} AND user_id = #{userId}
+    </select>
+
     <select id="querySessionList" resultMap="ChatSessionMap">
         SELECT id, agent_id, user_id, title, message_count, created_at, updated_at
         FROM chat_session

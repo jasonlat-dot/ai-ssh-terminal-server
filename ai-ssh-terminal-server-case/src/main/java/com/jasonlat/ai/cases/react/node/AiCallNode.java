@@ -262,16 +262,24 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     context.getChatSessionId(), eventCount, fullText.length(),
                     context.getCurrentToolCalls().size(), elapsedMillis(nodeStartNanos));
         } catch (Exception exception) {
-            hasError = true;
-            String errorMessage = "ADK Runner error: " + safeMessage(exception);
-            context.setErrorMessage(errorMessage);
-            context.setStopReason(StopReasonEnum.ERROR.getCode());
-            sendErrorEvent(emitter, errorMessage);
-            log.error("ReAct链路-ADK invocation 失败 | sessionId:{} | processedEvents:{} | "
-                            + "textLength:{} | toolCalls:{} | toolResults:{} | durationMs:{}",
-                    context.getChatSessionId(), eventCount, fullText.length(),
-                    context.getCurrentToolCalls().size(), context.getCurrentToolResults().size(),
-                    elapsedMillis(nodeStartNanos), exception);
+            if (context.getCancelled().get() || context.getRunCancellation().isCancelled()
+                    || Thread.currentThread().isInterrupted()) {
+                context.getCancelled().set(true);
+                context.setStopReason(StopReasonEnum.USER_STOP.getCode());
+                log.info("ReAct链路-ADK invocation 在取消后结束 | sessionId:{} | processedEvents:{} | cause:{}",
+                        context.getChatSessionId(), eventCount, safeMessage(exception));
+            } else {
+                hasError = true;
+                String errorMessage = "ADK Runner error: " + safeMessage(exception);
+                context.setErrorMessage(errorMessage);
+                context.setStopReason(StopReasonEnum.ERROR.getCode());
+                sendErrorEvent(emitter, errorMessage);
+                log.error("ReAct链路-ADK invocation 失败 | sessionId:{} | processedEvents:{} | "
+                                + "textLength:{} | toolCalls:{} | toolResults:{} | durationMs:{}",
+                        context.getChatSessionId(), eventCount, fullText.length(),
+                        context.getCurrentToolCalls().size(), context.getCurrentToolResults().size(),
+                        elapsedMillis(nodeStartNanos), exception);
+            }
         } finally {
             // 无论正常、取消还是异常，都保留已收到的文本，避免流式中途失败导致历史丢失。
             flushAssistantSegment(context, assistantSegment);
@@ -319,6 +327,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         ConcurrentHashMap<String, Object> contextHashMap = new ConcurrentHashMap<>();
         // 终端ID
         contextHashMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, context.getTerminalSessionId());
+        contextHashMap.put(AdkToolProvider.PARENT_SESSION_ID, context.getChatSessionId());
+        contextHashMap.put(AdkToolProvider.RUN_CANCELLATION, context.getRunCancellation());
 
         sessionService.prepareInvocation(
                 runner.appName(), context.getUserId(), context.getChatSessionId(),

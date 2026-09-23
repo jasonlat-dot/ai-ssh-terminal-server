@@ -46,12 +46,12 @@ public class ChatService implements IChatService {
 
     @Override
     public boolean validateSession(String agentId, String userId, String sessionId) {
-        // 获取智能体注册信息
+        if (StringUtils.isAnyBlank(agentId, userId, sessionId)) {
+            return false;
+        }
         String storeSessionId = sessionCache.get(userId, sessionId, agentId);
         if (StringUtils.isBlank(storeSessionId)) {
-            // 兜底处理 - 删除session缓存
             sessionCache.invalidate(agentId, userId, sessionId);
-            // 服务重启等原因导致session缓存丢失 重建缓存
             rebuildSession(agentId, userId, sessionId);
         }
         return true;
@@ -66,19 +66,15 @@ public class ChatService implements IChatService {
         String appName = aiAgentRegisterVO.getAppName();
         sessionCache.put(agentId, userId, sessionId, aiAgentRegisterVO.getSessionExpireSeconds());
         customAdkSessionService.putSession(appName, userId, null, sessionId);
-
-        // 会话元数据落库：try-catch 旁路写入，DB 写入失败不影响 ADK Session 创建。
-        // 旁路原则：如果 DB 异常（如表不存在），只是 DB 里没有这条记录，不影响 Agent 正常运行。
+        // 沿用原有的会话重建语义；已落库的会话不能重复 INSERT。
         try {
-            chatHistoryRepository.saveSession(ChatSessionEntity.builder()
-                    .id(sessionId)
-                    .agentId(agentId)
-                    .userId(userId)
-                    .title("新会话")
-                    .messageCount(0)
-                    .build());
-        } catch (Exception e) {
-            log.error("保存会话元数据失败 sessionId={}", sessionId, e);
+            if (!chatHistoryRepository.ownsSession(agentId, userId, sessionId)) {
+                chatHistoryRepository.saveSession(ChatSessionEntity.builder()
+                        .id(sessionId).agentId(agentId).userId(userId)
+                        .title("新会话").messageCount(0).build());
+            }
+        } catch (Exception exception) {
+            log.warn("重建会话时同步元数据失败 sessionId={}", sessionId, exception);
         }
     }
 
@@ -95,6 +91,19 @@ public class ChatService implements IChatService {
 
         String sessionId = runner.sessionService().createSession(appName, userId).blockingGet().id();
         sessionCache.put(agentId, userId, sessionId, aiAgentRegisterVO.getSessionExpireSeconds());
+        // 历史列表以 chat_session 为索引；创建新会话时必须同步保存元数据。
+        // DB 故障仍不影响本次对话，但该会话暂时无法出现在持久历史中。
+        try {
+            chatHistoryRepository.saveSession(ChatSessionEntity.builder()
+                    .id(sessionId)
+                    .agentId(agentId)
+                    .userId(userId)
+                    .title("新会话")
+                    .messageCount(0)
+                    .build());
+        } catch (Exception e) {
+            log.warn("保存会话元数据失败 sessionId={}", sessionId, e);
+        }
         return sessionId;
     }
 
@@ -117,6 +126,11 @@ public class ChatService implements IChatService {
     @Override
     public List<ChatSessionEntity> querySessionList(String agentId, String userId, int limit) {
         return chatHistoryRepository.querySessionList(agentId, userId, limit > 0 ? limit : 20);
+    }
+
+    @Override
+    public boolean ownsSession(String agentId, String userId, String sessionId) {
+        return chatHistoryRepository.ownsSession(agentId, userId, sessionId);
     }
 
     /**

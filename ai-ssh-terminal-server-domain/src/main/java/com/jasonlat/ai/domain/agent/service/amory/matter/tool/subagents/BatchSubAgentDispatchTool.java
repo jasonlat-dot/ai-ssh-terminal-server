@@ -9,6 +9,7 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import com.google.genai.types.Type;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
@@ -112,13 +113,18 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+        Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
+        AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
         // 先发布工具调用，再执行计划，确保 UI 能展示“正在派发”状态。
         eventPublisher.publishCall(toolContext, name(), args);
         try {
+            if (cancellation != null) cancellation.registerCurrentThread();
             // 解析函数调用参数中的任务列表
             List<Map<String, Object>> rawTasks = objectMapper.convertValue(args.get("tasks"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
             if (rawTasks == null || rawTasks.isEmpty()) {
-                return Single.just(ImmutableMap.of("success", false, "error", "tasks is empty"));
+                Map<String, Object> result = ImmutableMap.of("success", false, "error", "tasks is empty");
+                eventPublisher.publishResponse(toolContext, name(), result);
+                return Single.just(result);
             }
 
             // 转为 DynamicTask 并补全缺失的 taskId
@@ -143,12 +149,15 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
             // Agent 白名单校验：任务中不允许出现未装配的 Agent
             List<String> requestedAgents = tasks.stream().map(DynamicTask::getAgentName).toList();
             if (!new HashSet<>(allowedAgents).containsAll(requestedAgents)) {
-                return Single.just(ImmutableMap.of("success", false, "error", "agent not allowed"));
+                Map<String, Object> result = ImmutableMap.of("success", false, "error", "agent not allowed");
+                eventPublisher.publishResponse(toolContext, name(), result);
+                return Single.just(result);
             }
 
             // 构建执行上下文：透传父会话绑定的 SSH 终端会话，供子 Agent 内的 SSH 工具复用
             Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
             String terminalSessionId = terminalValue instanceof String value ? value : null;
+            if (cancellation != null) cancellation.throwIfCancelled();
 
             AgentExecutionContext context = AgentExecutionContext.builder()
                     .terminalSessionId(terminalSessionId)
@@ -156,6 +165,8 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                     .agentId(toolContext.agentName())
                     .parentSessionKey(toolContext.sessionId())
                     .parentSessionId(toolContext.invocationId())
+                    .parentToolCallId(toolContext.functionCallId().orElse(null))
+                    .cancellation(cancellation)
                     .build();
 
             // 到这开始执行任务计划
@@ -171,6 +182,8 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                     "error", String.valueOf(exception.getMessage()));
             eventPublisher.publishResponse(toolContext, name(), result);
             return Single.just(result);
+        } finally {
+            if (cancellation != null) cancellation.unregisterCurrentThread();
         }
 
     }
