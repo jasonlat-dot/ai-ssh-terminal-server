@@ -1,11 +1,13 @@
 package com.jasonlat.ai.domain.agent.service.prompt;
 
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.PromptContextVO;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
+import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.prompt.dynamic.DynamicPromptBuilder;
 import com.jasonlat.ai.domain.agent.service.prompt.dynamic.MilestoneTracker;
-import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,8 +21,9 @@ import java.util.Map;
  * 组合 DynamicPromptBuilder、MilestoneTracker、IChatContextService，
  * 向 case 层提供统一的提示词领域能力。
  * <p>
- * 上下文采集（环境/任务/里程碑/工具摘要）已下沉到 IChatContextService 的
- * Provider 体系，本类只负责组装前缀并拼接到用户消息。
+ * 上下文采集已下沉到 IChatContextService 的 Provider 体系；本类是 Prompt 组装收口：
+ * 稳定上下文放用户消息前，实时上下文放用户消息后，并用 PromptEnvelope 保留原始消息。
+ *
  */
 @Slf4j
 @Service
@@ -37,6 +40,10 @@ public class PromptService implements IPromptService {
     /** 上下文管理服务——聚合各 ContextProvider 输出，组装 PromptContextVO */
     @Resource
     private IChatContextService chatContextService;
+
+    /** 意图服务——读取最近一次完整识别结果，供结构化提示渲染 */
+    @Resource
+    private IIntentService intentService;
 
 
     /**
@@ -74,12 +81,6 @@ public class PromptService implements IPromptService {
 
     /**
      * 构建注入了动态上下文的用户消息（富化消息）。
-     * <p>
-     * 内部完成两步：
-     * <ol>
-     *   <li>通过 {@link IChatContextService#buildPromptContext} 聚合上下文（终端环境、当前任务、里程碑、工具摘要）</li>
-     *   <li>调用 {@link DynamicPromptBuilder#buildMessageSuffix} 生成结构化前缀，拼在原始消息前面</li>
-     * </ol>
      * 前缀为空（第一轮无历史）时直接返回原始用户消息。
      *
      * @param userMessage        原始用户消息
@@ -98,19 +99,38 @@ public class PromptService implements IPromptService {
 
     @Override
     public String buildEnrichedMessage(String userMessage, String sessionId, String userId, String terminalSessionId, List<String> recentCommands, List<Map<String, Object>> messageHistory, String intentLabel) {
-        // 意图标签流转：intentLabel → PromptContextVO.intentLabel → DynamicPromptBuilder 后缀
+        // 统一组装：Provider 分层结果 -> 稳定前缀 / 动态尾部 -> PromptEnvelope 定界用户原文。
         PromptContextVO promptContextVO = chatContextService.buildPromptContext(sessionId, userId, terminalSessionId, messageHistory);
         promptContextVO.setRecentCommands(recentCommands);
         promptContextVO.setIntentLabel(intentLabel);
+        promptContextVO.setIntentResult(resolveIntentResult(sessionId));
+        promptContextVO.setIntentLabel(resolveIntentLabel(intentLabel, promptContextVO.getIntentResult()));
 
-        String suffix = dynamicPromptBuilder.buildMessageSuffix(promptContextVO);
-        if (suffix.isEmpty()) {
-            return userMessage;
+        String stableContext = dynamicPromptBuilder.buildStableContext(promptContextVO);
+        String dynamicContext = dynamicPromptBuilder.buildEphemeralContext(promptContextVO);
+        return PromptEnvelope.compose(stableContext, userMessage, dynamicContext);
+    }
+
+    /**
+     * 优先读取 ContextTracker 保存的完整识别结果；没有完整结果时兼容旧 intentLabel。
+     */
+    private IntentResultVO resolveIntentResult(String sessionId) {
+        return intentService.getLastIntentResult(sessionId);
+    }
+
+    private String resolveIntentLabel(String intentLabel, IntentResultVO result) {
+        if (result != null) {
+            return result.getIntent() != null ? result.getIntent().name() : null;
         }
-
-        // 动态上下文放到用户消息后面，保证 system + 历史消息 + 用户原始消息这个前缀序列稳定，
-        // 使 LLM Prompt Cache 能命中前面的稳定部分。动态后缀只影响末尾，不影响前缀 hash。
-        return userMessage + "\n---\n" + suffix;
+        if (intentLabel == null || intentLabel.isBlank()) {
+            return null;
+        }
+        try {
+            IntentTypeEnumVO.valueOf(intentLabel);
+            return intentLabel;
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 
     /**

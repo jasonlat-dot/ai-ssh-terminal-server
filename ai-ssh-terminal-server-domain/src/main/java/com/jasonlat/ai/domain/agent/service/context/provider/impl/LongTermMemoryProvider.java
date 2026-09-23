@@ -1,5 +1,6 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
+import com.jasonlat.ai.domain.agent.model.valobj.enums.ContextPlacement;
 import com.jasonlat.ai.domain.agent.service.ILongTermMemoryService;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
 import com.jasonlat.ai.domain.agent.service.memory.LongTermMemoryService;
@@ -48,6 +49,12 @@ public class LongTermMemoryProvider implements ContextProvider {
     public boolean enabled() {
         return true;
     }
+
+    @Override
+    public ContextPlacement getPlacement() {
+        return ContextPlacement.STABLE_PREFIX;
+    }
+
 
     /**
      * 召回长期记忆并构建摘要，注入 PromptContextVO.longTermMemorySummary。

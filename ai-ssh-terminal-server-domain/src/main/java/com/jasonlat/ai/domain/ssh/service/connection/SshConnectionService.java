@@ -199,4 +199,25 @@ public class SshConnectionService implements ISshConnectionService {
         return sshSessionPort.isConnected(connectionId);
 
     }
+
+    @Override
+    public ConnectionStatusEnum checkAndRefreshStatus(String connectionId) {
+        SshConnectionEntity entity = repository.queryConnectionById(connectionId);
+        if (entity == null) {
+            return ConnectionStatusEnum.DISCONNECTED;
+        }
+
+        boolean actuallyConnected = sshSessionPort.isConnected(connectionId);
+
+        // 实际已断开：纠正 DB 状态并清理残留 Session 引用
+        if (!actuallyConnected && entity.getStatus() == ConnectionStatusEnum.CONNECTED) {
+            log.warn("SSH连接已断开（监测发现），纠正状态 connectionId={}", connectionId);
+            sshSessionPort.disconnect(connectionId); // 清理 sessions map 中的残留引用
+            entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
+            repository.updateConnection(entity);
+        }
+
+        return entity.getStatus();
+    }
+
 }

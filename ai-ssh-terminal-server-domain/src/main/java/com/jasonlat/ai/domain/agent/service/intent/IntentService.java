@@ -222,6 +222,12 @@ public class IntentService implements IIntentService {
         return contextTracker.getTaskState(sessionId);
     }
 
+    @Override
+    public IntentResultVO getLastIntentResult(String sessionId) {
+        return contextTracker.getLastIntentResult(sessionId);
+    }
+
+
     /**
      * 更新会话任务状态。
      * <p>

@@ -1,5 +1,6 @@
 package com.jasonlat.ai.cases.react;
 
+import com.google.adk.agents.RunConfig;
 import com.jasonlat.ai.cases.IAIAgentReActServiceCase;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.ReActStreamCancellation;
@@ -62,6 +63,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
             // 2. 初始化动态上下文
             DefaultReActFactory.DynamicContext dynamicContext = DefaultReActFactory.DynamicContext.builder()
+                    .streamingMode(RunConfig.StreamingMode.SSE)
                     .emitter(emitter)
                     .build();
             log.debug("ReAct链路-请求上下文创建完成 | sessionId:{} | completed:{} | cancelled:{}",
@@ -128,7 +130,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         try {
             // 普通对话使用同步 emitter（内部收集，不走 SSE）
             DefaultReActFactory.DynamicContext dynamicContext = DefaultReActFactory.DynamicContext.builder()
-                    .emitter(new ResponseBodyEmitter(60 * 1000L))
+                    .streamingMode(RunConfig.StreamingMode.SSE)
+                    .emitter(new ResponseBodyEmitter(30 * 60 * 1000L))
                     .build();
 
             ReActResultDTO result = rootNode.apply(requestDTO, dynamicContext);
@@ -159,8 +162,10 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             lock.lockInterruptibly();
             log.info("ReAct链路-获得会话锁 | sessionId:{} | waitMs:{}",
                     sessionId, elapsedMillis(lockWaitStartNanos));
+
             log.info("ReAct链路-进入 RootNode | sessionId:{}", sessionId);
             ReActResultDTO result = rootNode.apply(requestDTO, context);
+
             log.info("ReAct链路-流式请求完成 | sessionId:{} | steps:{} | toolCalls:{} | "
                             + "toolResults:{} | stopReason:{} | contentLength:{} | durationMs:{}",
                     sessionId, result.getTotalSteps(), result.getTotalToolCalls(),

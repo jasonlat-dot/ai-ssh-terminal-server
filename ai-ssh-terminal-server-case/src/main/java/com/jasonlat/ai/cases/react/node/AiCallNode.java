@@ -184,7 +184,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         // maxLlmCalls 限制的是 ADK 内部真实模型调用次数，而不是外层 Node 的执行次数。
         RunConfig runConfig = RunConfig.builder()
-                .streamingMode(RunConfig.StreamingMode.SSE)
+                .streamingMode(context.getStreamingMode())
                 .maxLlmCalls(context.getMaxLlmCalls())
                 .build();
         log.debug("ReAct链路-RunConfig 构建完成 | sessionId:{} | streamingMode:{} | maxLlmCalls:{}",

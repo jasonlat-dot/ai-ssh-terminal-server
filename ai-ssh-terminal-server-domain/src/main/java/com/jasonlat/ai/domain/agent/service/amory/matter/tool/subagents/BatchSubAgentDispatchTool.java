@@ -15,6 +15,7 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.orchestrator.DynamicAgentOrchestrator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan.PlanParser;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan.PlanValidator;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
 import lombok.extern.slf4j.Slf4j;
 
@@ -38,14 +39,35 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
     /** DAG 编排器，负责任务并发调度 */
     private final DynamicAgentOrchestrator orchestrator;
 
+    /** 负责发布派发工具的调用/响应事件，供 SSE 可视化 */
+    private final SubAgentDispatchEventPublisher eventPublisher;
+
+
     /** 计划解析/校验器：解析函数调用参数并校验依赖合法性 */
     private final PlanValidator planValidator = new PlanValidator();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * 兼容旧调用方式；不注入事件发布器时派发仍可正常执行，只是不产生嵌套事件。
+     */
     public BatchSubAgentDispatchTool(List<String> allowedAgents, DynamicAgentOrchestrator orchestrator) {
+        this(allowedAgents, orchestrator, null);
+    }
+
+    /**
+     * 创建批量子 Agent 派发工具。
+     *
+     * @param allowedAgents       允许派发的子 Agent 名称白名单
+     * @param orchestrator        任务 DAG 编排器
+     * @param agentEventPublisher 可选事件发布器；为空时不回流工具事件
+     */
+    public BatchSubAgentDispatchTool(List<String> allowedAgents,
+                                     DynamicAgentOrchestrator orchestrator,
+                                     AgentEventPublisher agentEventPublisher) {
         super("dispatchSubAgents", "批量派发多个已配置子Agent，支持任务依赖、并行执行和结果汇总");
         this.allowedAgents = List.copyOf(allowedAgents);
         this.orchestrator = orchestrator;
+        this.eventPublisher = new SubAgentDispatchEventPublisher(agentEventPublisher);
     }
 
     /**
@@ -90,6 +112,8 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+        // 先发布工具调用，再执行计划，确保 UI 能展示“正在派发”状态。
+        eventPublisher.publishCall(toolContext, name(), args);
         try {
             // 解析函数调用参数中的任务列表
             List<Map<String, Object>> rawTasks = objectMapper.convertValue(args.get("tasks"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
@@ -130,6 +154,7 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                     .terminalSessionId(terminalSessionId)
                     .userId(toolContext.userId())
                     .agentId(toolContext.agentName())
+                    .parentSessionKey(toolContext.sessionId())
                     .parentSessionId(toolContext.invocationId())
                     .build();
 
@@ -137,10 +162,15 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
             Map<String, Object> result = orchestrator.execute(context, plan);
             result.put("success", result.get("allSucceeded"));
 
+            eventPublisher.publishResponse(toolContext, name(), result);
             return Single.just(result);
         } catch (Exception exception) {
             log.error("批量子Agent派发失败", exception);
-            return Single.just(ImmutableMap.of("success", false, "error", String.valueOf(exception.getMessage())));
+            Map<String, Object> result = ImmutableMap.of(
+                    "success", false,
+                    "error", String.valueOf(exception.getMessage()));
+            eventPublisher.publishResponse(toolContext, name(), result);
+            return Single.just(result);
         }
 
     }

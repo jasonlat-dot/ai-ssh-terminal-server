@@ -1,5 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.context.provider;
 
+import com.jasonlat.ai.domain.agent.model.valobj.enums.ContextPlacement;
+
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +41,14 @@ public interface ContextProvider {
 
     /** 是否启用 */
     boolean enabled();
+
+    /**
+     * 声明上下文属于稳定前缀还是动态尾部；默认保持旧行为，放入动态尾部。
+     */
+    default ContextPlacement getPlacement() {
+        return ContextPlacement.EPHEMERAL_SUFFIX;
+    }
+
 
     /**
      * 采集上下文

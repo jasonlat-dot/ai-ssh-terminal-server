@@ -139,7 +139,12 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public boolean sessionExists(String sessionId) {
-        return sessionCache.containsKey(sessionId);
+        // 先查域层缓存，再委托基础设施层校验 channel 真实连通性
+        TerminalSessionEntity entity = sessionCache.get(sessionId);
+        if (entity == null || !entity.isActive()) {
+            return false;
+        }
+        return terminalSessionService.sessionExists(sessionId);
     }
 
     @Override

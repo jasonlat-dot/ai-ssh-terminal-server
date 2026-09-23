@@ -8,6 +8,7 @@ import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalSpringAI;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolRegistry;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
@@ -28,8 +29,6 @@ public class AgentNode extends AbstractAmorySupport {
 
     @Resource
     private AgentToolNode agentToolNode;
-    @Resource
-    private AgentWorkflowNode agentWorkflowNode;
 
     @Resource
     private AdkToolRegistry adkToolRegistry;

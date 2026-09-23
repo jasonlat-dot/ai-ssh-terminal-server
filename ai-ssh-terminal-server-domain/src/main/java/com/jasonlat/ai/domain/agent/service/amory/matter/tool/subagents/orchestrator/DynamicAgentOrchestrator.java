@@ -6,6 +6,7 @@ import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.TaskStatus;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -41,7 +42,10 @@ public class DynamicAgentOrchestrator {
     private final SubAgentDispatchService dispatchService;
     private final Executor executor;
 
-    public DynamicAgentOrchestrator(SubAgentDispatchService dispatchService, ThreadPoolExecutor executor) {
+    /**
+     * 显式注入业务线程池；ADK 子任务并发执行必须与 HTTP/框架默认线程池隔离。
+     */
+    public DynamicAgentOrchestrator(SubAgentDispatchService dispatchService, @Qualifier("threadPoolExecutor")ThreadPoolExecutor executor) {
         this.dispatchService = dispatchService;
         this.executor = executor;
     }

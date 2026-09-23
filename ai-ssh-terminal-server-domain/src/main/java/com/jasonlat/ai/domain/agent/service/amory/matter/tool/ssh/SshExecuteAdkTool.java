@@ -1,13 +1,13 @@
 package com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh;
 
+import com.google.adk.events.Event;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
-import com.google.genai.types.FunctionDeclaration;
-import com.google.genai.types.Schema;
-import com.google.genai.types.Type;
+import com.google.genai.types.*;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyPolicy;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import io.reactivex.rxjava3.core.Single;
 import jakarta.annotation.Resource;
@@ -28,6 +28,12 @@ import java.util.Optional;
 @Slf4j
 @Service("sshExecuteAdkTool")
 public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
+
+    /**
+     * 可选事件发布器；为空或工具在测试中直接构造时，SSH 命令仍可正常执行，只是不回流可视化事件。
+     */
+    @Resource
+    private AgentEventPublisher agentEventPublisher;
 
     private static final FunctionDeclaration DECLARATION = FunctionDeclaration.builder()
             .name("executeCommand")
@@ -72,10 +78,19 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
             String command = String.valueOf(args.getOrDefault("command", ""));
             Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
             String terminalSessionId = terminalValue instanceof String value ? value : null;
+
+            String agentName = (String) toolContext.state().get(AdkToolProvider.RUNNER_AGENT_NAME);
+
+
+            publishToolEvent(terminalSessionId, toolContext.invocationId(), args, agentName);
+
             log.info("SSH 工具调用开始 invocationId={}, toolCallId={}, terminalSessionId={}, command={}",
                     toolContext.invocationId(), toolContext.functionCallId().orElse(""),
                     terminalSessionId, command);
-            return executeForTerminal(terminalSessionId, command);
+            Map<String, Object> executeResult = executeForTerminal(terminalSessionId, command);
+
+            publishToolEvent(terminalSessionId, toolContext.invocationId(),  executeResult, agentName);
+            return executeResult;
         });
     }
 
@@ -134,6 +149,27 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                     "output", "命令执行异常: " + exception.getMessage(),
                     "command", safeCommand);
         }
+    }
+
+    /**
+     * 发布 SSH 工具的合成调用/响应事件。
+     * <p>
+     * SSH 工具的执行结果不一定会作为父 Runner 的原始 functionResponse 返回，
+     * 因此这里构造标准 ADK Event，并按终端会话投递给当前 SSE 监听器。
+     */
+    private void publishToolEvent(String terminalSessionId, String toolInvocationId, Map<String, Object> payload, String author) {
+
+        if (terminalSessionId == null || terminalSessionId.isBlank()) {
+            return;
+        }
+        Content content = Content.fromParts(Part.fromFunctionCall("executeCommand", payload));
+        Event event = Event.builder()
+                .id(Event.generateEventId())
+                .invocationId(toolInvocationId)
+                .author(author != null && !author.isBlank() ? author : "executeCommand")
+                .content(content)
+                .build();
+        agentEventPublisher.publishToTerminal(terminalSessionId, event, true);
     }
 
     private boolean isExecutionSuccessful(String output) {

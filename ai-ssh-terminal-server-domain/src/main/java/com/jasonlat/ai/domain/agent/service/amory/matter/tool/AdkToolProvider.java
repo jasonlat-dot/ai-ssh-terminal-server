@@ -14,5 +14,7 @@ public interface AdkToolProvider {
 
     String PARENT_SESSION_ID = "ssh-parent-session-id";
 
+    String RUNNER_AGENT_NAME = "ssh-runner-agent-name";
+
     List<? extends BaseTool> getTools();
 }

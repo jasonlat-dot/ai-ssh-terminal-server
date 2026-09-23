@@ -1,10 +1,12 @@
 package com.jasonlat.ai.domain.agent.service.context.provider.impl;
 
+import com.jasonlat.ai.domain.agent.model.valobj.enums.ContextPlacement;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.TaskStateVO;
 import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.context.cache.ConversationContextStore;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProvider;
 import com.jasonlat.ai.domain.agent.service.context.provider.ContextProviderOrder;
+import com.jasonlat.ai.domain.agent.service.prompt.PromptEnvelope;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 
@@ -68,6 +70,11 @@ public class TaskProvider implements ContextProvider {
     }
 
     @Override
+    public ContextPlacement getPlacement() {
+        return ContextPlacement.STABLE_PREFIX;
+    }
+
+    @Override
     public Map<String, Object> provide(String sessionId, String userId, String terminalSessionId, List<Map<String, Object>> messageHistory) {
         Map<String, Object> result = new HashMap<>();
 
@@ -114,23 +121,11 @@ public class TaskProvider implements ContextProvider {
                     .ifPresent(m -> {
                         String content = (String) m.get("content");
                         if (content != null) {
-                            result.put("taskDescription", stripDynamicSuffix(content));
+                            result.put("taskDescription", PromptEnvelope.extractUserMessage(content));
                         }
                     });
         }
         return result;
     }
 
-    private String stripDynamicSuffix(String text) {
-        if (text == null) return null;
-        // 判断文本是否包含分隔标记：换行 + --- + 换行
-        if (text.contains("\n---\n")) {
-            // 最多分割成2段，只在第一次出现 \n---\n 的地方切割
-            String[] parts = text.split("\\n---\\n", 2);
-            // 如果成功切成2块，返回**前面那一段**，并且trim去除首尾空白
-            return parts.length == 2 ? parts[0].trim() : text;
-        }
-        // 没有找到分隔标记，原样返回原文
-        return text;
-    }
 }

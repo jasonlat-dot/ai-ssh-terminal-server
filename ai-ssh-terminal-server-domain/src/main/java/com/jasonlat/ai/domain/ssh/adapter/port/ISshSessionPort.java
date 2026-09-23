@@ -2,6 +2,8 @@ package com.jasonlat.ai.domain.ssh.adapter.port;
 
 import com.jcraft.jsch.Session;
 
+import java.util.Set;
+
 /**
  * @author jasonlat
  * 2026-09-11  21:03
@@ -38,4 +40,12 @@ public interface ISshSessionPort {
     boolean isConnected(String connectionId);
 
     Session getSession(String connectionId);
+
+    /**
+     * 获取当前内存中所有已注册的连接ID（用于连接监测器遍历探活）。
+     * 返回的集合是当前快照，可能包含已实际断开但尚未清理的连接。
+     *
+     * @return 连接ID集合
+     */
+    Set<String> getActiveConnectionIds();
 }

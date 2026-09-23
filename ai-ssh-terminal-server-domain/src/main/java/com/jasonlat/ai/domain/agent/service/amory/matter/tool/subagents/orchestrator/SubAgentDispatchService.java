@@ -14,15 +14,14 @@ import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.SubAgentDispatchTool;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.*;
 
 /**
@@ -41,12 +40,32 @@ public class SubAgentDispatchService {
     private final CustomRunnerFactory runnerFactory;
     private final Executor executor;
 
+    /**
+     * 事件发布器负责把独立 Runner 的事件转发到父请求的 SSE 流。
+     */
+    private final AgentEventPublisher agentEventPublisher;
+
+    /**
+     * 兼容旧调用方式；使用独立发布器兜底，但不会连接任何 SSE 监听器。
+     */
     public SubAgentDispatchService(LlmSubAgentCatalog agentCatalog,
                                    CustomRunnerFactory runnerFactory,
-                                   ThreadPoolExecutor executor) {
+                                   Executor executor) {
+        this(agentCatalog, runnerFactory, executor, new AgentEventPublisher());
+    }
+
+    /**
+     * Spring 注入入口；显式限定线程池，避免与框架默认异步执行器混淆。
+     */
+    @Autowired
+    public SubAgentDispatchService(LlmSubAgentCatalog agentCatalog,
+                                   CustomRunnerFactory runnerFactory,
+                                   @Qualifier("threadPoolExecutor") Executor executor,
+                                   AgentEventPublisher agentEventPublisher) {
         this.agentCatalog = agentCatalog;
         this.runnerFactory = runnerFactory;
         this.executor = executor;
+        this.agentEventPublisher = agentEventPublisher;
     }
 
     /**
@@ -126,7 +145,8 @@ public class SubAgentDispatchService {
                         .autoCreateSession(false)
                         .build();
 
-                List<Event> events = Single.defer(() ->
+                List<Event> events = new ArrayList<>();
+                Single.defer(() ->
                                 // 先用父请求的终端 ID 创建子 Session，再启动子 Agent。
                                 runner.sessionService().createSession(
                                         runner.appName(), userId, initialState, childSessionId))
@@ -135,10 +155,19 @@ public class SubAgentDispatchService {
                                     session.sessionKey(), terminalSessionId);
                             return runner.runAsync(userId, childSessionId, content, runConfig);
                         })
-                        .timeout(
-                                Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
-                        .toList()
-                        .blockingGet();
+                        .timeout(Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
+                        .blockingForEach(event -> {
+                            // 边执行边发布，前端可以实时看到子 Agent 的工具调用，而不是等待任务汇总后一次性返回（否则ui渲染效果就不咋地了，一坨一坨的）。
+                            events.add(event);
+                            if (context.getParentSessionId() != null
+                                    && !context.getParentSessionId().isBlank()
+                                    && !"unknown".equals(context.getParentSessionId())) {
+                                agentEventPublisher.publish(
+                                        context.getParentSessionId(), context.getParentSessionKey(), event, true);
+                            } else {
+                                agentEventPublisher.publishToOnlyActiveSession(event, true);
+                            }
+                        });
 
                 task.setResult(toResult(events));
                 task.setStatus(TaskStatus.COMPLETED);

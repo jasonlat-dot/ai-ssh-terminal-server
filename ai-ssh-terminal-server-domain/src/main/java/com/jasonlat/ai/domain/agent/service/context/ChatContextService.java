@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.context;
 
 
+import com.jasonlat.ai.domain.agent.model.valobj.enums.ContextPlacement;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.PromptContextVO;
 import com.jasonlat.ai.domain.agent.service.IChatContextService;
@@ -87,11 +88,19 @@ public class ChatContextService implements IChatContextService {
     public PromptContextVO buildPromptContext(String sessionId, String userId, String terminalSessionId, List<Map<String, Object>> messageHistory) {
         Map<String, Object> finalCtx = new HashMap<>();
 
+        Map<String, Object> stableContext = new HashMap<>();
+        Map<String, Object> ephemeralContext = new HashMap<>();
+
         for (ContextProvider provider : providers) {
             if (!provider.enabled()) continue;
             Map<String, Object> ctx = provider.provide(sessionId, userId, terminalSessionId, messageHistory);
             if (ctx != null) {
                 finalCtx.putAll(ctx);
+                if (provider.getPlacement() == ContextPlacement.STABLE_PREFIX) {
+                    stableContext.putAll(ctx);
+                } else {
+                    ephemeralContext.putAll(ctx);
+                }
             }
         }
 
@@ -108,6 +117,8 @@ public class ChatContextService implements IChatContextService {
                 // 长期记忆摘要：由 LongTermMemoryProvider(order=25) 召回并注入，
                 // 经 DynamicPromptBuilder 渲染为 [长期记忆] 段落拼到用户消息前面。
                 .longTermMemorySummary((String) finalCtx.get("longTermMemorySummary"))
+                .stableContext(stableContext)
+                .ephemeralContext(ephemeralContext)
                 .build();
     }
 

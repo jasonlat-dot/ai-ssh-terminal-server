@@ -30,6 +30,11 @@ public class AgentExecutionContext {
     String parentSessionId;
 
     /**
+     * ADK 业务会话 ID，用于在父 invocation 事件尚未到达 SSE 时兜底关联事件。
+     */
+    String parentSessionKey;
+
+    /**
      * 父会话绑定的 SSH 终端会话 ID，派发时透传给 SshExecuteAdkTool 的 ThreadLocal
      */
     String terminalSessionId;

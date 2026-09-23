@@ -1,5 +1,6 @@
 package com.jasonlat.ai.cases.react.facotry;
 
+import com.google.adk.agents.RunConfig;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
 import com.jasonlat.ai.trigger.api.dto.ToolCallDTO;
@@ -41,6 +42,8 @@ public class DefaultReActFactory {
     @AllArgsConstructor
     @NoArgsConstructor
     public static class DynamicContext {
+
+        private RunConfig.StreamingMode streamingMode = RunConfig.StreamingMode.SSE;
 
         // ══════════════════════════════════════════════════════════
         //  会话基本信息

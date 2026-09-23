@@ -114,6 +114,7 @@ public class ContextTracker {
         }
         ctx.setTurnCount(ctx.getTurnCount() + 1);
         ctx.setLastIntent(result.getIntent());
+        ctx.setLastIntentResult(result);
         ctx.setLastActiveTime(System.currentTimeMillis());
     }
 
@@ -177,6 +178,13 @@ public class ContextTracker {
     public TaskStateVO getTaskState(String sessionId) {
 
         return getContext(sessionId).getTaskState();
+    }
+
+    /**
+     * 获取最近一次完整意图识别结果；无历史时返回 null。
+     */
+    public IntentResultVO getLastIntentResult(String sessionId) {
+        return getContext(sessionId).getLastIntentResult();
     }
 
     /**

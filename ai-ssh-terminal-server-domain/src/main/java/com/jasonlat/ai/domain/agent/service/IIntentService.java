@@ -52,4 +52,9 @@ public interface IIntentService {
      */
     void updateTaskState(String sessionId, TaskStateVO taskState);
 
+    /**
+     * 获取最近一次完整意图识别结果，用于结构化 Prompt 提示；无历史时返回 null。
+     */
+    IntentResultVO getLastIntentResult(String sessionId);
+
 }

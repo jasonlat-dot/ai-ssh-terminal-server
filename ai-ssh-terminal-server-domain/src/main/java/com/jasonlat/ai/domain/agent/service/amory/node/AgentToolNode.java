@@ -18,6 +18,7 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.orchestr
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan.PlanParser;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan.PlanValidator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan.PlannerAgentBuilder;
+import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
@@ -42,8 +43,6 @@ public class AgentToolNode extends AbstractAmorySupport {
     @Resource
     private CustomRunnerFactory customRunnerFactory;
     @Resource
-    private LlmSubAgentCatalog agentCatalog;
-    @Resource
     private DynamicAgentOrchestrator dynamicAgentOrchestrator;
     @Resource
     private PlannerAgentBuilder plannerAgentBuilder;
@@ -51,6 +50,12 @@ public class AgentToolNode extends AbstractAmorySupport {
     private PlanParser planParser;
     @Resource
     private PlanValidator planValidator;
+
+    /**
+     * 发布器用于把子 Agent Runner 和 SSH 工具产生的事件转发到父请求 SSE 流。
+     */
+    @Resource
+    private AgentEventPublisher agentEventPublisher;
 
     private static final Logger log = LoggerFactory.getLogger(AgentToolNode.class);
 
@@ -106,10 +111,11 @@ public class AgentToolNode extends AbstractAmorySupport {
                 adkTools.add(new SubAgentDispatchTool(subAgent, customRunnerFactory));
             }
 
-            // 批量派发工具：主 Agent 自行拆解任务列表并发派发
+            // 批量派发工具：主 Agent 自行拆解任务列表并发派发 2-11节，agentEventPublisher 推送。前后有好几个地方都要有这个。
             adkTools.add(new BatchSubAgentDispatchTool(
                     agents.stream().map(AiAgentConfigTableVO.Module.Agent::getName).toList(),
-                    dynamicAgentOrchestrator));
+                    dynamicAgentOrchestrator,
+                    agentEventPublisher));
 
             ChatModel chatModel = dynamicContext.getChatModelMap().get(agentConfig.getName());
             if (chatModel == null) {
@@ -122,6 +128,7 @@ public class AgentToolNode extends AbstractAmorySupport {
                 modelName = llmChatModel.getModelOrDefault(modelName);
             }
 
+
             // 动态规划派发工具：由独立规划器 LLM 生成任务计划后派发
             adkTools.add(new DynamicPlanDispatchTool(
                     plannerAgentBuilder,
@@ -130,7 +137,8 @@ public class AgentToolNode extends AbstractAmorySupport {
                     planValidator,
                     dynamicContext.getOpenAiApiMap().get(agentConfig.getName()),
                     modelName,
-                    agents.stream().map(AiAgentConfigTableVO.Module.Agent::getName).toList()));
+                    agents.stream().map(AiAgentConfigTableVO.Module.Agent::getName).toList(),
+                    agentEventPublisher));
 
             // 和前面node节点里一样，创建智能体
             LlmAgent parentAgent = LlmAgent.builder()

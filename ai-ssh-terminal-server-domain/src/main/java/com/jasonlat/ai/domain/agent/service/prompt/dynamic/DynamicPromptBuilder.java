@@ -1,9 +1,14 @@
 package com.jasonlat.ai.domain.agent.service.prompt.dynamic;
 
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.MilestoneVO;
 import com.jasonlat.ai.domain.agent.model.valobj.prompt.PromptContextVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 动态 Prompt 构建器
@@ -12,8 +17,10 @@ import org.springframework.stereotype.Component;
  * 翻译成模型可读的结构化文本，提供两种构建方式：
  * <ul>
  *   <li>{@link #build} —— 追加到 system instruction 末尾</li>
- *   <li>{@link #buildMessageSuffix} —— 构建为用户消息前缀（当前使用）</li>
+ *   <li>{@link #buildStableContext}/{@link #buildEphemeralContext} —— 当前主链路使用，
+ *   分别渲染稳定前缀和动态尾部</li>
  * </ul>
+ *
  */
 @Slf4j
 @Component
@@ -51,6 +58,137 @@ public class DynamicPromptBuilder {
     }
 
     /**
+     * 构建稳定上下文前缀。
+     * <p>
+     * 只放置低频变化的内容：任务目标、用户级长期记忆。实时工具输出和 cwd 等字段
+     * 不应进入这一层，否则会造成跨轮 Prompt 前缀频繁变化。
+     */
+    public String buildStableContext(PromptContextVO ctx) {
+        if (ctx == null) return "";
+
+        String taskDescription = stringValue(ctx.getStableContext(), "taskDescription", ctx.getTaskDescription());
+        String longTermMemorySummary = stringValue(ctx.getStableContext(), "longTermMemorySummary", ctx.getLongTermMemorySummary());
+
+        StringBuilder sb = new StringBuilder();
+        boolean hasContent = false;
+
+        if (!isEmpty(taskDescription)) {
+            sb.append("[当前任务]\n").append(taskDescription).append("\n");
+            hasContent = true;
+        }
+
+        if (!isEmpty(longTermMemorySummary)) {
+            if (hasContent) sb.append("\n");
+            sb.append("[长期记忆]\n").append(longTermMemorySummary).append("\n");
+            hasContent = true;
+        }
+
+        if (!hasContent) return "";
+        return sb.toString();
+    }
+
+    /**
+     * 构建动态上下文尾部。
+     * <p>
+     * 放置每轮可能变化的内容，保证稳定前缀之后的上下文只在尾部演进。
+     */
+    public String buildEphemeralContext(PromptContextVO ctx) {
+        if (ctx == null) return "";
+
+        Map<String, Object> context = ctx.getEphemeralContext();
+        String serverInfo = stringValue(context, "serverInfo", ctx.getServerInfo());
+        String osInfo = stringValue(context, "osInfo", ctx.getOsInfo());
+        String currentUser = stringValue(context, "currentUser", ctx.getCurrentUser());
+        String currentDirectory = stringValue(context, "currentDirectory", ctx.getCurrentDirectory());
+        String toolResultSummary = stringValue(context, "toolResultSummary", ctx.getToolResultSummary());
+        List<MilestoneVO> milestoneVOS = milestones(context, ctx.getMilestoneVOS());
+
+        StringBuilder sb = new StringBuilder();
+        boolean hasContent = false;
+
+        if (!isEmpty(serverInfo) || !isEmpty(osInfo)
+                || !isEmpty(currentUser) || !isEmpty(currentDirectory)) {
+            sb.append("[系统环境]\n");
+            if (!isEmpty(serverInfo)) sb.append("服务器: ").append(serverInfo).append("\n");
+            if (!isEmpty(osInfo)) sb.append("系统: ").append(osInfo).append("\n");
+            if (!isEmpty(currentUser)) sb.append("用户: ").append(currentUser).append("\n");
+            if (!isEmpty(currentDirectory)) sb.append("目录: ").append(currentDirectory).append("\n");
+            hasContent = true;
+        }
+
+        if (ctx.getRecentCommands() != null && !ctx.getRecentCommands().isEmpty()) {
+            if (hasContent) sb.append("\n");
+            sb.append("[最近执行的命令]\n");
+            for (String cmd : ctx.getRecentCommands()) {
+                sb.append("- ").append(cmd).append("\n");
+            }
+            hasContent = true;
+        }
+
+        if (milestoneVOS != null && !milestoneVOS.isEmpty()) {
+            if (hasContent) sb.append("\n");
+            sb.append("[关键事件]\n");
+            for (MilestoneVO milestone : milestoneVOS) {
+                sb.append("- [").append(milestone.getType().name()).append("] ")
+                        .append(milestone.getContent()).append("\n");
+            }
+            hasContent = true;
+        }
+
+        if (!isEmpty(toolResultSummary)) {
+            if (hasContent) sb.append("\n");
+            sb.append("[工具执行摘要]\n").append(toolResultSummary).append("\n");
+            hasContent = true;
+        }
+
+        String intentHint = buildIntentHint(ctx);
+        if (!intentHint.isEmpty()) {
+            if (hasContent) sb.append("\n");
+            sb.append(intentHint);
+            hasContent = true;
+        }
+
+        return hasContent ? sb.toString() : "";
+    }
+
+    private String buildIntentHint(PromptContextVO ctx) {
+        IntentResultVO result = ctx.getIntentResult();
+        if (result != null && result.getIntent() == IntentTypeEnumVO.UNKNOWN && result.getConfidence() < 0.5) {
+            return "";
+        }
+
+        String primary = result != null && result.getIntent() != null
+                ? result.getIntent().name()
+                : ctx.getIntentLabel();
+        if (isEmpty(primary)) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder("[意图提示]\n")
+                .append("- 主要意图: ").append(primary);
+        if (result != null) {
+            sb.append(" (置信度: ").append(Math.round(result.getConfidence() * 100)).append("%)");
+        }
+        sb.append("\n");
+
+        if (result != null && result.getCandidateIntents() != null && !result.getCandidateIntents().isEmpty()) {
+            sb.append("- 备选: ").append(result.getCandidateIntents().stream()
+                    .map(IntentTypeEnumVO::name)
+                    .collect(java.util.stream.Collectors.joining(", "))).append("\n");
+        }
+        if (result != null && result.getEntities() != null && !result.getEntities().isEmpty()) {
+            sb.append("- 实体: ").append(result.getEntities().entrySet().stream()
+                    .map(entry -> entry.getKey() + "=" + entry.getValue())
+                    .collect(java.util.stream.Collectors.joining(", "))).append("\n");
+        }
+        sb.append("- 使用原则: 该结果仅作参考，不得覆盖用户消息、历史结论和工具证据。\n");
+        log.info("意图提示: {}, confidence: {}", primary, result == null ? "n/a" : result.getConfidence());
+        return sb.toString();
+    }
+
+
+
+    /**
      * 将动态上下文构建为用户消息前缀（注入到用户消息前面）。
      * <p>
      * 适用于无法直接修改 system instruction 的场景——ADK Runner 的 system instruction
@@ -85,65 +223,16 @@ public class DynamicPromptBuilder {
     public String buildMessageSuffix(PromptContextVO ctx) {
         if (ctx == null) return "";
 
-        StringBuilder sb = new StringBuilder();
-        boolean hasContent = false;
-
-        if (!isEmpty(ctx.getTaskDescription())) {
-            sb.append("[当前任务]\n").append(ctx.getTaskDescription()).append("\n");
-            hasContent = true;
+        String stableContext = buildStableContext(ctx);
+        String ephemeralContext = buildEphemeralContext(ctx);
+        if (stableContext.isEmpty()) {
+            return ephemeralContext;
+        }
+        if (ephemeralContext.isEmpty()) {
+            return stableContext;
         }
 
-        if (!isEmpty(ctx.getServerInfo()) || !isEmpty(ctx.getOsInfo())
-                || !isEmpty(ctx.getCurrentUser()) || !isEmpty(ctx.getCurrentDirectory())
-                || !isEmpty(ctx.getUptime())) {
-            sb.append("[系统环境]\n");
-            if (!isEmpty(ctx.getServerInfo()))       sb.append("服务器: ").append(ctx.getServerInfo()).append("\n");
-            if (!isEmpty(ctx.getOsInfo()))           sb.append("系统: ").append(ctx.getOsInfo()).append("\n");
-            if (!isEmpty(ctx.getCurrentUser()))      sb.append("用户: ").append(ctx.getCurrentUser()).append("\n");
-            if (!isEmpty(ctx.getCurrentDirectory())) sb.append("目录: ").append(ctx.getCurrentDirectory()).append("\n");
-            if (!isEmpty(ctx.getUptime()))           sb.append("运行时长: ").append(ctx.getUptime()).append("\n");
-            hasContent = true;
-        }
-
-        if (ctx.getRecentCommands() != null && !ctx.getRecentCommands().isEmpty()) {
-            sb.append("\n[最近执行的命令]\n");
-            for (String cmd : ctx.getRecentCommands()) {
-                sb.append("- ").append(cmd).append("\n");
-            }
-            hasContent = true;
-        }
-
-        if (!isEmpty(ctx.getToolResultSummary())) {
-            sb.append("\n[最近工具结果摘要]\n").append(ctx.getToolResultSummary()).append("\n");
-            hasContent = true;
-        }
-
-        if (ctx.getMilestoneVOS() != null && !ctx.getMilestoneVOS().isEmpty()) {
-            sb.append("\n[关键事件]\n");
-            for (MilestoneVO m : ctx.getMilestoneVOS()) {
-                sb.append("- [").append(m.getType().name()).append("] ").append(m.getContent()).append("\n");
-            }
-            hasContent = true;
-        }
-
-        if (!isEmpty(ctx.getLongTermMemorySummary())) {
-            sb.append("\n[长期记忆]\n").append(ctx.getLongTermMemorySummary()).append("\n");
-            hasContent = true;
-        }
-
-        // 意图标签（由意图识别系统经 PromptContextVO.intentLabel 注入，让 AI 感知用户当前意图）
-        // 输出形如 "[用户意图]\nDIAGNOSE\n"，仅做提示不做强制路由。
-        if (!isEmpty(ctx.getIntentLabel())) {
-            log.info("意图识别:{}", ctx.getIntentLabel());
-            sb.append("\n[用户意图]\n").append(ctx.getIntentLabel()).append("\n");
-            hasContent = true;
-        }
-
-        if (!hasContent) return "";
-
-        String suffix = sb.toString();
-        log.debug("构建消息后缀，长度: {}", suffix.length());
-        return suffix;
+        return stableContext + "\n\n" + ephemeralContext;
     }
 
 
@@ -245,5 +334,19 @@ public class DynamicPromptBuilder {
      */
     private boolean isEmpty(String s) {
         return s == null || s.trim().isEmpty();
+    }
+
+    private String stringValue(Map<String, Object> context, String key, String fallback) {
+        Object value = context == null ? null : context.get(key);
+        return value == null ? fallback : String.valueOf(value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<MilestoneVO> milestones(Map<String, Object> context, List<MilestoneVO> fallback) {
+        Object value = context == null ? null : context.get("milestoneVOS");
+        if (value instanceof List<?> list) {
+            return (List<MilestoneVO>) list;
+        }
+        return fallback;
     }
 }

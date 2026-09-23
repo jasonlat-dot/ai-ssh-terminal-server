@@ -1,10 +1,6 @@
 package com.jasonlat.ai.domain.agent.service.chat;
 
-import com.google.adk.agents.RunConfig;
-import com.google.adk.events.Event;
 import com.google.adk.runner.Runner;
-import com.google.adk.sessions.Session;
-import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.adapter.repository.IChatHistoryRepository;
 import com.jasonlat.ai.domain.agent.model.entity.ChatCommandEntity;
@@ -19,7 +15,6 @@ import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
-import io.reactivex.rxjava3.core.Flowable;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -149,110 +144,6 @@ public class ChatService implements IChatService {
                 .toList();
     }
 
-    @Override
-    public List<String> handleMessage(String agentId, String userId, String message) {
-        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(agentId);
-        if (null == aiAgentRegisterVO) {
-            throw new AppException(ResponseCode.CLIENT_A0301.getInfo());
-        }
-        // 创建会话
-        String sessionId = createSession(agentId, userId);
-
-        return handleMessage(agentId, userId, sessionId, message);
-    }
-
-    @Override
-    public List<String> handleMessage(String agentId, String userId, String sessionId, String message) {
-        log.info("智能体非流式对话 agentId:{} userId:{} message: {}", agentId, userId, message);
-        ChatCommandEntity chatCommandEntity = ChatCommandEntity.builder()
-                .agentId(agentId)
-                .userId(userId)
-                .sessionId(sessionId)
-                .texts(List.of(ChatCommandEntity.Content.Text.builder().message(message).build()))
-                .build();
-        return handleMessage(chatCommandEntity);
-    }
-
-    @Override
-    public List<String> handleMessage(ChatCommandEntity chatCommandEntity) {
-
-        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(chatCommandEntity.getAgentId());
-        if (null == aiAgentRegisterVO) {
-            throw new AppException(ResponseCode.CLIENT_A0301.getInfo());
-        }
-        // 构建 parts
-        List<Part> parts = buildParts(chatCommandEntity);
-        Content userContent = Content.builder().role("user").parts(parts).build();
-        Runner runner = aiAgentRegisterVO.getRunner();
-        Flowable<Event> asyncResponseEvents = runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), userContent);
-        List<String> outputs = new ArrayList<>();
-        asyncResponseEvents.blockingForEach(event -> {
-            outputs.add(event.stringifyContent());
-        });
-        return outputs;
-    }
-
-    @Override
-    public Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message) {
-        log.info("智能体流式对话 agentId:{} userId:{} message: {}", agentId, userId, message);
-        ChatCommandEntity chatCommandEntity = ChatCommandEntity.builder()
-                .agentId(agentId)
-                .userId(userId)
-                .sessionId(sessionId)
-                .texts(List.of(ChatCommandEntity.Content.Text.builder().message(message).build()))
-                .build();
-        return handleMessageStream(chatCommandEntity);
-    }
-
-
-
-    @Override
-    public Flowable<Event> handleMessageStream(ChatCommandEntity chatCommandEntity) {
-        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(chatCommandEntity.getAgentId());
-        if (null == aiAgentRegisterVO) {
-            throw new AppException(ResponseCode.CLIENT_A0301.getInfo());
-        }
-        // 构建 parts
-        List<Part> parts = buildParts(chatCommandEntity);
-        Runner runner = aiAgentRegisterVO.getRunner();
-        RunConfig runConfig = buildStreamingRunConfig();
-
-        // 构建用户信息
-        Content userContent = Content.builder().role("user").parts(parts).build();
-        return runner.runAsync(chatCommandEntity.getUserId(), chatCommandEntity.getSessionId(), userContent, runConfig);
-    }
-
-    @Override
-    public Flowable<Event> handleMessageStream(String agentId, String userId, String sessionId, String message, String terminalSessionId) {
-        AiAgentRegisterVO aiAgentRegisterVO = armoryFactory.getAiAgentRegisterVO(agentId);
-
-        if (null == aiAgentRegisterVO) {
-            throw new AppException(ResponseCode.AGENT_ID_NOT_FOUNT);
-        }
-
-        Runner runner = aiAgentRegisterVO.getRunner();
-        RunConfig runConfig = buildStreamingRunConfig();
-
-        Content userMsg = Content.fromParts(Part.fromText(message));
-
-        if (runner.sessionService() instanceof CustomAdkSessionService sessionService) {
-            sessionService.prepareInvocation(
-                    runner.appName(), userId, sessionId, List.of(), terminalSessionId);
-        }
-        return runner.runAsync(userId, sessionId, userMsg, runConfig);
-
-    }
-
-    /**
-     * 统一构造 ADK 流式运行配置，避免不同 handleMessageStream 重载的行为不一致。
-     */
-    private RunConfig buildStreamingRunConfig() {
-        return RunConfig.builder()
-                .streamingMode(RunConfig.StreamingMode.SSE)
-                .maxLlmCalls(20)
-                .saveInputBlobsAsArtifacts(true)
-                .build();
-    }
 
     private List<Part> buildParts(ChatCommandEntity chatCommandEntity) {
         List<Part> parts = new ArrayList<>(8);
