@@ -21,7 +21,21 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class SshSessionPort implements ISshSessionPort {
 
+    /** 建立 TCP/SSH 连接最多等待 30 秒。 */
+    private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
+
+    /**
+     * SSH 心跳间隔。JSch 通过 Socket 读超时触发 SSH_MSG_GLOBAL_REQUEST，
+     * 因此必须使用 setServerAliveInterval，不能只写入同名 config。
+     */
+    private static final int SERVER_ALIVE_INTERVAL_MILLIS = 30_000;
+
+    /** 连续 5 次心跳无响应才判定连接失效，容忍海外链路的短时抖动。 */
+    private static final int SERVER_ALIVE_COUNT_MAX = 5;
+
     private final ConcurrentHashMap<String, Session> sshSessions = new ConcurrentHashMap<>(4);
+    /** 同一 connectionId 的建连、复用和断开必须串行，避免两个窗口同时重建连接。 */
+    private final ConcurrentHashMap<String, Object> connectionLocks = new ConcurrentHashMap<>(4);
     private final JSch jsch = new JSch();
 
 
@@ -38,11 +52,31 @@ public class SshSessionPort implements ISshSessionPort {
      */
     @Override
     public boolean connect(String connectionId, String host, int port, String username, String password, String privateKey) {
+        Object connectionLock = connectionLocks.computeIfAbsent(connectionId, ignored -> new Object());
+        synchronized (connectionLock) {
+            Session previous = sshSessions.get(connectionId);
+            if (previous != null && previous.isConnected()) {
+                log.info("SSH连接复用 connectionId={} host={}:{} user={}", connectionId, host, port, username);
+                return true;
+            }
 
-        // 如果已经建立连接，先断开
-        disconnect(connectionId);
-        try {
-            Session session = jsch.getSession(username, host, port);
+            boolean reconnect = previous != null;
+            long startNanos = System.nanoTime();
+            log.info("SSH{}开始 connectionId={} host={}:{} user={} connectTimeoutMs={} keepAliveIntervalMs={} keepAliveMaxMisses={}",
+                    reconnect ? "重连" : "连接",
+                    connectionId,
+                    host,
+                    port,
+                    username,
+                    CONNECT_TIMEOUT_MILLIS,
+                    SERVER_ALIVE_INTERVAL_MILLIS,
+                    SERVER_ALIVE_COUNT_MAX);
+
+            // 仅清理已经失效的旧 Session；健康 Session 会被多个窗口共同复用。
+            closeSession(connectionId, previous);
+            Session session = null;
+            try {
+                session = jsch.getSession(username, host, port);
             /*
              * SSH 原生机制：第一次连接服务器，服务器会返回 host‑key（主机公钥指纹）。
              * - `StrictHostKeyChecking`：主机密钥严格校验策略
@@ -54,10 +88,6 @@ public class SshSessionPort implements ISshSessionPort {
             // session.setConfig("StrictHostKeyChecking", "no");
 
             session.setConfig("StrictHostKeyChecking", "no");
-            session.setTimeout(30000); // 30秒超时
-            session.setConfig("ServerAliveInterval", "30");   // 每30秒发送keep-alive
-            session.setConfig("ServerAliveCountMax", "3");     // 3次无响应才断开
-            session.setTimeout(0); // 不设置socket超时，避免reader线程被误杀
 
             if (StringUtils.isNotBlank(privateKey)) {
                 // 私钥验证
@@ -70,15 +100,41 @@ public class SshSessionPort implements ISshSessionPort {
                 return false;
             }
 
-            // 建立连接
-            session.connect();
-            sshSessions.put(connectionId, session);
-            log.info("SSH连接成功 connectionId={} host={}:{} user={}", connectionId, host, port, username);
-            return true;
+            // connect(int) 只控制建连阶段，避免网络不可达时无限等待。
+            session.connect(CONNECT_TIMEOUT_MILLIS);
 
-        } catch (JSchException e) {
-            log.error("SSH连接失败 connectionId={} host={}:{} error={}", connectionId, host, port, e.getMessage());
-            return false;
+            /*
+             * 必须在连接成功后调用 JSch 的专用 API。setServerAliveInterval 会为
+             * Socket 设置读超时，并在空闲超时后发送 SSH 心跳；不能再 setTimeout(0)，
+             * 否则空闲连接不会触发心跳。普通空闲不会导致 Terminal reader 退出。
+             */
+            session.setServerAliveInterval(SERVER_ALIVE_INTERVAL_MILLIS);
+            session.setServerAliveCountMax(SERVER_ALIVE_COUNT_MAX);
+
+            sshSessions.put(connectionId, session);
+            log.info("SSH{}成功 connectionId={} host={}:{} user={} durationMs={} keepAliveIntervalMs={} keepAliveMaxMisses={}",
+                    reconnect ? "重连" : "连接",
+                    connectionId,
+                    host,
+                    port,
+                    username,
+                    elapsedMillis(startNanos),
+                    session.getServerAliveInterval(),
+                    session.getServerAliveCountMax());
+                return true;
+
+            } catch (JSchException e) {
+                closeSession(connectionId, session);
+                log.error("SSH{}失败 connectionId={} host={}:{} durationMs={} error={}",
+                        reconnect ? "重连" : "连接",
+                        connectionId,
+                        host,
+                        port,
+                        elapsedMillis(startNanos),
+                        e.getMessage(),
+                        e);
+                return false;
+            }
         }
     }
 
@@ -89,11 +145,29 @@ public class SshSessionPort implements ISshSessionPort {
      */
     @Override
     public void disconnect(String connectionId) {
-        Session session = sshSessions.remove(connectionId);
-        if (session != null && session.isConnected()) {
-            session.disconnect();
-            log.info("SSH连接已断开 connectionId={}", connectionId);
+        Object connectionLock = connectionLocks.computeIfAbsent(connectionId, ignored -> new Object());
+        synchronized (connectionLock) {
+            closeSession(connectionId, sshSessions.get(connectionId));
         }
+    }
+
+    private void closeSession(String connectionId, Session session) {
+        if (session == null) {
+            return;
+        }
+        sshSessions.remove(connectionId, session);
+        boolean connectedBeforeClose = session.isConnected();
+        try {
+            if (connectedBeforeClose) {
+                session.disconnect();
+            }
+        } finally {
+            log.info("SSH底层连接已释放 connectionId={} connectedBeforeClose={}", connectionId, connectedBeforeClose);
+        }
+    }
+
+    private long elapsedMillis(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     /**

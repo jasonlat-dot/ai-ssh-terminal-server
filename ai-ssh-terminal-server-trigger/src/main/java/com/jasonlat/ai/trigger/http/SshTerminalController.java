@@ -184,25 +184,56 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
 
     @RequestMapping(value = "read", method = RequestMethod.GET)
     public CompletableFuture<Response<TerminalReadResultDTO>> readAsyncFromTerminal(@RequestParam("sessionId") String sessionId) {
-        CompletableFuture<TerminalReadResult> completableFuture = sshTerminalDomainService.readTerminalAsync(sessionId);
-        // thenApply：异步完成后，把结果转换DTO
-        return completableFuture.thenApply(readResult -> {
-            TerminalReadResultDTO response = new TerminalReadResultDTO();
-            // 其他需要的字段赋值...
-            response.setOutput(readResult.getData());
-            response.setStatus(readResult.getStatus().toString());
-            response.setHasData(readResult.isHasData());
-            response.setConnected(readResult.isConnected());
-            response.setEof(readResult.isEof());
-            response.setTimeout(readResult.isTimeout());
-            response.setBufferOverflow(readResult.isBufferOverflow());
+        try {
+            CompletableFuture<TerminalReadResult> completableFuture = sshTerminalDomainService.readTerminalAsync(sessionId);
+            // thenApply：异步完成后，把结果转换DTO
+            return completableFuture.handle((readResult, throwable) -> {
+                if (throwable != null) {
+                    log.error("Terminal Long Poll 异步读取失败 sessionId={}", sessionId, throwable);
+                    return Response.<TerminalReadResultDTO>builder()
+                            .code(ResponseCode.UN_ERROR.getCode())
+                            .info("读取终端失败: " + throwable.getMessage())
+                            .build();
+                }
 
-            return Response.<TerminalReadResultDTO>builder()
-                    .code(ResponseCode.SUCCESS.getCode())
-                    .info(ResponseCode.SUCCESS.getInfo())
-                    .data(response)
-                    .build();
-        });
+                TerminalReadResultDTO response = new TerminalReadResultDTO();
+                response.setOutput(readResult.getData());
+                response.setStatus(readResult.getStatus().toString());
+                response.setHasData(readResult.isHasData());
+                response.setConnected(readResult.isConnected());
+                response.setEof(readResult.isEof());
+                response.setTimeout(readResult.isTimeout());
+                response.setBufferOverflow(readResult.isBufferOverflow());
+
+                return Response.<TerminalReadResultDTO>builder()
+                        .code(ResponseCode.SUCCESS.getCode())
+                        .info(ResponseCode.SUCCESS.getInfo())
+                        .data(response)
+                        .build();
+            });
+        } catch (AppException e) {
+            /*
+             * 后端重启或旧 Terminal 已被清理时，明确把 S0003 返回给客户端。
+             * 客户端据此重建 SSH 和 Terminal，而不是把它当作普通 HTTP 网络波动
+             * 对一个已经不存在的 sessionId 无限重试。
+             */
+            log.warn("Terminal Long Poll 会话不可用 sessionId={} code={} reason={}",
+                    sessionId, e.getCode(), e.getMessage());
+            return CompletableFuture.completedFuture(
+                    Response.<TerminalReadResultDTO>builder()
+                            .code(e.getCode())
+                            .info(e.getMessage())
+                            .build()
+            );
+        } catch (Exception e) {
+            log.error("Terminal Long Poll 创建失败 sessionId={}", sessionId, e);
+            return CompletableFuture.completedFuture(
+                    Response.<TerminalReadResultDTO>builder()
+                            .code(ResponseCode.UN_ERROR.getCode())
+                            .info("读取终端失败: " + e.getMessage())
+                            .build()
+            );
+        }
     }
 
     @RequestMapping(value = "resize", method = RequestMethod.POST)

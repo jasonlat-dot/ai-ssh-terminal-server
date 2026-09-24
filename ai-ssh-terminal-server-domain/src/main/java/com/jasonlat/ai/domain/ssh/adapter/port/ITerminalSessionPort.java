@@ -89,4 +89,14 @@ public interface ITerminalSessionPort {
      */
     boolean sessionExists(String sessionId);
 
+    /**
+     * 判断某个连接配置下是否仍有活动终端。
+     * 多窗口会为同一个 connectionId 创建多个独立 Shell Channel；关闭其中一个窗口时，
+     * 只有最后一个终端也关闭后，底层 SSH Session 才允许被释放。
+     *
+     * @param connectionId SSH 连接 ID
+     * @return 是否至少存在一个活动终端
+     */
+    boolean hasActiveSessions(String connectionId);
+
 }

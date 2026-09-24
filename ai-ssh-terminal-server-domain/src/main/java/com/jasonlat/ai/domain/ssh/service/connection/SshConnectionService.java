@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.ssh.service.connection;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
+import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
@@ -24,10 +25,14 @@ public class SshConnectionService implements ISshConnectionService {
 
     private final ISshConnectionRepository repository;
     private final ISshSessionPort sshSessionPort;
+    private final ITerminalSessionPort terminalSessionPort;
 
-    public SshConnectionService(ISshConnectionRepository repository, ISshSessionPort sshSessionPort) {
+    public SshConnectionService(ISshConnectionRepository repository,
+                                ISshSessionPort sshSessionPort,
+                                ITerminalSessionPort terminalSessionPort) {
         this.repository = repository;
         this.sshSessionPort = sshSessionPort;
+        this.terminalSessionPort = terminalSessionPort;
     }
 
     /**
@@ -105,6 +110,9 @@ public class SshConnectionService implements ISshConnectionService {
         if (connectionId == null || connectionId.isBlank()) {
             throw new AppException(ResponseCode.ILLEGAL_PARAMETER);
         }
+        if (terminalSessionPort.hasActiveSessions(connectionId)) {
+            throw new IllegalArgumentException("该连接仍被其他窗口使用，请先关闭所有终端窗口");
+        }
         repository.deleteConnection(connectionId);
         log.info("SSH连接删除成功 connectionId={}", connectionId);
 
@@ -177,6 +185,15 @@ public class SshConnectionService implements ISshConnectionService {
      */
     @Override
     public void disconnect(String connectionId) {
+        /*
+         * 一个窗口关闭时，它会先关闭自己的 terminalSessionId，再调用 disconnect。
+         * 如果同一个 connectionId 下仍有其他窗口的 ChannelShell，必须保留共享的
+         * 底层 SSH Session，否则会把其他窗口一起踢下线。
+         */
+        if (terminalSessionPort.hasActiveSessions(connectionId)) {
+            log.info("SSH连接仍被其他终端使用，跳过底层断开 connectionId={}", connectionId);
+            return;
+        }
         // 1. 断开 SSH 连接
         sshSessionPort.disconnect(connectionId);
 

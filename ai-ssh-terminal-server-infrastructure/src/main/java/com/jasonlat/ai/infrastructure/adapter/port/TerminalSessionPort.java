@@ -65,18 +65,11 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     public String openTerminal(String connectionId, int cols, int rows) {
         /*
          * ================================
-         * 1. 关闭当前 connection 的旧终端
+         * 1. 为当前窗口创建独立终端
          * ================================
-         */
-        String oldSessionId = activeConnectionSession.get(connectionId);
-
-        if (oldSessionId != null) {
-            log.info("connection 已存在终端，关闭旧终端 connectionId={} oldSessionId={}", connectionId, oldSessionId);
-            cleanup(oldSessionId);
-        }
-
-        /*
-         * 为本次 Terminal 创建独立 sessionId。
+         * 同一个底层 SSH Session 可以同时承载多个 ChannelShell。
+         * 每个浏览器页签/客户端窗口持有自己的 terminalSessionId 和 ChannelShell，
+         * 新窗口不能关闭同 connectionId 下其他窗口的终端。
          */
         String sessionId = UUID.randomUUID().toString();
 
@@ -159,11 +152,6 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             terminalSessions.put(sessionId, context);
 
             /*
-             * 保存 connection 当前对应的 terminal session。
-             */
-            activeConnectionSession.put(connectionId, sessionId);
-
-            /*
              * ================================
              * 6. 启动唯一 reader
              * ================================
@@ -206,6 +194,17 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             }
             throw new RuntimeException("打开终端失败: " + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public boolean hasActiveSessions(String connectionId) {
+        if (connectionId == null || connectionId.isBlank()) {
+            return false;
+        }
+        return terminalSessions.values().stream().anyMatch(context ->
+                connectionId.equals(context.connectionId)
+                        && !context.closed.get()
+                        && isChannelConnected(context.channel));
     }
 
 

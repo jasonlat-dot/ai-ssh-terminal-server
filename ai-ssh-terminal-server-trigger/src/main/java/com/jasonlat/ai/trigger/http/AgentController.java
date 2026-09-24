@@ -297,6 +297,7 @@ public class AgentController implements IAgentService {
             }
 
             request.setSessionId(sessionId);
+//            throw new IllegalArgumentException("这是测试报错");
             return agentReActServiceCase.chatStream(request);
         } catch (Exception e) {
             log.error("ReAct 流式对话初始化失败", e);

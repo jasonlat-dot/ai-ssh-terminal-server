@@ -85,13 +85,6 @@ public class TerminalSessionPortSupport {
      */
     protected final Map<String, TerminalSessionContext> terminalSessions = new ConcurrentHashMap<>();
 
-    /**
-     * connectionId -> 当前 Terminal sessionId
-     * 一个 SSH connection 只允许创建一个 Terminal。
-     * 如果再次打开，则关闭之前的 Terminal。
-     */
-    protected final Map<String, String> activeConnectionSession = new ConcurrentHashMap<>();
-
     // ==========================================================
     // Long Polling
     // ==========================================================
@@ -130,6 +123,9 @@ public class TerminalSessionPortSupport {
          * 所属 SSH connection ID。
          */
         final String connectionId;
+
+        /** 用于日志观察 Terminal/reader 在断开前存活了多久。 */
+        final long createdAtMillis = System.currentTimeMillis();
         /**
          * SSH Shell Channel。
          */
@@ -616,10 +612,7 @@ public class TerminalSessionPortSupport {
      * 清理 Terminal Session。
      * 本方法设计为：可以被重复调用。
      * 例如：
-     * closeSession()
-     * +
-     * openTerminal() 清理旧 Terminal
-     * 即使同时触发，也不会重复释放资源。
+     * closeSession() 即使被重复触发，也不会重复释放资源。
      */
     protected void cleanup(String sessionId) {
         /*
@@ -645,18 +638,6 @@ public class TerminalSessionPortSupport {
          */
         completePendingRead(context, TerminalReadResult.disconnected(false));
         failActiveAgentCommand(context, "SSH 终端会话已关闭");
-
-        /*
-         * 只删除：
-         * connectionId -> 当前这个 sessionId
-         * 使用 ConcurrentHashMap.remove(key, value)
-         * 是为了避免这种场景：
-         * old session cleanup 很慢
-         * 新 session 已经建立
-         * 如果此时直接 remove(connectionId)
-         * 有可能误删新 session。
-         */
-        activeConnectionSession.remove(context.connectionId, context.sessionId);
 
         /*
          * 尝试 interrupt reader。
@@ -834,7 +815,7 @@ public class TerminalSessionPortSupport {
          */
         readerThread.setDaemon(true);
         readerThread.start();
-        log.debug("Terminal reader 启动成功 sessionId={}", context.sessionId);
+        log.info("Terminal reader 启动 sessionId={} connectionId={}", context.sessionId, context.connectionId);
     }
 
 
@@ -900,7 +881,11 @@ public class TerminalSessionPortSupport {
                      * 标记已经读取到真正 EOF。
                      */
                     context.eofReached.set(true);
-                    log.info("Terminal Shell EOF sessionId={}", context.sessionId);
+                    log.warn("Terminal SSH异常断开：Shell输入流收到EOF sessionId={} connectionId={} aliveMs={} channelConnected={}",
+                            context.sessionId,
+                            context.connectionId,
+                            System.currentTimeMillis() - context.createdAtMillis,
+                            isChannelConnected(context.channel));
                     /*
                      * 如果当前正好有 HTTP Long Poll 挂着，
                      * 不要让它继续等 25 秒。
@@ -942,7 +927,12 @@ public class TerminalSessionPortSupport {
                  * 不再尝试创建第二个 Reader。
                  */
                 context.readerFailed.set(true);
-                log.error("Terminal reader I/O异常，但Channel仍连接 sessionId={} reason={}", context.sessionId, e.getMessage(), e);
+                log.error("Terminal reader I/O异常但Channel仍显示连接 sessionId={} connectionId={} aliveMs={} reason={}",
+                        context.sessionId,
+                        context.connectionId,
+                        System.currentTimeMillis() - context.createdAtMillis,
+                        e.getMessage(),
+                        e);
                 /*
                  * Long Poll 立即返回 READER_ERROR。
                  */
@@ -953,7 +943,11 @@ public class TerminalSessionPortSupport {
                  * SSH Channel 已经真正断开。
                  */
                 context.eofReached.set(true);
-                log.info("Terminal reader 因SSH断开退出 sessionId={} reason={}", context.sessionId, e.getMessage());
+                log.warn("Terminal SSH异常断开：reader读取失败且Channel已断开 sessionId={} connectionId={} aliveMs={} reason={}",
+                        context.sessionId,
+                        context.connectionId,
+                        System.currentTimeMillis() - context.createdAtMillis,
+                        e.getMessage());
                 /*
                  * Long Poll 立即返回 DISCONNECTED。
                  * 这里不一定真的读取到了 -1，因此 eof=false 更严谨。
@@ -964,7 +958,11 @@ public class TerminalSessionPortSupport {
         } catch (Exception e) {
             if (!context.closed.get()) {
                 context.readerFailed.set(true);
-                log.error("Terminal reader 未知异常 sessionId={}", context.sessionId, e);
+                log.error("Terminal reader 未知异常 sessionId={} connectionId={} aliveMs={}",
+                        context.sessionId,
+                        context.connectionId,
+                        System.currentTimeMillis() - context.createdAtMillis,
+                        e);
                 completePendingRead(
                         context,
                         TerminalReadResult.readerError(
@@ -978,8 +976,10 @@ public class TerminalSessionPortSupport {
              * reader 生命周期结束。
              */
             context.readerRunning.set(false);
-            log.info("Terminal reader 已退出 sessionId={} closed={} eof={} failed={} channelConnected={}",
+            log.info("Terminal reader 已退出 sessionId={} connectionId={} aliveMs={} closed={} eof={} failed={} channelConnected={}",
                     context.sessionId,
+                    context.connectionId,
+                    System.currentTimeMillis() - context.createdAtMillis,
                     context.closed.get(),
                     context.eofReached.get(),
                     context.readerFailed.get(),
