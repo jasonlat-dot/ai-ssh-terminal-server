@@ -14,8 +14,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -177,9 +179,7 @@ public class SshTerminalService implements ISshTerminalService {
         if (entity == null || !entity.isActive()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
-        String output = terminalSessionService.read(sessionId);
-        entity.touch();
-        return output;
+        return terminalSessionService.read(sessionId);
     }
 
     @Override
@@ -188,9 +188,7 @@ public class SshTerminalService implements ISshTerminalService {
         if (entity == null || !entity.isActive()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
-        CompletableFuture<TerminalReadResult> result = terminalSessionService.readAsync(sessionId);
-        entity.touch();
-        return result;
+        return terminalSessionService.readAsync(sessionId);
     }
 
     @Override
@@ -213,7 +211,20 @@ public class SshTerminalService implements ISshTerminalService {
     )
     public void cleanupInactiveTerminals() {
         List<String> cleanedSessionIds = terminalSessionService.cleanupInactiveSessions();
-        cleanedSessionIds.forEach(sessionCache::remove);
+        Set<String> affectedConnectionIds = new HashSet<>();
+        cleanedSessionIds.forEach(sessionId -> {
+            TerminalSessionEntity entity = sessionCache.remove(sessionId);
+            if (entity != null) {
+                affectedConnectionIds.add(entity.getConnectionId());
+            }
+        });
+
+        /* 最后一个终端被定时回收后，同时释放不再承载 Channel 的底层 SSH Session。 */
+        affectedConnectionIds.forEach(connectionId -> {
+            if (!terminalSessionService.hasActiveSessions(connectionId)) {
+                sshSessionService.disconnect(connectionId);
+            }
+        });
         if (!cleanedSessionIds.isEmpty()) {
             log.info("终端定时清理完成 count={}", cleanedSessionIds.size());
         }

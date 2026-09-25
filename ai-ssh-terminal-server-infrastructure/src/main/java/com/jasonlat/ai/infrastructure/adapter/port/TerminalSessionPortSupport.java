@@ -199,7 +199,7 @@ public class TerminalSessionPortSupport {
         /** 用于日志观察 Terminal/reader 在断开前存活了多久。 */
         final long createdAtMillis = System.currentTimeMillis();
 
-        /** 最近一次前端读、写或 resize 的时间。 */
+        /** 最近一次有效交互时间：终端输入、Agent 命令或 resize；Long Poll 读取不计入活动。 */
         final AtomicLong lastActiveAtMillis = new AtomicLong(createdAtMillis);
         /**
          * SSH Shell Channel。
@@ -689,7 +689,7 @@ public class TerminalSessionPortSupport {
         return context;
     }
 
-    /** 刷新前端活动时间；若清理任务已经抢先关闭会话，则拒绝继续操作。 */
+    /** 刷新有效交互时间；若清理任务已经抢先关闭会话，则拒绝继续操作。 */
     protected void touchSession(TerminalSessionContext context) {
         if (!context.touch()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);

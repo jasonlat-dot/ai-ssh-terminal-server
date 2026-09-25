@@ -432,7 +432,6 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     @Override
     public String read(String sessionId) {
         TerminalSessionContext context = getTerminalSession(sessionId);
-        touchSession(context);
         /*
          * ================================
          * 1. 读取当前 buffer
@@ -545,7 +544,6 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     @Override
     public CompletableFuture<TerminalReadResult> readAsync(String sessionId) {
         TerminalSessionContext context = getTerminalSession(sessionId);
-        touchSession(context);
         /*
          * 如果前端错误地同时创建两个 Long Poll，我们使用最新请求替换旧请求。
          */
@@ -729,13 +727,14 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
 
     /**
      * 定时任务调用的统一回收入口。断开的 Channel 和已经退出的 Reader 无需继续保留；
-     * 健康终端只有在超过空闲时间、没有 Long Poll 且没有 Agent 命令时才会被清理。
+     * 健康终端超过空闲时间且没有 Agent 命令时会被清理。Long Poll 只是等待输出，
+     * 不代表用户仍在操作终端，因此不会刷新活动时间，也不会阻止空闲回收。
      *
      * <p>回收条件为以下三项中的任意一项：</p>
      * <ol>
      *     <li>SSH Channel 已断开；</li>
      *     <li>输出 Reader 已退出；</li>
-     *     <li>超过最大空闲时间，并且没有 Long Poll 和 Agent 命令正在使用终端。</li>
+     *     <li>超过最大空闲时间，并且没有 Agent 命令正在执行。</li>
      * </ol>
      *
      * @return 本次实际完成回收的 terminalSessionId，领域层根据这些 ID 同步删除会话缓存
@@ -769,14 +768,8 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 boolean channelDisconnected = !isChannelConnected(context.channel);
                 boolean readerExited = context.readerThread != null && !context.readerRunning.get();
 
-                boolean idle;
-                boolean pendingLongPoll;
-                synchronized (context.eventLock) {
-                    /* 从最近一次前端读、写或 resize 开始计算空闲时长。 */
-                    idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
-                    /* 未完成的 pendingRead 表示前端仍保持着 Long Poll。 */
-                    pendingLongPoll = context.pendingRead != null && !context.pendingRead.isDone();
-                }
+                /* 从最近一次终端输入、Agent 命令或 resize 开始计算空闲时长。 */
+                boolean idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
 
                 boolean activeAgentCommand;
                 synchronized (context.agentCaptureLock) {
@@ -785,20 +778,20 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 }
 
                 /*
-                 * 只有同时满足“已超时、没有前端 Long Poll、没有 Agent 命令”，
-                 * 才能把仍然连接正常的终端判定为无人使用。
+                 * Agent 命令执行期间即使超过空闲时间也不能回收；Long Poll 不属于有效
+                 * 交互，空闲回收会通过 cleanup 主动完成正在等待的 pendingRead。
                  */
-                boolean idleWithoutConsumer = idle && !pendingLongPoll && !activeAgentCommand;
+                boolean idleWithoutActiveCommand = idle && !activeAgentCommand;
 
                 /*
                  * 三个回收条件分别是：
-                 * channelDisconnected || readerExited || idleWithoutConsumer。
+                 * channelDisconnected || readerExited || idleWithoutActiveCommand。
                  *
                  * 这里写的是它的反面：三个条件全部不成立，说明 Channel 正常、
-                 * Reader 正常，并且终端仍有活动或消费者，因此跳过当前会话。
+                 * Reader 正常，并且终端仍有有效交互或 Agent 命令，因此跳过当前会话。
                  * 只要三个条件中任意一个成立，就不会 continue，而会继续执行 cleanup。
                  */
-                if (!channelDisconnected && !readerExited && !idleWithoutConsumer) {
+                if (!channelDisconnected && !readerExited && !idleWithoutActiveCommand) {
                     continue;
                 }
 
