@@ -1,6 +1,7 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
@@ -12,10 +13,12 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SSH 交互式终端的公共状态与并发控制。
@@ -89,6 +92,67 @@ public class TerminalSessionPortSupport {
      */
     protected final Map<String, TerminalSessionContext> terminalSessions = new ConcurrentHashMap<>();
 
+    /** 创建中的预占和已创建的终端都计入配额，防止并发打开绕过上限。 */
+    private final Object quotaLock = new Object();
+    private final Map<String, Integer> sessionsPerUser = new HashMap<>();
+    private final Map<String, Integer> sessionsPerConnection = new HashMap<>();
+    private int reservedSessionCount;
+
+    protected final TerminalSessionProperties terminalProperties;
+
+    protected TerminalSessionPortSupport(TerminalSessionProperties terminalProperties) {
+        this.terminalProperties = terminalProperties;
+    }
+
+    /**
+     * 在创建任何 SSH Channel 之前原子预占三个维度的容量。
+     */
+    protected void reserveSessionQuota(String userId, String connectionId) {
+        synchronized (quotaLock) {
+            int userSessions = sessionsPerUser.getOrDefault(userId, 0);
+            int connectionSessions = sessionsPerConnection.getOrDefault(connectionId, 0);
+            if (reservedSessionCount >= terminalProperties.getMaxTotalSessions()) {
+                throw sessionLimitExceeded("后端活动终端数已达到上限 "
+                        + terminalProperties.getMaxTotalSessions());
+            }
+            if (userSessions >= terminalProperties.getMaxSessionsPerUser()) {
+                throw sessionLimitExceeded("当前用户的终端数已达到上限 "
+                        + terminalProperties.getMaxSessionsPerUser());
+            }
+            if (connectionSessions >= terminalProperties.getMaxSessionsPerConnection()) {
+                throw sessionLimitExceeded("当前 SSH 连接的终端数已达到上限 "
+                        + terminalProperties.getMaxSessionsPerConnection());
+            }
+            reservedSessionCount++;
+            sessionsPerUser.put(userId, userSessions + 1);
+            sessionsPerConnection.put(connectionId, connectionSessions + 1);
+        }
+    }
+
+    /** 创建失败或终端清理完成后释放预占。 */
+    protected void releaseSessionQuota(String userId, String connectionId) {
+        synchronized (quotaLock) {
+            if (reservedSessionCount > 0) {
+                reservedSessionCount--;
+            }
+            decrementCount(sessionsPerUser, userId);
+            decrementCount(sessionsPerConnection, connectionId);
+        }
+    }
+
+    private void decrementCount(Map<String, Integer> counts, String key) {
+        Integer count = counts.get(key);
+        if (count == null || count <= 1) {
+            counts.remove(key);
+        } else {
+            counts.put(key, count - 1);
+        }
+    }
+
+    private AppException sessionLimitExceeded(String message) {
+        return new AppException(ResponseCode.CLIENT_A0502.getCode(), message);
+    }
+
     // ==========================================================
     // Long Polling
     // ==========================================================
@@ -128,8 +192,14 @@ public class TerminalSessionPortSupport {
          */
         final String connectionId;
 
+        /** connectionId 所属的业务用户，用于单用户配额。 */
+        final String userId;
+
         /** 用于日志观察 Terminal/reader 在断开前存活了多久。 */
         final long createdAtMillis = System.currentTimeMillis();
+
+        /** 最近一次前端读、写或 resize 的时间。 */
+        final AtomicLong lastActiveAtMillis = new AtomicLong(createdAtMillis);
         /**
          * SSH Shell Channel。
          */
@@ -158,6 +228,9 @@ public class TerminalSessionPortSupport {
          * Terminal 是否已经主动关闭。
          */
         final AtomicBoolean closed = new AtomicBoolean(false);
+
+        /** 防止空闲回收与刚到达的前端操作交错。 */
+        final Object lifecycleLock = new Object();
 
         /**
          * 是否已经读取到 EOF。
@@ -245,13 +318,24 @@ public class TerminalSessionPortSupport {
         CompletableFuture<TerminalReadResult> pendingRead;
 
 
-        TerminalSessionContext(String sessionId, String connectionId, ChannelShell channel,
+        TerminalSessionContext(String sessionId, String userId, String connectionId, ChannelShell channel,
                                        InputStream inputStream, OutputStream outputStream) {
             this.sessionId = sessionId;
+            this.userId = userId;
             this.connectionId = connectionId;
             this.channel = channel;
             this.inputStream = inputStream;
             this.outputStream = outputStream;
+        }
+
+        boolean touch() {
+            synchronized (lifecycleLock) {
+                if (closed.get()) {
+                    return false;
+                }
+                lastActiveAtMillis.set(System.currentTimeMillis());
+                return true;
+            }
         }
     }
 
@@ -604,6 +688,13 @@ public class TerminalSessionPortSupport {
         return context;
     }
 
+    /** 刷新前端活动时间；若清理任务已经抢先关闭会话，则拒绝继续操作。 */
+    protected void touchSession(TerminalSessionContext context) {
+        if (!context.touch()) {
+            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+        }
+    }
+
     /**
      * 判断 Shell Channel 是否正常连接。
      */
@@ -621,7 +712,7 @@ public class TerminalSessionPortSupport {
      * 例如：
      * closeSession() 即使被重复触发，也不会重复释放资源。
      */
-    protected void cleanup(String sessionId) {
+    protected boolean cleanup(String sessionId) {
         /*
          * remove 是原子操作。
          * 第一个调用 cleanup 的线程可以拿到 context。
@@ -629,15 +720,17 @@ public class TerminalSessionPortSupport {
          * context == null
          * 直接结束。
          */
-        TerminalSessionContext context = terminalSessions.remove(sessionId);
+        TerminalSessionContext context = terminalSessions.get(sessionId);
         if (context == null) {
-            return;
+            return false;
         }
-        /*
-         * 标记 Terminal 已经关闭。
-         * reader 看到 closed=true 后会主动结束。
-         */
-        context.closed.set(true);
+        synchronized (context.lifecycleLock) {
+            if (!terminalSessions.remove(sessionId, context)) {
+                return false;
+            }
+            /* 标记 Terminal 已经关闭；reader 看到 closed=true 后会主动结束。 */
+            context.closed.set(true);
+        }
 
         /*
          * Terminal 被关闭以后，如果前端正有 Long Poll 请求挂起，必须立即结束。
@@ -693,7 +786,9 @@ public class TerminalSessionPortSupport {
             context.bufferOverflowed.set(false);
         }
 
+        releaseSessionQuota(context.userId, context.connectionId);
         log.info("Terminal 会话清理完成 sessionId={} connectionId={}", context.sessionId, context.connectionId);
+        return true;
     }
 
 

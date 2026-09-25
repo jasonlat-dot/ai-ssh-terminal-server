@@ -2,18 +2,23 @@ package com.jasonlat.ai.domain.ssh.service.terminal;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
+import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
+import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * SSH 终端领域服务实现。
@@ -34,6 +39,7 @@ public class SshTerminalService implements ISshTerminalService {
 
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
+    private final ISshConnectionRepository connectionRepository;
 
     /**
      * terminalSessionId -> 终端会话实体。
@@ -42,9 +48,11 @@ public class SshTerminalService implements ISshTerminalService {
     private final Map<String, TerminalSessionEntity> sessionCache = new ConcurrentHashMap<>();
 
     public SshTerminalService(ISshSessionPort sshSessionService,
-                              ITerminalSessionPort terminalSessionPort) {
+                              ITerminalSessionPort terminalSessionPort,
+                              ISshConnectionRepository connectionRepository) {
         this.sshSessionService = sshSessionService;
         this.terminalSessionService = terminalSessionPort;
+        this.connectionRepository = connectionRepository;
     }
 
     @Override
@@ -56,8 +64,17 @@ public class SshTerminalService implements ISshTerminalService {
             throw new IllegalStateException("SSH连接未建立，请先连接");
         }
 
+        SshConnectionEntity connection = connectionRepository.queryConnectionById(connectionId);
+        if (connection == null) {
+            throw new AppException(ResponseCode.CONNECTION_NOT_FOUND);
+        }
+        String userId = connection.getUserId();
+        if (userId == null || userId.isBlank()) {
+            userId = "defaultUser";
+        }
+
         // 2. 每次调用都创建新的 terminalSessionId + ChannelShell；只复用底层 JSch Session。
-        String sessionId = terminalSessionService.openTerminal(connectionId, cols, rows);
+        String sessionId = terminalSessionService.openTerminal(userId, connectionId, cols, rows);
 
         // 3. 创建并缓存会话实体；其他窗口的会话继续保留。
         TerminalSessionEntity entity = TerminalSessionEntity.builder()
@@ -151,7 +168,9 @@ public class SshTerminalService implements ISshTerminalService {
         if (entity == null || !entity.isActive()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
-        return terminalSessionService.read(sessionId);
+        String output = terminalSessionService.read(sessionId);
+        entity.touch();
+        return output;
     }
 
     @Override
@@ -160,7 +179,9 @@ public class SshTerminalService implements ISshTerminalService {
         if (entity == null || !entity.isActive()) {
             throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
         }
-        return terminalSessionService.readAsync(sessionId);
+        CompletableFuture<TerminalReadResult> result = terminalSessionService.readAsync(sessionId);
+        entity.touch();
+        return result;
     }
 
     @Override
@@ -171,6 +192,22 @@ public class SshTerminalService implements ISshTerminalService {
         }
         terminalSessionService.write(sessionId, input);
         entity.touch();
+    }
+
+    /**
+     * 同步清理基础设施资源和领域缓存，避免浏览器异常退出后留下无主终端。
+     */
+    @Scheduled(
+            fixedDelayString = "${ai.ssh.terminal.cleanup-interval-minutes:5}",
+            initialDelayString = "${ai.ssh.terminal.cleanup-interval-minutes:5}",
+            timeUnit = TimeUnit.MINUTES
+    )
+    public void cleanupInactiveTerminals() {
+        List<String> cleanedSessionIds = terminalSessionService.cleanupInactiveSessions();
+        cleanedSessionIds.forEach(sessionCache::remove);
+        if (!cleanedSessionIds.isEmpty()) {
+            log.info("终端定时清理完成 count={}", cleanedSessionIds.size());
+        }
     }
 
 }

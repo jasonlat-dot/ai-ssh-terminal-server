@@ -2,6 +2,7 @@ package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
@@ -9,11 +10,12 @@ import com.jcraft.jsch.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -54,19 +56,30 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
      */
     private static final String READER_ERROR_MESSAGE = "\u001b[0m\r\n" + "\u001b[31m" + "[SSH 终端读取异常，请重新连接]" + "\u001b[0m\r\n";
 
-    @Resource
-    private SshSessionPort sshSessionService;
+    private final SshSessionPort sshSessionService;
+
+    public TerminalSessionPort(SshSessionPort sshSessionService,
+                               TerminalSessionProperties terminalProperties) {
+        super(terminalProperties);
+        this.sshSessionService = sshSessionService;
+    }
 
     /**
      * 在 connectionId 对应的共享 SSH Session 上创建一个全新的 Shell Channel。
      *
+     * @param userId       连接所属用户 ID
      * @param connectionId SSH 连接 ID
      * @param cols         终端列数
      * @param rows         终端行数
      * @return terminal sessionId
      */
     @Override
-    public String openTerminal(String connectionId, int cols, int rows) {
+    public String openTerminal(String userId, String connectionId, int cols, int rows) {
+        if (userId == null || userId.isBlank()) {
+            userId = "defaultUser";
+        }
+        reserveSessionQuota(userId, connectionId);
+        boolean registered = false;
         /*
          * ================================
          * 1. 为当前窗口创建独立终端
@@ -148,12 +161,14 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * 5. 创建 Terminal 上下文
              * ================================
              */
-            TerminalSessionContext context = new TerminalSessionContext(sessionId,connectionId,channel, inputStream,outputStream);
+            TerminalSessionContext context = new TerminalSessionContext(
+                    sessionId, userId, connectionId, channel, inputStream, outputStream);
 
             /*
              * 保存 Terminal session。
              */
             terminalSessions.put(sessionId, context);
+            registered = true;
 
             /*
              * ================================
@@ -184,7 +199,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * 如果 context 已经成功加入 terminalSessions，
              * 使用统一 cleanup 清理。
              */
-            if (terminalSessions.containsKey(sessionId)) {
+            if (registered) {
                 cleanup(sessionId);
             } else {
                 /*
@@ -195,6 +210,10 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 closeQuietly(outputStream);
                 closeQuietly(inputStream);
                 disconnectQuietly(channel);
+                releaseSessionQuota(userId, connectionId);
+            }
+            if (e instanceof AppException appException) {
+                throw appException;
             }
             throw new RuntimeException("打开终端失败: " + e.getMessage(), e);
         }
@@ -237,6 +256,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
         if (command == null || command.isEmpty()) {
             return;
         }
+        touchSession(context);
         /*
          * 同一个 Terminal 可能存在多个 Web 请求同时 write。
          * OutputStream 本身不能保证：
@@ -282,6 +302,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
         if (timeoutSeconds <= 0) {
             throw new IllegalArgumentException("SSH 命令超时时间必须大于 0");
         }
+        touchSession(context);
 
         /*
          * 一个交互式 Shell 只有一条输入流和一条输出流。两个 Agent 命令并发执行时，
@@ -411,6 +432,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     @Override
     public String read(String sessionId) {
         TerminalSessionContext context = getTerminalSession(sessionId);
+        touchSession(context);
         /*
          * ================================
          * 1. 读取当前 buffer
@@ -523,6 +545,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     @Override
     public CompletableFuture<TerminalReadResult> readAsync(String sessionId) {
         TerminalSessionContext context = getTerminalSession(sessionId);
+        touchSession(context);
         /*
          * 如果前端错误地同时创建两个 Long Poll，我们使用最新请求替换旧请求。
          */
@@ -672,6 +695,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             log.warn("非法终端尺寸 sessionId={} cols={} rows={}", sessionId, cols, rows);
             return;
         }
+        touchSession(context);
 
         try {
             context.channel.setPtySize(cols, rows, 0, 0);
@@ -701,6 +725,55 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     public boolean sessionExists(String sessionId) {
         TerminalSessionContext context = terminalSessions.get(sessionId);
         return context != null && !context.closed.get() && isChannelConnected(context.channel);
+    }
+
+    /**
+     * 定时任务调用的统一回收入口。断开的 Channel 和已经退出的 Reader 无需继续保留；
+     * 健康终端只有在超过空闲时间、没有 Long Poll 且没有 Agent 命令时才会被清理。
+     */
+    @Override
+    public List<String> cleanupInactiveSessions() {
+        long now = System.currentTimeMillis();
+        long idleTimeoutMillis = TimeUnit.MINUTES.toMillis(terminalProperties.getIdleTimeoutMinutes());
+        List<String> cleanedSessionIds = new ArrayList<>();
+
+        for (TerminalSessionContext context : terminalSessions.values()) {
+            synchronized (context.lifecycleLock) {
+                if (context.closed.get()) {
+                    continue;
+                }
+                boolean channelDisconnected = !isChannelConnected(context.channel);
+                boolean readerExited = context.readerThread != null && !context.readerRunning.get();
+                boolean idle;
+                boolean pendingLongPoll;
+                synchronized (context.eventLock) {
+                    idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
+                    pendingLongPoll = context.pendingRead != null && !context.pendingRead.isDone();
+                }
+                boolean activeAgentCommand;
+                synchronized (context.agentCaptureLock) {
+                    activeAgentCommand = context.activeAgentCommand != null;
+                }
+
+                boolean idleWithoutConsumer = idle && !pendingLongPoll && !activeAgentCommand;
+                if (!channelDisconnected && !readerExited && !idleWithoutConsumer) {
+                    continue;
+                }
+
+                String reason = channelDisconnected ? "channel-disconnected"
+                        : readerExited ? "reader-exited" : "idle-timeout";
+                if (cleanup(context.sessionId)) {
+                    cleanedSessionIds.add(context.sessionId);
+                    log.info("回收终端会话 sessionId={} connectionId={} userId={} reason={} idleMs={}",
+                            context.sessionId,
+                            context.connectionId,
+                            context.userId,
+                            reason,
+                            now - context.lastActiveAtMillis.get());
+                }
+            }
+        }
+        return cleanedSessionIds;
     }
 
 }

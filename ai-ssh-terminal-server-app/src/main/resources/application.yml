@@ -4,3 +4,13 @@ spring:
     name: ${rootArtifactId}-app
   profiles:
     active: sit
+
+# SIT 会继续加载 application-sit.yml；终端容量配置放在公共配置中，所有环境使用同一组安全默认值。
+ai:
+  ssh:
+    terminal:
+      max-total-sessions: 500
+      max-sessions-per-user: 50
+      max-sessions-per-connection: 8
+      idle-timeout-minutes: 30
+      cleanup-interval-minutes: 5

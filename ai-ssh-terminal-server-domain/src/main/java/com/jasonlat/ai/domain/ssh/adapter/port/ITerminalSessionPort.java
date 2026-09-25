@@ -2,12 +2,13 @@ package com.jasonlat.ai.domain.ssh.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * 终端会话服务接口。
  * <p>
- * 每次 {@link #openTerminal(String, int, int)} 都必须生成新的 terminalSessionId，并在
+ * 每次 {@link #openTerminal(String, String, int, int)} 都必须生成新的 terminalSessionId，并在
  * connectionId 对应的共享 SSH Session 上打开独立 ChannelShell。读写、尺寸、Reader、
  * Long Poll 和关闭操作都以 terminalSessionId 隔离，因此多个窗口连接同一服务器时不会
  * 互相消费输出或关闭对方的终端。
@@ -17,12 +18,13 @@ public interface ITerminalSessionPort {
     /**
      * 在指定底层 SSH 连接上打开一个新的独立终端会话；重复调用不会复用旧终端。
      *
+     * @param userId       连接所属用户 ID
      * @param connectionId SSH连接ID
      * @param cols         终端列数
      * @param rows         终端行数
      * @return 会话ID
      */
-    String openTerminal(String connectionId, int cols, int rows);
+    String openTerminal(String userId, String connectionId, int cols, int rows);
 
     /**
      * 写入命令到终端
@@ -102,5 +104,12 @@ public interface ITerminalSessionPort {
      * @return 是否至少存在一个活动终端
      */
     boolean hasActiveSessions(String connectionId);
+
+    /**
+     * 清理 Channel 已断开、Reader 已退出或超过空闲时间的终端。
+     *
+     * @return 本次实际清理的 terminalSessionId
+     */
+    List<String> cleanupInactiveSessions();
 
 }
