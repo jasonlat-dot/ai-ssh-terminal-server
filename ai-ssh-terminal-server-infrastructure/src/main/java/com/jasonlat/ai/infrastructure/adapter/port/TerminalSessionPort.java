@@ -75,10 +75,14 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
      */
     @Override
     public String openTerminal(String userId, String connectionId, int cols, int rows) {
-        if (userId == null || userId.isBlank()) {
-            userId = "defaultUser";
-        }
-        reserveSessionQuota(userId, connectionId);
+        String effectiveUserId = userId == null || userId.isBlank() ? "defaultUser" : userId;
+        reserveSessionQuota(effectiveUserId, connectionId);
+        return sshSessionService.withConnectionLock(connectionId,
+                () -> openTerminalLocked(effectiveUserId, connectionId, cols, rows));
+    }
+
+    /** 调用方已持有 connectionId 生命周期锁，直到 Channel 注册进 terminalSessions。 */
+    private String openTerminalLocked(String userId, String connectionId, int cols, int rows) {
         boolean registered = false;
         /*
          * ================================
@@ -712,7 +716,13 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     @Override
     public void closeSession(String sessionId) {
         log.info("主动关闭终端会话 sessionId={}", sessionId);
-        cleanup(sessionId);
+        TerminalSessionContext context = terminalSessions.get(sessionId);
+        if (context == null) {
+            return;
+        }
+        sshSessionService.withConnectionLock(context.connectionId, () -> {
+            cleanup(sessionId);
+        });
     }
 
 
@@ -750,69 +760,63 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
         List<String> cleanedSessionIds = new ArrayList<>();
 
         for (TerminalSessionContext context : terminalSessions.values()) {
-            /*
-             * lifecycleLock 同时保护 lastActiveAt 刷新和空闲回收判断。
-             * 防止清理线程刚判断终端空闲，前端读写线程又恰好刷新活动时间，
-             * 最终把正在重新使用的终端误删。
-             */
-            synchronized (context.lifecycleLock) {
-                /* 其他线程已经开始或完成清理时，本轮不再重复处理。 */
-                if (context.closed.get()) {
-                    continue;
-                }
-
+            sshSessionService.withConnectionLock(context.connectionId, () -> {
                 /*
-                 * Channel 断开或 Reader 退出都表示终端已经无法继续正常工作，
-                 * 这两种情况不需要等待 idleTimeout。
+                 * 所有路径统一按 connectionLock -> lifecycleLock 的顺序加锁，避免关闭最后一个
+                 * Channel 与新建 Channel 交错，也避免不同清理入口之间形成锁顺序反转。
                  */
-                boolean channelDisconnected = !isChannelConnected(context.channel);
-                boolean readerExited = context.readerThread != null && !context.readerRunning.get();
+                synchronized (context.lifecycleLock) {
+                    /* 其他线程已经开始或完成清理时，本轮不再重复处理。 */
+                    if (context.closed.get()) {
+                        return;
+                    }
 
-                /* 从最近一次终端输入、Agent 命令或 resize 开始计算空闲时长。 */
-                boolean idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
+                    /*
+                     * Channel 断开或 Reader 退出都表示终端已经无法继续正常工作，
+                     * 这两种情况不需要等待 idleTimeout。
+                     */
+                    boolean channelDisconnected = !isChannelConnected(context.channel);
+                    boolean readerExited = context.readerThread != null && !context.readerRunning.get();
 
-                boolean activeAgentCommand;
-                synchronized (context.agentCaptureLock) {
-                    /* Agent 命令可能长时间运行，执行期间不能按普通空闲终端回收。 */
-                    activeAgentCommand = context.activeAgentCommand != null;
+                    /* 从最近一次终端输入、Agent 命令或 resize 开始计算空闲时长。 */
+                    boolean idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
+
+                    boolean activeAgentCommand;
+                    synchronized (context.agentCaptureLock) {
+                        /* Agent 命令可能长时间运行，执行期间不能按普通空闲终端回收。 */
+                        activeAgentCommand = context.activeAgentCommand != null;
+                    }
+
+                    /*
+                     * Agent 命令执行期间即使超过空闲时间也不能回收；Long Poll 不属于有效
+                     * 交互，空闲回收会通过 cleanup 主动完成正在等待的 pendingRead。
+                     */
+                    boolean idleWithoutActiveCommand = idle && !activeAgentCommand;
+
+                    boolean shouldCleanup = channelDisconnected || readerExited || idleWithoutActiveCommand;
+                    if (!shouldCleanup) {
+                        return;
+                    }
+
+                    /* 多个条件同时成立时，优先记录最直接的故障原因。 */
+                    String reason = channelDisconnected ? "channel-disconnected"
+                            : readerExited ? "reader-exited" : "idle-timeout";
+
+                    /*
+                     * cleanup 使用条件删除保证同一个 sessionId 只被一个线程实际回收。
+                     * 返回 true 才代表本轮确实释放了 Channel、流、Reader、缓冲区和配额。
+                     */
+                    if (cleanup(context.sessionId)) {
+                        cleanedSessionIds.add(context.sessionId);
+                        log.info("回收终端会话 sessionId={} connectionId={} userId={} reason={} idleMs={}",
+                                context.sessionId,
+                                context.connectionId,
+                                context.userId,
+                                reason,
+                                now - context.lastActiveAtMillis.get());
+                    }
                 }
-
-                /*
-                 * Agent 命令执行期间即使超过空闲时间也不能回收；Long Poll 不属于有效
-                 * 交互，空闲回收会通过 cleanup 主动完成正在等待的 pendingRead。
-                 */
-                boolean idleWithoutActiveCommand = idle && !activeAgentCommand;
-
-                /*
-                 * 三个回收条件分别是：
-                 * channelDisconnected || readerExited || idleWithoutActiveCommand。
-                 *
-                 * 这里写的是它的反面：三个条件全部不成立，说明 Channel 正常、
-                 * Reader 正常，并且终端仍有有效交互或 Agent 命令，因此跳过当前会话。
-                 * 只要三个条件中任意一个成立，就不会 continue，而会继续执行 cleanup。
-                 */
-                if (!channelDisconnected && !readerExited && !idleWithoutActiveCommand) {
-                    continue;
-                }
-
-                /* 多个条件同时成立时，优先记录最直接的故障原因。 */
-                String reason = channelDisconnected ? "channel-disconnected"
-                        : readerExited ? "reader-exited" : "idle-timeout";
-
-                /*
-                 * cleanup 使用条件删除保证同一个 sessionId 只被一个线程实际回收。
-                 * 返回 true 才代表本轮确实释放了 Channel、流、Reader、缓冲区和配额。
-                 */
-                if (cleanup(context.sessionId)) {
-                    cleanedSessionIds.add(context.sessionId);
-                    log.info("回收终端会话 sessionId={} connectionId={} userId={} reason={} idleMs={}",
-                            context.sessionId,
-                            context.connectionId,
-                            context.userId,
-                            reason,
-                            now - context.lastActiveAtMillis.get());
-                }
-            }
+            });
         }
         /* 交给领域层同步清除 sessionCache，避免只释放 SSH 资源却留下业务缓存。 */
         return cleanedSessionIds;

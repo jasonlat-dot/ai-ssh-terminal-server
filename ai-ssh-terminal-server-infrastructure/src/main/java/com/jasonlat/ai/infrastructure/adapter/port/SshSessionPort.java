@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * JSch 底层 SSH Session 管理器。
@@ -36,14 +37,45 @@ public class SshSessionPort implements ISshSessionPort {
     /** 连续 5 次心跳无响应才判定连接失效，容忍海外链路的短时抖动。 */
     private static final int SERVER_ALIVE_COUNT_MAX = 5;
 
+    /** 固定数量的分段锁避免为每个历史 connectionId 永久保留一个锁对象。 */
+    private static final int CONNECTION_LOCK_STRIPES = 64;
+
     /**
      * 每个连接配置只保留一条底层 SSH 传输；同一服务器若保存为不同 connectionId，
      * 仍会按不同配置建立独立 Session。
      */
     private final ConcurrentHashMap<String, Session> sshSessions = new ConcurrentHashMap<>(4);
-    /** 同一 connectionId 的建连、复用和断开必须串行，避免两个窗口同时重建连接。 */
-    private final ConcurrentHashMap<String, Object> connectionLocks = new ConcurrentHashMap<>(4);
-    private final JSch jsch = new JSch();
+    /** 相同 connectionId 总会映射到同一个固定锁；锁数量不会随历史连接数增长。 */
+    private final Object[] connectionLocks = createConnectionLocks();
+
+    private static Object[] createConnectionLocks() {
+        Object[] locks = new Object[CONNECTION_LOCK_STRIPES];
+        for (int i = 0; i < locks.length; i++) {
+            locks[i] = new Object();
+        }
+        return locks;
+    }
+
+    private Object connectionLock(String connectionId) {
+        if (connectionId == null || connectionId.isBlank()) {
+            throw new IllegalArgumentException("connectionId不能为空");
+        }
+        return connectionLocks[(connectionId.hashCode() & Integer.MAX_VALUE) % connectionLocks.length];
+    }
+
+    @Override
+    public <T> T withConnectionLock(String connectionId, Supplier<T> action) {
+        synchronized (connectionLock(connectionId)) {
+            return action.get();
+        }
+    }
+
+    @Override
+    public void withConnectionLock(String connectionId, Runnable action) {
+        synchronized (connectionLock(connectionId)) {
+            action.run();
+        }
+    }
 
 
     /**
@@ -60,8 +92,7 @@ public class SshSessionPort implements ISshSessionPort {
      */
     @Override
     public boolean connect(String connectionId, String host, int port, String username, String password, String privateKey) {
-        Object connectionLock = connectionLocks.computeIfAbsent(connectionId, ignored -> new Object());
-        synchronized (connectionLock) {
+        return withConnectionLock(connectionId, () -> {
             Session previous = sshSessions.get(connectionId);
             // 健康 Session 上可以继续 openChannel("shell")，不能因新窗口接入而替换它。
             if (previous != null && previous.isConnected()) {
@@ -85,7 +116,12 @@ public class SshSessionPort implements ISshSessionPort {
             closeSession(connectionId, previous);
             Session session = null;
             try {
-                session = jsch.getSession(username, host, port);
+                /*
+                 * 每条底层 SSH Session 使用独立 JSch/IdentityRepository。Session 断开并从
+                 * sshSessions 删除后，私钥 Identity 会随该对象图一起回收，不会沉积在全局实例中。
+                 */
+                JSch connectionJsch = new JSch();
+                session = connectionJsch.getSession(username, host, port);
             /*
              * SSH 原生机制：第一次连接服务器，服务器会返回 host‑key（主机公钥指纹）。
              * - `StrictHostKeyChecking`：主机密钥严格校验策略
@@ -100,7 +136,7 @@ public class SshSessionPort implements ISshSessionPort {
 
             if (StringUtils.isNotBlank(privateKey)) {
                 // 私钥验证
-                jsch.addIdentity(connectionId, privateKey.getBytes(StandardCharsets.UTF_8), null, null);
+                connectionJsch.addIdentity(connectionId, privateKey.getBytes(StandardCharsets.UTF_8), null, null);
             } else if (StringUtils.isNotBlank(password)) {
                 // 密码验证
                 session.setPassword(password);
@@ -144,7 +180,7 @@ public class SshSessionPort implements ISshSessionPort {
                         e);
                 return false;
             }
-        }
+        });
     }
 
     /**
@@ -154,10 +190,7 @@ public class SshSessionPort implements ISshSessionPort {
      */
     @Override
     public void disconnect(String connectionId) {
-        Object connectionLock = connectionLocks.computeIfAbsent(connectionId, ignored -> new Object());
-        synchronized (connectionLock) {
-            closeSession(connectionId, sshSessions.get(connectionId));
-        }
+        withConnectionLock(connectionId, () -> closeSession(connectionId, sshSessions.get(connectionId)));
     }
 
     /**

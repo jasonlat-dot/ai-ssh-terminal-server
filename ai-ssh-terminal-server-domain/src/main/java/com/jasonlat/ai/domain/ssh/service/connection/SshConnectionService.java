@@ -115,14 +115,16 @@ public class SshConnectionService implements ISshConnectionService {
         if (connectionId == null || connectionId.isBlank()) {
             throw new AppException(ResponseCode.ILLEGAL_PARAMETER);
         }
-        // 删除连接配置会使所有窗口失去归属信息，因此仍有任意活动终端时拒绝删除。
-        if (terminalSessionPort.hasActiveSessions(connectionId)) {
-            throw new IllegalArgumentException("该连接仍被其他窗口使用，请先关闭所有终端窗口");
-        }
-        // 删除配置前清理可能由连接测试或终端打开失败遗留的底层 SSH Session。
-        sshSessionPort.disconnect(connectionId);
-        repository.deleteConnection(connectionId);
-        log.info("SSH连接删除成功 connectionId={}", connectionId);
+        sshSessionPort.withConnectionLock(connectionId, () -> {
+            // 删除连接配置会使所有窗口失去归属信息，因此仍有任意活动终端时拒绝删除。
+            if (terminalSessionPort.hasActiveSessions(connectionId)) {
+                throw new IllegalArgumentException("该连接仍被其他窗口使用，请先关闭所有终端窗口");
+            }
+            // 删除配置前清理可能由连接测试或终端打开失败遗留的底层 SSH Session。
+            sshSessionPort.disconnect(connectionId);
+            repository.deleteConnection(connectionId);
+            log.info("SSH连接删除成功 connectionId={}", connectionId);
+        });
 
     }
 
@@ -165,21 +167,22 @@ public class SshConnectionService implements ISshConnectionService {
      */
     @Override
     public boolean connect(String connectionId) {
-        // 1. 查询连接信息
-        SshConnectionEntity entity = repository.queryConnectionById(connectionId);
-        if (entity == null) {
-            throw new IllegalArgumentException("连接不存在");
-        }
+        return sshSessionPort.withConnectionLock(connectionId, () -> {
+            // 查询配置和建连使用同一个生命周期锁，避免配置删除后又建立孤立 Session。
+            SshConnectionEntity entity = repository.queryConnectionById(connectionId);
+            if (entity == null) {
+                throw new IllegalArgumentException("连接不存在");
+            }
 
-        // 2. 建立 SSH 连接
-        return sshSessionPort.connect(
-                connectionId,
-                entity.getHost(),
-                entity.getPort(),
-                entity.getUsername(),
-                entity.getPassword(),
-                entity.getPrivateKey()
-        );
+            return sshSessionPort.connect(
+                    connectionId,
+                    entity.getHost(),
+                    entity.getPort(),
+                    entity.getUsername(),
+                    entity.getPassword(),
+                    entity.getPrivateKey()
+            );
+        });
     }
 
 }

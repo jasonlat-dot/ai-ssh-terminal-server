@@ -60,7 +60,12 @@ public class SshTerminalService implements ISshTerminalService {
     @Override
     public TerminalSessionEntity openTerminal(String connectionId, int cols, int rows) {
         log.info("打开终端会话 connectionId={} cols={} rows={}", connectionId, cols, rows);
+        return sshSessionService.withConnectionLock(connectionId,
+                () -> openTerminalLocked(connectionId, cols, rows));
+    }
 
+    /** 配置校验、Channel 创建和领域缓存注册共享同一个 connectionId 生命周期锁。 */
+    private TerminalSessionEntity openTerminalLocked(String connectionId, int cols, int rows) {
         // 1. 检查SSH连接是否已建立
         if (!sshSessionService.isConnected(connectionId)) {
             throw new IllegalStateException("SSH连接未建立，请先连接");
@@ -150,17 +155,24 @@ public class SshTerminalService implements ISshTerminalService {
          * 先关闭当前页签自己的 ChannelShell，再检查共享的底层 SSH Session 是否仍被
          * 其他页签使用。这样前端只需调用一次 close，无需再额外调用 disconnect。
          */
-        TerminalSessionEntity entity = sessionCache.remove(sessionId);
-        if (entity != null) {
+        TerminalSessionEntity entity = sessionCache.get(sessionId);
+        if (entity == null) {
+            return;
+        }
+
+        String connectionId = entity.getConnectionId();
+        sshSessionService.withConnectionLock(connectionId, () -> {
+            if (!sessionCache.remove(sessionId, entity)) {
+                return;
+            }
             terminalSessionService.closeSession(sessionId);
             log.info("终端会话已关闭 sessionId={}", sessionId);
 
-            String connectionId = entity.getConnectionId();
             if (!terminalSessionService.hasActiveSessions(connectionId)) {
                 sshSessionService.disconnect(connectionId);
                 log.info("连接已无活动终端，释放底层SSH连接 connectionId={}", connectionId);
             }
-        }
+        });
     }
 
     @Override
@@ -221,9 +233,11 @@ public class SshTerminalService implements ISshTerminalService {
 
         /* 最后一个终端被定时回收后，同时释放不再承载 Channel 的底层 SSH Session。 */
         affectedConnectionIds.forEach(connectionId -> {
-            if (!terminalSessionService.hasActiveSessions(connectionId)) {
-                sshSessionService.disconnect(connectionId);
-            }
+            sshSessionService.withConnectionLock(connectionId, () -> {
+                if (!terminalSessionService.hasActiveSessions(connectionId)) {
+                    sshSessionService.disconnect(connectionId);
+                }
+            });
         });
         if (!cleanedSessionIds.isEmpty()) {
             log.info("终端定时清理完成 count={}", cleanedSessionIds.size());

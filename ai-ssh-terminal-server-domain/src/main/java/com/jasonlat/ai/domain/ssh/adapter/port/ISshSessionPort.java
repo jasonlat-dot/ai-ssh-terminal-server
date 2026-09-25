@@ -2,6 +2,8 @@ package com.jasonlat.ai.domain.ssh.adapter.port;
 
 import com.jcraft.jsch.Session;
 
+import java.util.function.Supplier;
+
 /**
  * SSH 底层传输会话端口。
  * <p>
@@ -14,6 +16,15 @@ import com.jcraft.jsch.Session;
  * 2026-09-11  21:03
  */
 public interface ISshSessionPort {
+
+    /**
+     * 在 connectionId 对应的生命周期锁内执行操作。
+     * 同一连接的建连、创建 Channel、关闭最后一个 Channel 和断开必须串行。
+     */
+    <T> T withConnectionLock(String connectionId, Supplier<T> action);
+
+    /** 在 connectionId 对应的生命周期锁内执行无返回值操作。 */
+    void withConnectionLock(String connectionId, Runnable action);
 
     /**
      * 建立或复用 SSH 连接。同一 connectionId 已存在健康 Session 时应直接复用，
