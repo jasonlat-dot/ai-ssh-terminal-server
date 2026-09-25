@@ -48,9 +48,36 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     @Resource
     private ObjectMapper objectMapper;
 
-    /** 同一个会话串行执行，不同会话可以并发，避免业务历史相互覆盖。 */
-    private final ConcurrentHashMap<String, ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
+    /** 只保留正在执行或排队的会话锁，最后一个使用者离开后自动删除。 */
+    private final ConcurrentHashMap<String, SessionLock> sessionLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Set<ActiveStream>> activeStreams = new ConcurrentHashMap<>();
+
+    private static final class SessionLock {
+        private final ReentrantLock lock = new ReentrantLock();
+        /** 只在 sessionLocks.compute 中读写，包括持锁线程和排队线程。 */
+        private int references;
+    }
+
+    private SessionLock retainSessionLock(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId不能为空");
+        }
+        return sessionLocks.compute(sessionId, (ignored, current) -> {
+            SessionLock retained = current == null ? new SessionLock() : current;
+            retained.references++;
+            return retained;
+        });
+    }
+
+    private void releaseSessionLock(String sessionId, SessionLock retained) {
+        sessionLocks.computeIfPresent(sessionId, (ignored, current) -> {
+            if (current != retained) {
+                return current;
+            }
+            current.references--;
+            return current.references == 0 ? null : current;
+        });
+    }
 
     private record ActiveStream(String agentId, String userId, Runnable cancel, ResponseBodyEmitter emitter) {
     }
@@ -205,7 +232,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         String sessionId = requestDTO.getSessionId();
         long executionStartNanos = System.nanoTime();
         // saveExecutionState 采用整份会话状态回写，同一 session 必须串行，避免后完成的旧快照覆盖新历史。
-        ReentrantLock lock = sessionLocks.computeIfAbsent(sessionId, ignored -> new ReentrantLock());
+        SessionLock retainedLock = retainSessionLock(sessionId);
+        ReentrantLock lock = retainedLock.lock;
         long lockWaitStartNanos = System.nanoTime();
         boolean listenerRegistered = false;
         try {
@@ -250,14 +278,22 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                 log.debug("ReAct链路-SSE 已关闭，忽略重复异常完成 | sessionId:{}", sessionId);
             }
         } finally {
-            unregisterStream(sessionId, activeStream);
-            if (listenerRegistered) {
-                agentEventPublisher.unregisterSession(sessionId);
-            }
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
-                log.debug("ReAct链路-释放会话锁 | sessionId:{} | queuedThreads:{}",
-                        sessionId, lock.getQueueLength());
+            try {
+                unregisterStream(sessionId, activeStream);
+                if (listenerRegistered) {
+                    agentEventPublisher.unregisterSession(sessionId);
+                }
+            } finally {
+                try {
+                    if (lock.isHeldByCurrentThread()) {
+                        lock.unlock();
+                        log.debug("ReAct链路-释放会话锁 | sessionId:{} | queuedThreads:{}",
+                                sessionId, lock.getQueueLength());
+                    }
+                } finally {
+                    /* 排队期间被中断的线程也必须释放引用；最后一个引用负责从 Map 删除锁。 */
+                    releaseSessionLock(sessionId, retainedLock);
+                }
             }
         }
     }
