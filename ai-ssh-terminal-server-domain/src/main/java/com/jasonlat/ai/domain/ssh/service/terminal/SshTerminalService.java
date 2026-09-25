@@ -189,6 +189,7 @@ public class SshTerminalService implements ISshTerminalService {
 
     @Override
     public TerminalTermination getTerminalTermination(String sessionId) {
+        // 终止记录属于运行时信息，不进入连接配置表，仅用于短时间内恢复前端状态。
         return terminalSessionService.getTermination(sessionId);
     }
 
@@ -205,6 +206,11 @@ public class SshTerminalService implements ISshTerminalService {
     public CompletableFuture<TerminalReadResult> readTerminalAsync(String sessionId) {
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
+            /*
+             * 页面断网期间，终端可能已经被空闲任务回收。优先返回保留的真实原因；记录
+             * 已过期或后端刚重启时返回 SESSION_NOT_FOUND。两种情况都通过正常响应交给
+             * 前端状态机处理，避免把策略关闭误认为普通 HTTP 网络故障。
+             */
             TerminalTermination termination = terminalSessionService.getTermination(sessionId);
             TerminalDisconnectReason reason = termination == null
                     ? TerminalDisconnectReason.SESSION_NOT_FOUND : termination.getReason();

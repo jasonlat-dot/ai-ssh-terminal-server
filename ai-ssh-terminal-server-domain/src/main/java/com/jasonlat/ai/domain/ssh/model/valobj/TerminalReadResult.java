@@ -138,6 +138,10 @@ public class TerminalReadResult {
 
     /** 创建带明确原因的终端断开响应。 */
     public static TerminalReadResult disconnected(boolean eof, TerminalDisconnectReason reason) {
+        /*
+         * reason 为空通常意味着调用方无法确认旧会话为何消失。此时按不可自动重连的
+         * SESSION_NOT_FOUND 处理，避免未知状态触发前端无限重建终端。
+         */
         TerminalDisconnectReason actualReason = reason == null
                 ? TerminalDisconnectReason.SESSION_NOT_FOUND : reason;
         return TerminalReadResult.builder()
@@ -148,6 +152,7 @@ public class TerminalReadResult {
                 .eof(eof)
                 .timeout(false)
                 .bufferOverflow(false)
+                // 自动重连策略由后端原因统一给出，前端无需重复推断。
                 .disconnectReason(actualReason)
                 .reconnectAllowed(actualReason.isReconnectAllowed())
                 .build();

@@ -186,7 +186,8 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
 
     /**
      * 页签级连接状态查询。connectionId 对应的底层 SSH Session 可以被多个页签复用，
-     * 因此页面只能用自己持有的 terminalSessionId 判断是否已连接。
+     * 因此页面只能用自己持有的 terminalSessionId 判断是否已连接。会话已结束时同时
+     * 返回终止原因，让页面决定自动重连还是等待用户手动操作。
      */
     @Override
     @RequestMapping(value = "connected", method = RequestMethod.GET)
@@ -196,6 +197,10 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
         boolean connected = sshTerminalDomainService.sessionExists(sessionId);
         TerminalTermination termination = connected
                 ? null : sshTerminalDomainService.getTerminalTermination(sessionId);
+        /*
+         * 原因优先级：短期终止记录最准确；领域实体仍在但 Channel 已断开时按网络断开；
+         * 两者都不存在则说明 sessionId 已失效或终止记录已经过期。
+         */
         TerminalDisconnectReason disconnectReason = connected ? null
                 : termination != null ? termination.getReason()
                 : entity != null ? TerminalDisconnectReason.CHANNEL_DISCONNECTED
@@ -237,6 +242,7 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                 response.setEof(readResult.isEof());
                 response.setTimeout(readResult.isTimeout());
                 response.setBufferOverflow(readResult.isBufferOverflow());
+                // status 描述本次读取结果，disconnectReason/reconnectAllowed 描述后续处理策略。
                 response.setDisconnectReason(readResult.getDisconnectReason() == null
                         ? null : readResult.getDisconnectReason().name());
                 response.setReconnectAllowed(readResult.isReconnectAllowed());

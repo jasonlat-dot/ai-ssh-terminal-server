@@ -110,6 +110,10 @@ public class TerminalSessionPortSupport {
         this.terminalProperties = terminalProperties;
     }
 
+    /**
+     * 查询尚未过期的终止记录。这里采用惰性过期：读取时发现超时就立即删除，避免为少量
+     * 临时状态再创建一个独立定时任务。
+     */
     public TerminalTermination getTermination(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
@@ -127,6 +131,10 @@ public class TerminalSessionPortSupport {
         }
     }
 
+    /**
+     * 保存终端最后一次结束原因。记录同时受 TTL 和最大条数限制，只覆盖前端短暂断网后
+     * 恢复状态的时间窗口，不会随着历史 sessionId 数量持续增长。
+     */
     private void rememberTermination(TerminalSessionContext context, TerminalDisconnectReason reason) {
         long now = System.currentTimeMillis();
         TerminalDisconnectReason actualReason = reason == null
@@ -139,9 +147,11 @@ public class TerminalSessionPortSupport {
                 .build();
 
         synchronized (terminationLock) {
+            // 每次写入顺带移除过期项，确保低流量场景下缓存也能逐步收缩。
             terminatedSessions.entrySet().removeIf(entry -> isTerminationExpired(entry.getValue(), now));
             if (!terminatedSessions.containsKey(context.sessionId)
                     && terminatedSessions.size() >= terminalProperties.getMaxTerminationRecords()) {
+                // 达到硬上限时淘汰最旧记录，为本次终止原因留出固定容量。
                 String oldestSessionId = null;
                 long oldestTimestamp = Long.MAX_VALUE;
                 for (TerminalTermination value : terminatedSessions.values()) {
@@ -796,6 +806,10 @@ public class TerminalSessionPortSupport {
             context.closed.set(true);
         }
 
+        /*
+         * 先记录原因，再完成挂起的 Long Poll。即使前端收到响应后立即查询 /connected，
+         * 也能读取到与本次 DISCONNECTED 一致的原因。
+         */
         rememberTermination(context, reason);
 
         /*
