@@ -144,11 +144,20 @@ public class SshTerminalService implements ISshTerminalService {
     public void closeTerminal(String sessionId) {
         log.info("关闭终端会话 sessionId={}", sessionId);
 
-        // 只删除当前窗口的终端实体和 ChannelShell；其他同 connectionId 会话不会被遍历或关闭。
+        /*
+         * 先关闭当前页签自己的 ChannelShell，再检查共享的底层 SSH Session 是否仍被
+         * 其他页签使用。这样前端只需调用一次 close，无需再额外调用 disconnect。
+         */
         TerminalSessionEntity entity = sessionCache.remove(sessionId);
         if (entity != null) {
             terminalSessionService.closeSession(sessionId);
             log.info("终端会话已关闭 sessionId={}", sessionId);
+
+            String connectionId = entity.getConnectionId();
+            if (!terminalSessionService.hasActiveSessions(connectionId)) {
+                sshSessionService.disconnect(connectionId);
+                log.info("连接已无活动终端，释放底层SSH连接 connectionId={}", connectionId);
+            }
         }
     }
 
