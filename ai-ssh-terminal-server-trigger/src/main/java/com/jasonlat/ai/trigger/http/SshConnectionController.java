@@ -4,7 +4,6 @@ package com.jasonlat.ai.trigger.http;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.AuthTypeEnum;
-import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
 import com.jasonlat.ai.domain.ssh.service.ISshConnectionService;
 import com.jasonlat.ai.trigger.api.dto.SshConnectionRequestDTO;
 import com.jasonlat.ai.trigger.api.dto.SshConnectionResponseDTO;
@@ -158,18 +157,8 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             log.info("查询SSH连接列表 userId={}", userId);
             List<SshConnectionEntity> entities = sshConnectionDomainService.getConnectionList(userId);
 
-            // 同步实际的连接状态
             List<SshConnectionResponseDTO> dtoList = entities.stream()
-                    .map(entity -> {
-                        // 检查实际的 SSH 连接状态
-                        boolean actuallyConnected = sshConnectionDomainService.isConnected(entity.getConnectionId());
-                        if (actuallyConnected && entity.getStatus() != ConnectionStatusEnum.CONNECTED) {
-                            entity.setStatus(ConnectionStatusEnum.CONNECTED);
-                        } else if (!actuallyConnected && entity.getStatus() == ConnectionStatusEnum.CONNECTED) {
-                            entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
-                        }
-                        return toResponseDTO(entity);
-                    })
+                    .map(this::toResponseDTO)
                     .collect(Collectors.toList());
 
             return Response.<List<SshConnectionResponseDTO>>builder()
@@ -273,7 +262,6 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
                 .port(entity.getPort())
                 .username(entity.getUsername())
                 .authType(entity.getAuthType() != null ? entity.getAuthType().getCode() : null)
-                .status(entity.getStatus() != null ? entity.getStatus().getCode() : null)
                 .encrypted(entity.getEncrypted())
                 .userId(entity.getUserId())
                 .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)

@@ -9,8 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -208,9 +206,4 @@ public class SshSessionPort implements ISshSessionPort {
         return sshSessions.get(connectionId);
     }
 
-    @Override
-    public Set<String> getActiveConnectionIds() {
-        // 返回快照，避免遍历期间并发修改
-        return new HashSet<>(sshSessions.keySet());
-    }
 }

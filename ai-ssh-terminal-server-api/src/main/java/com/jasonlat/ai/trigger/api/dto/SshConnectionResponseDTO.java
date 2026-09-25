@@ -32,9 +32,6 @@ public class SshConnectionResponseDTO {
     /** 认证类型: 1-密码, 2-私钥 */
     private Integer authType;
 
-    /** 连接状态: 0-未连接, 1-已连接, 2-连接中, 3-连接失败 */
-    private Integer status;
-
     /** 是否加密 */
     private Integer encrypted;
 

@@ -730,38 +730,86 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     /**
      * 定时任务调用的统一回收入口。断开的 Channel 和已经退出的 Reader 无需继续保留；
      * 健康终端只有在超过空闲时间、没有 Long Poll 且没有 Agent 命令时才会被清理。
+     *
+     * <p>回收条件为以下三项中的任意一项：</p>
+     * <ol>
+     *     <li>SSH Channel 已断开；</li>
+     *     <li>输出 Reader 已退出；</li>
+     *     <li>超过最大空闲时间，并且没有 Long Poll 和 Agent 命令正在使用终端。</li>
+     * </ol>
+     *
+     * @return 本次实际完成回收的 terminalSessionId，领域层根据这些 ID 同步删除会话缓存
      */
     @Override
     public List<String> cleanupInactiveSessions() {
+        /*
+         * 一轮扫描统一使用同一个当前时间，避免遍历大量会话时，每个会话使用不同的
+         * 时间基准。配置中的分钟数只在这里转换一次为毫秒。
+         */
         long now = System.currentTimeMillis();
         long idleTimeoutMillis = TimeUnit.MINUTES.toMillis(terminalProperties.getIdleTimeoutMinutes());
         List<String> cleanedSessionIds = new ArrayList<>();
 
         for (TerminalSessionContext context : terminalSessions.values()) {
+            /*
+             * lifecycleLock 同时保护 lastActiveAt 刷新和空闲回收判断。
+             * 防止清理线程刚判断终端空闲，前端读写线程又恰好刷新活动时间，
+             * 最终把正在重新使用的终端误删。
+             */
             synchronized (context.lifecycleLock) {
+                /* 其他线程已经开始或完成清理时，本轮不再重复处理。 */
                 if (context.closed.get()) {
                     continue;
                 }
+
+                /*
+                 * Channel 断开或 Reader 退出都表示终端已经无法继续正常工作，
+                 * 这两种情况不需要等待 idleTimeout。
+                 */
                 boolean channelDisconnected = !isChannelConnected(context.channel);
                 boolean readerExited = context.readerThread != null && !context.readerRunning.get();
+
                 boolean idle;
                 boolean pendingLongPoll;
                 synchronized (context.eventLock) {
+                    /* 从最近一次前端读、写或 resize 开始计算空闲时长。 */
                     idle = now - context.lastActiveAtMillis.get() >= idleTimeoutMillis;
+                    /* 未完成的 pendingRead 表示前端仍保持着 Long Poll。 */
                     pendingLongPoll = context.pendingRead != null && !context.pendingRead.isDone();
                 }
+
                 boolean activeAgentCommand;
                 synchronized (context.agentCaptureLock) {
+                    /* Agent 命令可能长时间运行，执行期间不能按普通空闲终端回收。 */
                     activeAgentCommand = context.activeAgentCommand != null;
                 }
 
+                /*
+                 * 只有同时满足“已超时、没有前端 Long Poll、没有 Agent 命令”，
+                 * 才能把仍然连接正常的终端判定为无人使用。
+                 */
                 boolean idleWithoutConsumer = idle && !pendingLongPoll && !activeAgentCommand;
+
+                /*
+                 * 三个回收条件分别是：
+                 * channelDisconnected || readerExited || idleWithoutConsumer。
+                 *
+                 * 这里写的是它的反面：三个条件全部不成立，说明 Channel 正常、
+                 * Reader 正常，并且终端仍有活动或消费者，因此跳过当前会话。
+                 * 只要三个条件中任意一个成立，就不会 continue，而会继续执行 cleanup。
+                 */
                 if (!channelDisconnected && !readerExited && !idleWithoutConsumer) {
                     continue;
                 }
 
+                /* 多个条件同时成立时，优先记录最直接的故障原因。 */
                 String reason = channelDisconnected ? "channel-disconnected"
                         : readerExited ? "reader-exited" : "idle-timeout";
+
+                /*
+                 * cleanup 使用条件删除保证同一个 sessionId 只被一个线程实际回收。
+                 * 返回 true 才代表本轮确实释放了 Channel、流、Reader、缓冲区和配额。
+                 */
                 if (cleanup(context.sessionId)) {
                     cleanedSessionIds.add(context.sessionId);
                     log.info("回收终端会话 sessionId={} connectionId={} userId={} reason={} idleMs={}",
@@ -773,6 +821,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 }
             }
         }
+        /* 交给领域层同步清除 sessionCache，避免只释放 SSH 资源却留下业务缓存。 */
         return cleanedSessionIds;
     }
 

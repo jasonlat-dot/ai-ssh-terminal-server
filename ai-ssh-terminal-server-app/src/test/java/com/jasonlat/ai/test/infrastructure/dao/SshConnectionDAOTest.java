@@ -39,7 +39,6 @@ public class SshConnectionDAOTest {
                 .password("testPassword123")
                 .privateKey(null)
                 .encrypted(1)
-                .status(0)
                 .userId("default")
                 .build();
 
@@ -68,7 +67,6 @@ public class SshConnectionDAOTest {
                 .password("testPassword123")
                 .privateKey(null)
                 .encrypted(1)
-                .status(0)
                 .userId("default")
                 .build();
         sshConnectionDAO.insert(insertPo);
@@ -84,7 +82,6 @@ public class SshConnectionDAOTest {
                 .password(null)
                 .privateKey("-----BEGIN RSA PRIVATE KEY-----")
                 .encrypted(1)
-                .status(1)
                 .userId("default")
                 .build();
         sshConnectionDAO.update(updatePo);
@@ -97,8 +94,6 @@ public class SshConnectionDAOTest {
         Assert.assertEquals("端口应已更新", Integer.valueOf(2222), queryResult.getPort());
         Assert.assertEquals("用户名应已更新", "updateduser", queryResult.getUsername());
         Assert.assertEquals("认证类型应已更新", Integer.valueOf(2), queryResult.getAuthType());
-        Assert.assertEquals("状态应已更新", Integer.valueOf(1), queryResult.getStatus());
-
         log.info("测试结果：更新成功");
     }
 
@@ -138,7 +133,6 @@ public class SshConnectionDAOTest {
                 .password("testPassword123")
                 .privateKey(null)
                 .encrypted(1)
-                .status(0)
                 .userId("default")
                 .build();
         sshConnectionDAO.insert(insertPo);

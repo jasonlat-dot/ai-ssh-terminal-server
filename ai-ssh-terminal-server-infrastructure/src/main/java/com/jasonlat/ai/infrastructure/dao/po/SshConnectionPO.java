@@ -38,8 +38,6 @@ public class SshConnectionPO {
     private String privateKey;
     /** 是否加密:0-否,1-是 */
     private Integer encrypted;
-    /** 连接状态:0-未连接,1-已连接,2-连接中,3-连接失败 */
-    private Integer status;
     /** 用户ID */
     private String userId;
     /** 创建时间 */

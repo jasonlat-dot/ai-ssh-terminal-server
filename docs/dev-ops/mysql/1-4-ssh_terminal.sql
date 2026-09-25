@@ -135,7 +135,6 @@ CREATE TABLE `ssh_connection` (
                                   `password` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '密码(加密存储)',
                                   `private_key` longtext COLLATE utf8mb4_unicode_ci COMMENT '私钥内容(加密存储)',
                                   `encrypted` tinyint NOT NULL DEFAULT '1' COMMENT '是否加密:0-否,1-是',
-                                  `status` tinyint NOT NULL DEFAULT '0' COMMENT '连接状态:0-未连接,1-已连接,2-连接中,3-连接失败',
                                   `user_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '用户ID',
                                   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -143,17 +142,16 @@ CREATE TABLE `ssh_connection` (
                                   PRIMARY KEY (`id`),
                                   UNIQUE KEY `uk_connection_id` (`connection_id`),
                                   KEY `idx_user_id` (`user_id`),
-                                  KEY `idx_status` (`status`),
                                   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='SSH连接配置表';
 
 LOCK TABLES `ssh_connection` WRITE;
 /*!40000 ALTER TABLE `ssh_connection` DISABLE KEYS */;
 
-INSERT INTO `ssh_connection` (`id`, `connection_id`, `connection_name`, `host`, `port`, `username`, `auth_type`, `password`, `private_key`, `encrypted`, `status`, `user_id`, `created_at`, `updated_at`, `deleted`)
+INSERT INTO `ssh_connection` (`id`, `connection_id`, `connection_name`, `host`, `port`, `username`, `auth_type`, `password`, `private_key`, `encrypted`, `user_id`, `created_at`, `updated_at`, `deleted`)
 VALUES
-    (2,'0eb185a6c2964c50be6a8a4bf917c2c9','腾讯云服务器-测试机','140.143.183.225',22,'ubuntu',1,'nrF53G0MixGWLTWW9oWZTFkHY+OiH/7tlxkHNPyTKOXDVgzDKkKqJShf',NULL,1,1,'default','2026-05-02 11:32:04','2026-05-15 07:24:14',0),
-    (4,'6779824e51c0424fb724a94df114104c','115.190.107.206','115.190.107.206',22,'root',1,'myUlBgwE+R6cmF0ToRfgtGimBMijQ/WPhqOC+9q1th21OepJS9o=',NULL,1,1,'default','2026-05-02 21:19:11','2026-05-13 08:41:19',0);
+    (2,'0eb185a6c2964c50be6a8a4bf917c2c9','腾讯云服务器-测试机','140.143.183.225',22,'ubuntu',1,'nrF53G0MixGWLTWW9oWZTFkHY+OiH/7tlxkHNPyTKOXDVgzDKkKqJShf',NULL,1,'default','2026-05-02 11:32:04','2026-05-15 07:24:14',0),
+    (4,'6779824e51c0424fb724a94df114104c','115.190.107.206','115.190.107.206',22,'root',1,'myUlBgwE+R6cmF0ToRfgtGimBMijQ/WPhqOC+9q1th21OepJS9o=',NULL,1,'default','2026-05-02 21:19:11','2026-05-13 08:41:19',0);
 
 /*!40000 ALTER TABLE `ssh_connection` ENABLE KEYS */;
 UNLOCK TABLES;

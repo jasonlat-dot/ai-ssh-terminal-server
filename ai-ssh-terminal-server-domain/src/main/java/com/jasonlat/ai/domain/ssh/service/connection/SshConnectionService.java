@@ -5,7 +5,6 @@ import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
-import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
 import com.jasonlat.ai.domain.ssh.service.ISshConnectionService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -171,7 +170,7 @@ public class SshConnectionService implements ISshConnectionService {
         }
 
         // 2. 建立 SSH 连接
-        boolean success = sshSessionPort.connect(
+        return sshSessionPort.connect(
                 connectionId,
                 entity.getHost(),
                 entity.getPort(),
@@ -179,12 +178,6 @@ public class SshConnectionService implements ISshConnectionService {
                 entity.getPassword(),
                 entity.getPrivateKey()
         );
-
-        // 3. 更新连接状态
-        entity.setStatus(success ? ConnectionStatusEnum.CONNECTED : ConnectionStatusEnum.FAILED);
-        repository.updateConnection(entity);
-
-        return success;
     }
 
     /**
@@ -206,47 +199,8 @@ public class SshConnectionService implements ISshConnectionService {
             log.info("SSH连接仍被其他终端使用，跳过底层断开 connectionId={}", connectionId);
             return;
         }
-        // 1. 断开 SSH 连接
+        // 断开只影响内存中的底层传输，不再写入连接配置表。
         sshSessionPort.disconnect(connectionId);
-
-        // 2. 更新连接状态
-        SshConnectionEntity entity = repository.queryConnectionById(connectionId);
-        if (entity != null && ConnectionStatusEnum.CONNECTED.equals(entity.getStatus())) {
-            entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
-            repository.updateConnection(entity);
-        }
-    }
-
-    /**
-     * 检查连接是否活跃
-     *
-     * @param connectionId 连接ID
-     * @return 是否已连接
-     */
-    @Override
-    public boolean isConnected(String connectionId) {
-        return sshSessionPort.isConnected(connectionId);
-
-    }
-
-    @Override
-    public ConnectionStatusEnum checkAndRefreshStatus(String connectionId) {
-        SshConnectionEntity entity = repository.queryConnectionById(connectionId);
-        if (entity == null) {
-            return ConnectionStatusEnum.DISCONNECTED;
-        }
-
-        boolean actuallyConnected = sshSessionPort.isConnected(connectionId);
-
-        // 实际已断开：纠正 DB 状态并清理残留 Session 引用
-        if (!actuallyConnected && entity.getStatus() == ConnectionStatusEnum.CONNECTED) {
-            log.warn("SSH连接已断开（监测发现），纠正状态 connectionId={}", connectionId);
-            sshSessionPort.disconnect(connectionId); // 清理 sessions map 中的残留引用
-            entity.setStatus(ConnectionStatusEnum.DISCONNECTED);
-            repository.updateConnection(entity);
-        }
-
-        return entity.getStatus();
     }
 
 }

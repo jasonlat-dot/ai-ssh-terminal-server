@@ -11,7 +11,6 @@
         <result column="username" property="username"/>
         <result column="auth_type" property="authType"/>
         <result column="encrypted" property="encrypted"/>
-        <result column="status" property="status"/>
         <result column="user_id" property="userId"/>
         <result column="created_at" property="createdAt"/>
         <result column="updated_at" property="updatedAt"/>
@@ -33,7 +32,6 @@
         username,
         auth_type,
         encrypted,
-        status,
         user_id,
         created_at,
         updated_at,
@@ -42,7 +40,7 @@
 
     <!--
         新增前由业务层完成必填校验、默认值填充和凭据加密。
-        初始状态固定为未连接、未删除。
+        初始记录固定为未删除；SSH 运行状态不写入连接配置表。
     -->
     <insert id="insert"
             parameterType="com.jasonlat.ai.infrastructure.dao.po.SshConnectionPO"
@@ -59,7 +57,6 @@
             password,
             private_key,
             encrypted,
-            status,
             user_id,
             created_at,
             updated_at,
@@ -75,7 +72,6 @@
                    #{password,jdbcType=VARCHAR},
                    #{privateKey,jdbcType=LONGVARCHAR},
                    #{encrypted,jdbcType=INTEGER},
-                   0,
                    #{userId,jdbcType=VARCHAR},
                    CURRENT_TIMESTAMP(6),
                    CURRENT_TIMESTAMP(6),
@@ -98,9 +94,6 @@
             </if>
             <if test="username != null and username != ''">
                 username = #{username,jdbcType=VARCHAR},
-            </if>
-            <if test="status != null">
-                status = #{status,jdbcType=INTEGER},
             </if>
             <if test="authType != null">
                 auth_type = #{authType, jdbcType=INTEGER},

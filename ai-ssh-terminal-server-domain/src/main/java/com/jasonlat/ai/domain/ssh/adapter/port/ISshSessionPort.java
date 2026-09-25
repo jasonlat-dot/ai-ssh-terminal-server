@@ -2,8 +2,6 @@ package com.jasonlat.ai.domain.ssh.adapter.port;
 
 import com.jcraft.jsch.Session;
 
-import java.util.Set;
-
 /**
  * SSH 底层传输会话端口。
  * <p>
@@ -50,11 +48,4 @@ public interface ISshSessionPort {
     /** 获取供终端层创建多个 Shell Channel 的共享底层 Session。 */
     Session getSession(String connectionId);
 
-    /**
-     * 获取当前内存中所有已注册的连接ID（用于连接监测器遍历探活）。
-     * 返回的集合是当前快照，可能包含已实际断开但尚未清理的连接。
-     *
-     * @return 连接ID集合
-     */
-    Set<String> getActiveConnectionIds();
 }

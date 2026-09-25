@@ -182,6 +182,28 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
         }
     }
 
+    /**
+     * 页签级连接状态查询。connectionId 对应的底层 SSH Session 可以被多个页签复用，
+     * 因此页面只能用自己持有的 terminalSessionId 判断是否已连接。
+     */
+    @Override
+    @RequestMapping(value = "connected", method = RequestMethod.GET)
+    public Response<TerminalConnectionStateDTO> isTerminalConnected(
+            @RequestParam("sessionId") String sessionId) {
+        TerminalSessionEntity entity = sshTerminalDomainService.getTerminalSession(sessionId);
+        boolean connected = sshTerminalDomainService.sessionExists(sessionId);
+        TerminalConnectionStateDTO state = TerminalConnectionStateDTO.builder()
+                .sessionId(sessionId)
+                .connectionId(entity != null ? entity.getConnectionId() : null)
+                .connected(connected)
+                .build();
+        return Response.<TerminalConnectionStateDTO>builder()
+                .code(ResponseCode.SUCCESS.getCode())
+                .info(ResponseCode.SUCCESS.getInfo())
+                .data(state)
+                .build();
+    }
+
     @RequestMapping(value = "read", method = RequestMethod.GET)
     public CompletableFuture<Response<TerminalReadResultDTO>> readAsyncFromTerminal(@RequestParam("sessionId") String sessionId) {
         try {

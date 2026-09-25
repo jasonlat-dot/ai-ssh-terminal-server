@@ -4,7 +4,6 @@ import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.AuthTypeEnum;
-import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
 import com.jasonlat.ai.infrastructure.dao.ISshConnectionConfigDAO;
 import com.jasonlat.ai.infrastructure.dao.ISshConnectionDAO;
 import com.jasonlat.ai.infrastructure.dao.po.SshConnectionConfigPO;
@@ -121,7 +120,6 @@ public class SshConnectionRepository implements ISshConnectionRepository {
                 .password(encryptedPassword)
                 .privateKey(encryptedPrivateKey)
                 .encrypted(encryptedFlag)
-                .status(entity.getStatus() != null ? entity.getStatus().getCode() : ConnectionStatusEnum.DISCONNECTED.getCode())
                 .userId(entity.getUserId())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
@@ -152,7 +150,6 @@ public class SshConnectionRepository implements ISshConnectionRepository {
                 .password(password)
                 .privateKey(privateKey)
                 .encrypted(po.getEncrypted())
-                .status(ConnectionStatusEnum.fromCode(po.getStatus()))
                 .userId(po.getUserId())
                 .createdAt(po.getCreatedAt())
                 .updatedAt(po.getUpdatedAt())

@@ -1,7 +1,6 @@
 package com.jasonlat.ai.domain.ssh.model.entity;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.AuthTypeEnum;
-import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -33,8 +32,6 @@ public class SshConnectionEntity {
     private String privateKey;
     /** 是否加密:0-否,1-是 */
     private Integer encrypted;
-    /** 连接状态:0-未连接,1-已连接,2-连接中,3-连接失败 */
-    private ConnectionStatusEnum status;
     /** 用户ID */
     private String userId;
     /** 创建时间 */
@@ -62,7 +59,6 @@ public class SshConnectionEntity {
     }
 
     public void withDefaults() {
-        status = ConnectionStatusEnum.DISCONNECTED;
         if (port == null) {
             port = 22;
         }

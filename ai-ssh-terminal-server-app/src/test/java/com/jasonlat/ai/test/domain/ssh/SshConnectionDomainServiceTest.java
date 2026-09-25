@@ -3,7 +3,6 @@ package com.jasonlat.ai.test.domain.ssh;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.AuthTypeEnum;
-import com.jasonlat.ai.domain.ssh.model.valobj.ConnectionStatusEnum;
 import com.jasonlat.ai.domain.ssh.service.ISshConnectionService;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
@@ -56,9 +55,6 @@ public class SshConnectionDomainServiceTest {
 
         // 验证连接ID已自动生成
         Assert.assertNotNull("连接ID不应为空", entity.getConnectionId());
-        // 验证默认状态为未连接
-        Assert.assertEquals("默认状态应为未连接", ConnectionStatusEnum.DISCONNECTED, entity.getStatus());
-
         // 查询验证
         SshConnectionEntity result = sshConnectionDomainService.getConnection(entity.getConnectionId());
         Assert.assertNotNull("查询结果不应为空", result);
@@ -271,8 +267,6 @@ public class SshConnectionDomainServiceTest {
         Assert.assertEquals("端口应匹配", Integer.valueOf(22), result.getPort());
         Assert.assertEquals("用户名应匹配", "ubuntu", result.getUsername());
         Assert.assertEquals("认证类型应匹配", AuthTypeEnum.PASSWORD, result.getAuthType());
-        Assert.assertEquals("状态应为未连接", ConnectionStatusEnum.DISCONNECTED, result.getStatus());
-
         log.info("测试结果：查询连接成功，connectionId:{}, name:{}", result.getConnectionId(), result.getConnectionName());
     }
 
@@ -418,16 +412,10 @@ public class SshConnectionDomainServiceTest {
         // 执行连接（可能因密码不正确而失败，这是预期行为）
         boolean connected = sshConnectionDomainService.connect(connectionId);
 
-        // 验证连接状态已更新
+        // 连接运行状态只存在于内存，不再写入连接配置表。
         SshConnectionEntity result = sshConnectionDomainService.getConnection(connectionId);
         Assert.assertNotNull("查询结果不应为空", result);
-        if (connected) {
-            Assert.assertEquals("连接成功后状态应为已连接", ConnectionStatusEnum.CONNECTED, result.getStatus());
-        } else {
-            Assert.assertEquals("连接失败后状态应为连接失败", ConnectionStatusEnum.FAILED, result.getStatus());
-        }
-
-        log.info("测试结果：连接测试，connected:{}, status:{}", connected, result.getStatus());
+        log.info("测试结果：连接测试，connected:{}", connected);
     }
 
     /**
@@ -460,37 +448,10 @@ public class SshConnectionDomainServiceTest {
         // 执行断开（即使未连接也不应报错）
         sshConnectionDomainService.disconnect(connectionId);
 
-        // 验证状态为未连接
+        // 配置记录仍然存在，断开只清理内存中的 SSH 传输。
         SshConnectionEntity result = sshConnectionDomainService.getConnection(connectionId);
         Assert.assertNotNull("查询结果不应为空", result);
-        Assert.assertEquals("断开后状态应为未连接", ConnectionStatusEnum.DISCONNECTED, result.getStatus());
-
         log.info("测试结果：断开连接成功，connectionId:{}", connectionId);
-    }
-
-    /**
-     * 测试：检查连接是否活跃
-     */
-    @Test
-    public void test_isConnected() {
-        // 先创建连接
-        SshConnectionEntity entity = SshConnectionEntity.builder()
-                .connectionName("测试连接-活跃检查")
-                .host("192.168.1.100")
-                .port(22)
-                .username("testuser")
-                .authType(AuthTypeEnum.PASSWORD)
-                .password("testPassword")
-                .userId("test-user")
-                .build();
-        sshConnectionDomainService.createConnection(entity, null);
-        String connectionId = entity.getConnectionId();
-
-        // 检查未连接状态
-        boolean connected = sshConnectionDomainService.isConnected(connectionId);
-        Assert.assertFalse("未建立连接时应返回false", connected);
-
-        log.info("测试结果：连接活跃检查，isConnected:{}", connected);
     }
 
     /**

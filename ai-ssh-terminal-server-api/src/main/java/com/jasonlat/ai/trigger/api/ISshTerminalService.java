@@ -31,6 +31,11 @@ public interface ISshTerminalService {
     Response<TerminalReadResponseDTO> readFromTerminal(String sessionId);
 
     /**
+     * 查询某个页签自己的终端是否仍然连接。
+     */
+    Response<TerminalConnectionStateDTO> isTerminalConnected(String sessionId);
+
+    /**
      * 调整终端窗口大小
      */
     Response<Void> resizeTerminal(TerminalResizeRequestDTO requestDTO);
