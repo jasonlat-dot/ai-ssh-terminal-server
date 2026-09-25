@@ -13,11 +13,12 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -94,9 +95,9 @@ public class TerminalSessionPortSupport {
 
     /** 创建中的预占和已创建的终端都计入配额，防止并发打开绕过上限。 */
     private final Object quotaLock = new Object();
-    private final Map<String, Integer> sessionsPerUser = new HashMap<>();
-    private final Map<String, Integer> sessionsPerConnection = new HashMap<>();
-    private int reservedSessionCount;
+    private final ConcurrentMap<String, Integer> sessionsPerUser = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Integer> sessionsPerConnection = new ConcurrentHashMap<>();
+    private final AtomicInteger reservedSessionCount = new AtomicInteger();
 
     protected final TerminalSessionProperties terminalProperties;
 
@@ -111,7 +112,7 @@ public class TerminalSessionPortSupport {
         synchronized (quotaLock) {
             int userSessions = sessionsPerUser.getOrDefault(userId, 0);
             int connectionSessions = sessionsPerConnection.getOrDefault(connectionId, 0);
-            if (reservedSessionCount >= terminalProperties.getMaxTotalSessions()) {
+            if (reservedSessionCount.get() >= terminalProperties.getMaxTotalSessions()) {
                 throw sessionLimitExceeded("后端活动终端数已达到上限 "
                         + terminalProperties.getMaxTotalSessions());
             }
@@ -123,7 +124,7 @@ public class TerminalSessionPortSupport {
                 throw sessionLimitExceeded("当前 SSH 连接的终端数已达到上限 "
                         + terminalProperties.getMaxSessionsPerConnection());
             }
-            reservedSessionCount++;
+            reservedSessionCount.incrementAndGet();
             sessionsPerUser.put(userId, userSessions + 1);
             sessionsPerConnection.put(connectionId, connectionSessions + 1);
         }
@@ -132,8 +133,8 @@ public class TerminalSessionPortSupport {
     /** 创建失败或终端清理完成后释放预占。 */
     protected void releaseSessionQuota(String userId, String connectionId) {
         synchronized (quotaLock) {
-            if (reservedSessionCount > 0) {
-                reservedSessionCount--;
+            if (reservedSessionCount.get() > 0) {
+                reservedSessionCount.decrementAndGet();
             }
             decrementCount(sessionsPerUser, userId);
             decrementCount(sessionsPerConnection, connectionId);
