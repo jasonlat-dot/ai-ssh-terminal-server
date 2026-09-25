@@ -17,6 +17,14 @@ spring:
 #      termination-record-ttl-minutes: 5
 #      max-termination-records: 1000
 
+ai:
+  ssh:
+    command:
+      # 连续没有命令输出时快速判定卡死；持续输出不会触发该限制。
+      idle-timeout-seconds: ${SSH_COMMAND_IDLE_TIMEOUT_SECONDS:10}
+      # 即使命令持续输出也不能超过该绝对上限。
+      max-execution-timeout-seconds: ${SSH_COMMAND_MAX_EXECUTION_TIMEOUT_SECONDS:600}
+
 #ai:
 #  ssh:
 #    # 后端到 SSH 服务器的全局 HTTP CONNECT 代理；代理必须允许 CONNECT 目标SSH端口。

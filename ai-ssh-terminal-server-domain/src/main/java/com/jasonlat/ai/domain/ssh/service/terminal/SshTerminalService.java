@@ -35,12 +35,6 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class SshTerminalService implements ISshTerminalService {
 
-    /**
-     * Agent 单条命令允许等待的最长时间。
-     * 这是“整条命令执行完成”的上限，与前端每次 Long Poll 的 25 秒等待时间无关。
-     */
-    private static final long COMMAND_TIMEOUT_SECONDS = 10L;
-
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
     private final ISshConnectionRepository connectionRepository;
@@ -120,7 +114,7 @@ public class SshTerminalService implements ISshTerminalService {
          * 完整结果的收集由基础设施层完成。这里不再循环调用 readAsync()，所以不会与
          * 浏览器正在进行的 Long Poll 竞争同一个 pendingRead 或 outputBuffer。
          */
-        String output = terminalSessionService.executeCommand(sessionId, command, COMMAND_TIMEOUT_SECONDS);
+        String output = terminalSessionService.executeCommand(sessionId, command);
 
         // 只有命令正常返回时才刷新会话最后活动时间；异常由上层工具转换成失败结果。
         entity.touch();

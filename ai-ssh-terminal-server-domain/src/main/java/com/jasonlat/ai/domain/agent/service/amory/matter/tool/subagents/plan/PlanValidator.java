@@ -35,6 +35,10 @@ import java.util.Set;
 @Service
 public class PlanValidator {
 
+    private static final int DEFAULT_TASK_TIMEOUT_SECONDS = 120;
+    private static final int MIN_TASK_TIMEOUT_SECONDS = 10;
+    private static final int MAX_TASK_TIMEOUT_SECONDS = 600;
+
     /**
      * 执行完整校验，校验失败抛出 {@link IllegalArgumentException}。
      * <p>
@@ -66,6 +70,14 @@ public class PlanValidator {
             if (task.getMaxRetries() != null && task.getMaxRetries() > 3) {
                 task.setMaxRetries(3);
             }
+            /*
+             * 子 Agent 默认仍为 120 秒；docker pull、安装、构建等长任务可以按任务申请
+             * 更长时间，但统一钳制在 10 到 600 秒，避免模型给出无限超时。
+             */
+            int timeoutSeconds = task.getTimeoutSeconds() == null
+                    ? DEFAULT_TASK_TIMEOUT_SECONDS : task.getTimeoutSeconds();
+            task.setTimeoutSeconds(Math.max(MIN_TASK_TIMEOUT_SECONDS,
+                    Math.min(timeoutSeconds, MAX_TASK_TIMEOUT_SECONDS)));
         }
 
         // 规则 3：依赖必须存在 —— 引用不存在的任务 = 悬空依赖，

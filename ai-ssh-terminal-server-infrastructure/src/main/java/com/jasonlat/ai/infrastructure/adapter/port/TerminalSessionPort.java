@@ -3,12 +3,14 @@ package com.jasonlat.ai.infrastructure.adapter.port;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.infrastructure.config.SshCommandProperties;
 import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.Session;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -58,11 +60,21 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     private static final String READER_ERROR_MESSAGE = "\u001b[0m\r\n" + "\u001b[31m" + "[SSH 终端读取异常，请重新连接]" + "\u001b[0m\r\n";
 
     private final SshSessionPort sshSessionService;
+    private final SshCommandProperties commandProperties;
 
+    @Autowired
     public TerminalSessionPort(SshSessionPort sshSessionService,
-                               TerminalSessionProperties terminalProperties) {
+                               TerminalSessionProperties terminalProperties,
+                               SshCommandProperties commandProperties) {
         super(terminalProperties);
         this.sshSessionService = sshSessionService;
+        this.commandProperties = commandProperties;
+    }
+
+    /** 保留现有测试和手工构造入口，默认使用 10 秒无输出、600 秒绝对上限。 */
+    public TerminalSessionPort(SshSessionPort sshSessionService,
+                               TerminalSessionProperties terminalProperties) {
+        this(sshSessionService, terminalProperties, new SshCommandProperties());
     }
 
     /**
@@ -292,7 +304,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     }
 
     @Override
-    public String executeCommand(String sessionId, String command, long timeoutSeconds) throws InterruptedException {
+    public String executeCommand(String sessionId, String command) throws InterruptedException {
         /*
          * 先验证上下文和 Channel。这里不能只判断 terminalSessions 中是否存在 sessionId，
          * 因为远端已经断开时 Context 可能还没来得及被 Reader 清理。
@@ -303,9 +315,6 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
         }
         if (command == null || command.isBlank()) {
             throw new IllegalArgumentException("SSH 命令不能为空");
-        }
-        if (timeoutSeconds <= 0) {
-            throw new IllegalArgumentException("SSH 命令超时时间必须大于 0");
         }
         touchSession(context);
 
@@ -374,7 +383,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                       - 把收集好的命令输出，调用 `capture.result.complete(最终文本)`
                       - Future 完成 → **主线程的 get () 唤醒，拿到返回字符串**
                  */
-                return capture.result.get(timeoutSeconds, TimeUnit.SECONDS);
+                return awaitCommandResult(capture);
             } catch (InterruptedException interrupted) {
                 // 仅中断本地等待并不会终止远端 Shell；必须向当前命令发送 Ctrl+C。
                 // 临时清除本线程的中断位，确保 SSH 写入不会因已中断而被拒绝；下方再恢复。
@@ -391,16 +400,16 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 throw interrupted;
             } catch (TimeoutException e) {
                 /*
-                 * 到达命令级总超时后先让 Agent Future 失败，再向远端发送 Ctrl+C，尽量终止
-                 * 仍在运行的命令。write() 失败不能覆盖原始“命令超时”异常。
+                 * 到达无输出超时或绝对执行上限后，先让 Agent Future 失败，再向远端发送
+                 * Ctrl+C，尽量终止仍在运行的命令。write() 失败不能覆盖原始超时异常。
                  */
-                capture.result.completeExceptionally(new IllegalStateException("SSH 命令执行超时（" + timeoutSeconds + " 秒）"));
+                capture.result.completeExceptionally(new IllegalStateException(e.getMessage()));
                 try {
                     write(sessionId, "\u0003");
                 } catch (Exception interruptError) {
                     log.debug("命令超时后发送 Ctrl+C 失败 sessionId={}", sessionId, interruptError);
                 }
-                throw new IllegalStateException("SSH 命令执行超时（" + timeoutSeconds + " 秒）", e);
+                throw new IllegalStateException(e.getMessage(), e);
             } catch (ExecutionException e) {
                 // Reader EOF、Reader 异常、缓冲区溢出会通过 Future 的 cause 传递到这里。
                 Throwable cause = e.getCause();
@@ -417,6 +426,52 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                         context.activeAgentCommand = null;
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 等待命令完成，同时执行两层限制：连续无输出达到 idleTimeout 时认为命令卡住；
+     * 持续有输出的命令仍受 maxExecutionTimeout 绝对上限约束。
+     */
+    private String awaitCommandResult(AgentCommandCapture capture)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        long startedAtNanos = System.nanoTime();
+        long idleTimeoutNanos = TimeUnit.SECONDS.toNanos(commandProperties.getIdleTimeoutSeconds());
+        long maxExecutionTimeoutNanos =
+                TimeUnit.SECONDS.toNanos(commandProperties.getMaxExecutionTimeoutSeconds());
+
+        while (true) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Agent 命令已取消");
+            }
+            if (capture.result.isDone()) {
+                return capture.result.get();
+            }
+
+            long now = System.nanoTime();
+            long idleElapsedNanos = now - capture.lastOutputAtNanos.get();
+            long totalElapsedNanos = now - startedAtNanos;
+
+            if (idleElapsedNanos >= idleTimeoutNanos) {
+                throw new TimeoutException("SSH 命令连续 "
+                        + commandProperties.getIdleTimeoutSeconds() + " 秒没有输出");
+            }
+            if (totalElapsedNanos >= maxExecutionTimeoutNanos) {
+                throw new TimeoutException("SSH 命令执行超过最大时间 "
+                        + commandProperties.getMaxExecutionTimeoutSeconds() + " 秒");
+            }
+
+            long waitNanos = Math.min(
+                    idleTimeoutNanos - idleElapsedNanos,
+                    maxExecutionTimeoutNanos - totalElapsedNanos);
+            try {
+                return capture.result.get(waitNanos, TimeUnit.NANOSECONDS);
+            } catch (TimeoutException ignored) {
+                /*
+                 * 等待期间可能刚收到新输出并刷新 lastOutputAtNanos。重新计算两个截止时间，
+                 * 只有下一轮确认确实无输出或达到硬上限时才中断远端命令。
+                 */
             }
         }
     }

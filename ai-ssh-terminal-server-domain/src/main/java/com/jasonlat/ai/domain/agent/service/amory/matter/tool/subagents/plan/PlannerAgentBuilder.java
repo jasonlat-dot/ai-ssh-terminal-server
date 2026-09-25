@@ -40,6 +40,7 @@ public class PlannerAgentBuilder {
             JSON格式:
             {"tasks":[{"taskId":"唯一ID","agentName":"允许的子Agent名称","request":"完整任务指令","dependsOn":["依赖任务ID"],"timeoutSeconds":120}],"maxConcurrency":4}
             简单任务只输出一个任务。复杂任务最多5个并行诊断任务。变更任务必须依赖诊断任务。
+            timeoutSeconds 默认120，允许范围10到600；docker pull、软件安装、镜像构建等长任务使用600。
             只能选择用户提供的允许Agent，不要创建新的Agent。
             """;
 

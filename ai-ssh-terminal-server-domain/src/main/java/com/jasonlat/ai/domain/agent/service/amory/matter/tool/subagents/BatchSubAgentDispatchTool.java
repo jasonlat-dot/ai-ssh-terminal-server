@@ -153,7 +153,8 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                                 .type(Type.Known.INTEGER)
                                 .description("""
                                         单个子 Agent 任务的最大执行时间，单位为秒。
-                                        该字段可以省略，默认值为 120。必须填写正整数。
+                                        该字段可以省略，默认值为 120，允许范围为 10 到 600。
+                                        docker pull、软件安装、镜像构建等长任务建议填写 600。
                                         超过该时间后任务会被标记为失败。
                                         """).build(),
                         "maxRetries",

@@ -447,6 +447,9 @@ public class TerminalSessionPortSupport {
         /** Agent 调用线程等待的 Future，由 SSH Reader 在线程安全区域内完成。 */
         final CompletableFuture<String> result = new CompletableFuture<>();
 
+        /** 当前命令最近一次产生真实输出的时间，只用于命令无输出超时判断。 */
+        final AtomicLong lastOutputAtNanos = new AtomicLong(System.nanoTime());
+
         /** 是否已经识别到 START_MARKER。 */
         boolean started;
 
@@ -480,6 +483,8 @@ public class TerminalSessionPortSupport {
                 // 删除包装命令回显和开始标记，后面的字符才是真实命令输出。
                 pending.delete(0, start + startMarker.length());
                 started = true;
+                // SSH 往返可能已经消耗部分空闲窗口；以远端确认开始执行的时刻重新计时。
+                lastOutputAtNanos.set(System.nanoTime());
 
                 /*
                  * 包装脚本已经被过滤，此处补回用户真正关心的命令文本。终端之前已经显示
@@ -546,6 +551,8 @@ public class TerminalSessionPortSupport {
                 return value;
             }
             output.append(value);
+            // docker pull 等命令会持续使用 \r 刷新进度；每个真实输出分片都应延长空闲截止时间。
+            lastOutputAtNanos.set(System.nanoTime());
             return value;
         }
 

@@ -49,11 +49,10 @@ public interface ITerminalSessionPort {
      *
      * @param sessionId     终端会话 ID
      * @param command       Shell 命令
-     * @param timeoutSeconds 命令总超时时间（秒）
      * @return 完整命令输出
      * @throws InterruptedException 等待结果的 Agent 线程被中断
      */
-    String executeCommand(String sessionId, String command, long timeoutSeconds) throws InterruptedException;
+    String executeCommand(String sessionId, String command) throws InterruptedException;
 
     /**
      * 读取终端输出
