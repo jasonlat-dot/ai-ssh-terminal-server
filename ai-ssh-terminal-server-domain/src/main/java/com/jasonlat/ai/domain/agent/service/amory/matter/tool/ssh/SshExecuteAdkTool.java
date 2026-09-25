@@ -216,21 +216,12 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
     }
 
     private boolean isExecutionSuccessful(String output) {
-        if (output == null || output.isEmpty()) {
-            return true;
-        }
-        String lowerOutput = output.toLowerCase();
-        String[] errorIndicators = {
-                "命令退出码:", "command not found", "no such file or directory", "permission denied",
-                "operation not permitted", "cannot find", "error:", "failed", "fatal:",
-                "unable to", "connection refused", "network is unreachable"
-        };
-        for (String indicator : errorIndicators) {
-            if (lowerOutput.contains(indicator)) {
-                return false;
-            }
-        }
-        return true;
+        /*
+         * TerminalSessionPortSupport 仅在 Shell 返回非零退出码时，才会在结果末尾追加
+         * “[命令退出码: N]”。命令输出本身可能是日志或诊断信息，其中出现 error、failed
+         * 等文本并不代表本次命令执行失败，因此这里只依据真实退出码标记判断。
+         */
+        return output == null || !output.contains("[命令退出码:");
     }
 
     private String analyzeError(String output) {
