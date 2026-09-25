@@ -792,7 +792,7 @@ public class TerminalSessionPortSupport {
     // SSH Reader
     // ============================================================
     /**
-     * 启动 SSH 输出读取线程。
+     * 启动 SSH 输出读取虚拟线程。
      * 一个 TerminalSessionContext
      * 整个生命周期只允许存在一个 reader。
      */
@@ -806,8 +806,9 @@ public class TerminalSessionPortSupport {
             log.debug("Terminal reader 已经运行，忽略重复启动 sessionId={}", context.sessionId);
             return;
         }
-        Thread readerThread = new Thread(
-                () -> runOutputReader(context), "terminal-reader-" + context.sessionId);
+        Thread readerThread = Thread.ofVirtual()
+                .name("terminal-reader-" + context.sessionId)
+                .unstarted(() -> runOutputReader(context));
 
         /*
          * 保存 reader Thread。
@@ -815,12 +816,6 @@ public class TerminalSessionPortSupport {
          */
         context.readerThread = readerThread;
 
-        /*
-         * daemon thread。
-         * 防止 JVM 关闭时 Terminal reader
-         * 阻止应用退出。
-         */
-        readerThread.setDaemon(true);
         readerThread.start();
         log.info("Terminal reader 启动 sessionId={} connectionId={}", context.sessionId, context.connectionId);
     }
