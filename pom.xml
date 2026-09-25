@@ -7,13 +7,13 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.4.3</version>
+    <version>3.5.16</version>
   </parent>
   <properties>
-    <java.version>21</java.version>
+    <java.version>25</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>21</maven.compiler.source>
-    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-ai.version>1.1.5</spring-ai.version>
     <langchain4j.version>1.4.0</langchain4j.version>
@@ -312,32 +312,6 @@
       </plugin>
     </plugins>
   </build>
-  <profiles>
-    <profile>
-      <id>dev</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-      </activation>
-      <properties>
-        <java_jvm>-Xms1G -Xmx1G -server  -XX:MaxPermSize=256M -Xss256K -Dspring.profiles.active=test -XX:+DisableExplicitGC -XX:+UseG1GC  -XX:LargePageSizeInBytes=128m -XX:+UseFastAccessorMethods -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/export/Logs/ai-ssh-terminal-server-boot -Xloggc:/export/Logs/ai-ssh-terminal-server-boot/gc-ai-ssh-terminal-server-boot.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps</java_jvm>
-        <profileActive>dev</profileActive>
-      </properties>
-    </profile>
-    <profile>
-      <id>test</id>
-      <properties>
-        <java_jvm>-Xms1G -Xmx1G -server  -XX:MaxPermSize=256M -Xss256K -Dspring.profiles.active=test -XX:+DisableExplicitGC -XX:+UseG1GC  -XX:LargePageSizeInBytes=128m -XX:+UseFastAccessorMethods -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/export/Logs/ai-ssh-terminal-server-boot -Xloggc:/export/Logs/ai-ssh-terminal-server-boot/gc-ai-ssh-terminal-server-boot.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps</java_jvm>
-        <profileActive>test</profileActive>
-      </properties>
-    </profile>
-    <profile>
-      <id>prod</id>
-      <properties>
-        <java_jvm>-Xms6G -Xmx6G -server  -XX:MaxPermSize=256M -Xss256K -Dspring.profiles.active=release -XX:+DisableExplicitGC -XX:+UseG1GC  -XX:LargePageSizeInBytes=128m -XX:+UseFastAccessorMethods -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/export/Logs/fq-mall-activity-app -Xloggc:/export/Logs/ai-ssh-terminal-server-boot/gc-ai-ssh-terminal-server-boot.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps</java_jvm>
-        <profileActive>prod</profileActive>
-      </properties>
-    </profile>
-  </profiles>
   <modules>
     <module>ai-ssh-terminal-server-app</module>
     <module>ai-ssh-terminal-server-domain</module>
