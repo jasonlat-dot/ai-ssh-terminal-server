@@ -1,11 +1,14 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
+import com.jasonlat.ai.infrastructure.config.SshHttpProxyProperties;
 import com.jasonlat.ai.types.utils.StringUtils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
+import com.jcraft.jsch.ProxyHTTP;
 import com.jcraft.jsch.Session;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -47,6 +50,19 @@ public class SshSessionPort implements ISshSessionPort {
     private final ConcurrentHashMap<String, Session> sshSessions = new ConcurrentHashMap<>(4);
     /** 相同 connectionId 总会映射到同一个固定锁；锁数量不会随历史连接数增长。 */
     private final Object[] connectionLocks = createConnectionLocks();
+    /** 全局 HTTP CONNECT 代理配置；所有 SSH Session 使用同一代理出口。 */
+    private final SshHttpProxyProperties httpProxyProperties;
+
+    /** Spring 运行时使用配置化构造方法。 */
+    @Autowired
+    public SshSessionPort(SshHttpProxyProperties httpProxyProperties) {
+        this.httpProxyProperties = httpProxyProperties;
+    }
+
+    /** 保留给手工测试使用；默认关闭代理并保持原来的直连行为。 */
+    public SshSessionPort() {
+        this(new SshHttpProxyProperties());
+    }
 
     private static Object[] createConnectionLocks() {
         Object[] locks = new Object[CONNECTION_LOCK_STRIPES];
@@ -122,6 +138,7 @@ public class SshSessionPort implements ISshSessionPort {
                  */
                 JSch connectionJsch = new JSch();
                 session = connectionJsch.getSession(username, host, port);
+                configureHttpProxy(session, connectionId);
             /*
              * SSH 原生机制：第一次连接服务器，服务器会返回 host‑key（主机公钥指纹）。
              * - `StrictHostKeyChecking`：主机密钥严格校验策略
@@ -181,6 +198,27 @@ public class SshSessionPort implements ISshSessionPort {
                 return false;
             }
         });
+    }
+
+    /**
+     * 在 SSH 握手前为 Session 设置 HTTP CONNECT 代理。代理只负责建立到目标
+     * {@code host:port} 的 TCP 隧道，后续认证、心跳和 Channel 都运行在同一隧道中。
+     */
+    private void configureHttpProxy(Session session, String connectionId) {
+        if (!httpProxyProperties.isEnabled()) {
+            return;
+        }
+
+        ProxyHTTP proxy = new ProxyHTTP(httpProxyProperties.getHost(), httpProxyProperties.getPort());
+        if (StringUtils.isNotBlank(httpProxyProperties.getUsername())) {
+            proxy.setUserPasswd(httpProxyProperties.getUsername(), httpProxyProperties.getPassword());
+        }
+        session.setProxy(proxy);
+        log.info("SSH HTTP代理已配置 connectionId={} proxy={}:{} authentication={}",
+                connectionId,
+                httpProxyProperties.getHost(),
+                httpProxyProperties.getPort(),
+                StringUtils.isNotBlank(httpProxyProperties.getUsername()));
     }
 
     /**
