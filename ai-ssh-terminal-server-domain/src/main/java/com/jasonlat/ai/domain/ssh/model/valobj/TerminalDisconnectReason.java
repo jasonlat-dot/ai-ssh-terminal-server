@@ -1,8 +1,11 @@
 package com.jasonlat.ai.domain.ssh.model.valobj;
 
+import lombok.Getter;
+
 /**
  * 终端结束原因。前端根据 reconnectAllowed 区分临时网络故障和服务端策略关闭。
  */
+@Getter
 public enum TerminalDisconnectReason {
 
     /** 超过配置的无交互时间，由后端主动回收。 */
@@ -26,7 +29,4 @@ public enum TerminalDisconnectReason {
         this.reconnectAllowed = reconnectAllowed;
     }
 
-    public boolean isReconnectAllowed() {
-        return reconnectAllowed;
-    }
 }

@@ -12,10 +12,8 @@ ai:
           module:
             ai-api:
               # 添加 VM options参数：-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|192.168.*
-#              base-url: http://127.0.0.1:8777/
-#              api-key: sk-waliapi-96cbfe096bdc4c08afa7667e9f8838b9
-              base-url: http://api.jasonlat.cc/
-              api-key: sk-e9db62e5103b2771bfe115535c4f5ebffff57af973a76916af103ccbfe77d4fa
+              base-url: http://127.0.0.1:8777/
+              api-key: sk-waliapi-96cbfe096bdc4c08afa7667e9f8838b9
               completions-path: v1/chat/completions
               embeddings-path: v1/embeddings
               proxy:
