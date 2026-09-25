@@ -73,7 +73,11 @@ public class TerminalSessionPortSupport {
 
 
     /**
-     * sessionId -> TerminalSessionContext
+     * terminalSessionId -> TerminalSessionContext。
+     * <p>
+     * Map 的键不是 connectionId：多个 Context 可以指向同一个 connectionId，但各自保存
+     * 独立 ChannelShell、流、Reader、缓冲区和 Long Poll。若按 connectionId 存储，后打开
+     * 的窗口会覆盖先前窗口，这正是多终端场景必须避免的。
      * 所有和 Terminal 有关的数据统一放进 TerminalSessionContext。
      * 不再像旧版本一样分别维护：
      * channels
@@ -609,7 +613,10 @@ public class TerminalSessionPortSupport {
 
 
     /**
-     * 清理 Terminal Session。
+     * 清理一个 Terminal Session。
+     * <p>
+     * 这里只释放当前 Context 的 ChannelShell 和流，不断开其所属的共享 JSch Session。
+     * 底层 Session 是否可断开由 SshConnectionService 结合 hasActiveSessions() 决定。
      * 本方法设计为：可以被重复调用。
      * 例如：
      * closeSession() 即使被重复触发，也不会重复释放资源。

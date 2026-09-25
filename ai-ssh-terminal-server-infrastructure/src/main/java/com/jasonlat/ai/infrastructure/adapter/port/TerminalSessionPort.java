@@ -22,7 +22,11 @@ import java.util.concurrent.TimeoutException;
 
 
 /**
- * 终端会话管理器
+ * 独立终端 Channel 管理器。
+ * <p>
+ * 一个共享的 JSch Session 可以派生多个 ChannelShell，本类为每次打开操作生成新的
+ * terminalSessionId，并把 Channel、输入输出流、Reader 和缓冲区封装到独立 Context。
+ * 这使同一服务器的多个窗口能够并行读写而不相互覆盖状态。
  */
 @Slf4j
 @Component
@@ -54,7 +58,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     private SshSessionPort sshSessionService;
 
     /**
-     * 创建终端会话。
+     * 在 connectionId 对应的共享 SSH Session 上创建一个全新的 Shell Channel。
      *
      * @param connectionId SSH 连接 ID
      * @param cols         终端列数
@@ -201,6 +205,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
         if (connectionId == null || connectionId.isBlank()) {
             return false;
         }
+        // 只要任意一个独立 ChannelShell 仍存活，就不能释放它们共同依赖的底层 Session。
         return terminalSessions.values().stream().anyMatch(context ->
                 connectionId.equals(context.connectionId)
                         && !context.closed.get()

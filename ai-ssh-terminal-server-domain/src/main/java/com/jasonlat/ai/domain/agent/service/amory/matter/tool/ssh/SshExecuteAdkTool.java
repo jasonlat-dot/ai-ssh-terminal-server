@@ -72,6 +72,9 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
 
     /**
      * ADK 适配入口。这里只负责解析模型参数和请求级 Session state。
+     * <p>
+     * 子 Agent 场景下，父业务 sessionId、agentCallId 和 parentToolCallId 都由派发服务写入
+     * 子 Session state；本方法读取后附加到工具事件，使前端能把调用归到正确的子 Agent。
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
@@ -88,11 +91,13 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                 if (agentName == null || agentName.isBlank()) {
                     agentName = toolContext.agentName();
                 }
+                // rootSessionId 用于事件路由；其余两个 ID 只用于恢复 UI 中的父子层级。
                 String rootSessionId = (String) toolContext.state().get(AdkToolProvider.PARENT_SESSION_ID);
                 String agentCallId = (String) toolContext.state().get(AdkToolProvider.NESTED_AGENT_CALL_ID);
                 String parentToolCallId = (String) toolContext.state().get(AdkToolProvider.PARENT_TOOL_CALL_ID);
                 String callId = toolContext.functionCallId().orElseGet(() -> "ssh_" + Event.generateEventId());
 
+                // 在真正执行前主动发布 FunctionCall，前端无需等命令结束即可显示“调用中”。
                 publishToolEvent(rootSessionId, toolContext.invocationId(), callId,
                         args, agentName, agentCallId, parentToolCallId, false);
 
@@ -102,6 +107,7 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                 Map<String, Object> executeResult = executeForTerminal(terminalSessionId, command);
                 if (cancellation != null) cancellation.throwIfCancelled();
 
+                // 使用相同 callId 发布 FunctionResponse，前端据此把 running 更新为 success/error。
                 publishToolEvent(rootSessionId, toolContext.invocationId(), callId,
                         executeResult, agentName, agentCallId, parentToolCallId, true);
                 return executeResult;
@@ -176,7 +182,17 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
      * 发布 SSH 工具的合成调用/响应事件。
      * <p>
      * SSH 工具的执行结果不一定会作为父 Runner 的原始 functionResponse 返回，
-     * 因此这里构造标准 ADK Event，并按终端会话投递给当前 SSE 监听器。
+     * 因此这里构造标准 ADK Event，并按父业务会话投递给当前流式监听器。
+     * Runner 后续也可能产生同一调用的原始事件，Case 层会使用 callId 去重。
+     *
+     * @param rootSessionId   父对话 sessionId，决定事件进入哪条 /chat_stream
+     * @param toolInvocationId 当前工具所属的 ADK invocationId，仅写入事件便于追踪
+     * @param callId          一次真实工具调用的 ID，调用和结果必须保持一致
+     * @param payload         调用阶段为工具参数，结果阶段为 success/output/command 等结果
+     * @param author          实际执行工具的 Agent 名称
+     * @param agentCallId     子 Agent 执行 ID；为空表示不归属于子 Agent
+     * @param parentToolCallId 触发子 Agent 派发的父工具调用 ID
+     * @param result          false 构造 FunctionCall，true 构造 FunctionResponse
      */
     private void publishToolEvent(String rootSessionId, String toolInvocationId, String callId,
                                   Map<String, Object> payload, String author,

@@ -33,7 +33,8 @@ import java.util.concurrent.*;
  * <p>
  * 与 {@link SubAgentDispatchTool}（包装固定子 Agent 给 LLM 调用）不同，
  * 本服务面向运行期规划出的任务列表：从 AgentCatalog 查找任务指定的子 Agent，
- * 透传父会话绑定的 SSH 终端会话（ThreadLocal），带超时执行并回写任务状态。
+ * 通过子 Session initialState 透传父会话绑定的 SSH 终端及事件关联 ID，
+ * 带超时执行并回写任务状态。
  * 编排器（DynamicAgentOrchestrator）通过本服务完成每个 DynamicTask 的执行。
  */
 @Slf4j
@@ -115,7 +116,7 @@ public class SubAgentDispatchService {
      *   <li>置为 RUNNING，从 AgentCatalog 查找子 Agent（先按父 Agent 精确匹配，再全局兜底），找不到直接置 FAILED（确定性错误，不重试）</li>
      *   <li>按 maxRetries（默认 0）循环尝试：每次以独立会话运行子 Agent，按任务超时时间（默认 120 秒）阻塞等待</li>
      *   <li>成功则回写 result 并置 COMPLETED；执行期异常按 2^n 秒指数退避（上限 30 秒）后重试，重试耗尽置 FAILED</li>
-     *   <li>回写 attempts（实际尝试次数），finally 中清理 ThreadLocal，避免线程池复用导致的会话串扰</li>
+     *   <li>回写 attempts（实际尝试次数），并在取消时中断已登记的执行线程/订阅</li>
      * </ol>
      */
     public void execute(AgentExecutionContext context, DynamicTask task) {
@@ -128,6 +129,10 @@ public class SubAgentDispatchService {
         }
     }
 
+    /**
+     * 已完成取消线程登记后的实际执行逻辑。一个重试 attempt 对应一个新的 agentCallId，
+     * 因此前端能够把失败尝试与后续重试显示为不同的子 Agent 活动。
+     */
     private void executeRegistered(AgentExecutionContext context, DynamicTask task,
                                    AgentRunCancellation cancellation) {
         task.setStatus(TaskStatus.RUNNING);
@@ -151,6 +156,7 @@ public class SubAgentDispatchService {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             if (cancellation != null) cancellation.throwIfCancelled();
             task.setAttempts(attempt);
+            // agentCallId 是嵌套事件的归组主键：生命周期、模型文字和内部工具都携带它。
             String agentCallId = "dispatch_" + invocationId + "_" + attempt;
             publishAgentActivity(context, task, agentCallId, null);
             try {
@@ -163,6 +169,8 @@ public class SubAgentDispatchService {
                 String userId = "subAgent-user-" + context.getUserId();
                 String childSessionId = "subAgent-" + invocationId + "-" + attempt;
 
+                // 子 Runner 使用独立 ADK Session，但必须继承请求级终端、取消句柄和父调用关联信息。
+                // executeCommand 从这些 state 中取值，才能执行到正确终端并把事件发回父 /chat_stream。
                 ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
                 initialState.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
                 initialState.put(AdkToolProvider.RUNNER_AGENT_NAME, agent.name());
@@ -176,6 +184,7 @@ public class SubAgentDispatchService {
                 }
 
                 Content content = Content.fromParts(Part.fromText(task.getRequest()));
+                // SSE 模式使 Runner 逐块产生模型文本；这里仍收集 events，只用于结束后的最终结果提取。
                 RunConfig runConfig = RunConfig.builder()
                         .autoCreateSession(false)
                         .streamingMode(RunConfig.StreamingMode.SSE)
@@ -194,7 +203,7 @@ public class SubAgentDispatchService {
                         .timeout(Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
                         .blockingForEach(event -> {
                             if (cancellation != null) cancellation.throwIfCancelled();
-                            // 边执行边发布，前端可以实时看到子 Agent 的工具调用，而不是等待任务汇总后一次性返回（否则ui渲染效果就不咋地了，一坨一坨的）。
+                            // 边执行边发布，前端可以实时看到文本与工具调用；events 仅保留给最终摘要提取。
                             events.add(event);
                             agentEventPublisher.publishToSession(context.getParentSessionKey(), event,
                                     agentCallId, context.getParentToolCallId(), agent.name());
@@ -231,7 +240,13 @@ public class SubAgentDispatchService {
 
     }
 
-    /** 每个批量任务有独立派发 ID，前端据此把并发子 Agent 的工具归组。 */
+    /**
+     * 发布子 Agent 生命周期事件。
+     * <p>
+     * result 为空时构造 FunctionCall，Case 层转换为 agent_start；result 非空时构造
+     * FunctionResponse，转换为 agent_result。生命周期事件的函数 ID 与 agentCallId 相同，
+     * 这是 {@code NestedAgentEventForwarder} 区分生命周期和普通工具调用的约定。
+     */
     private void publishAgentActivity(AgentExecutionContext context, DynamicTask task,
                                       String agentCallId, Map<String, Object> result) {
         if (context.getParentSessionKey() == null) {

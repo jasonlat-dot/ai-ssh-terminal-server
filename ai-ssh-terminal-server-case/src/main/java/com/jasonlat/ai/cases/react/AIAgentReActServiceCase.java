@@ -215,8 +215,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             log.info("ReAct链路-获得会话锁 | sessionId:{} | waitMs:{}",
                     sessionId, elapsedMillis(lockWaitStartNanos));
 
-            // /chat_stream 的 emitter 由 Case 创建；在执行前订阅当前会话，
-            // 子 Runner 和 SSH 工具的事件才能进入同一条 JSON 行流。
+            // /chat_stream 的 emitter 由 Case 创建；必须在 RootNode 启动前订阅当前业务会话，
+            // 否则执行很快的子 Agent/SSH 工具可能在监听器建立前发出事件而被丢弃。
+            // forwarder 按请求创建，它的调用去重、结果配对和文本累加状态不能跨会话共享。
             NestedAgentEventForwarder forwarder = new NestedAgentEventForwarder(objectMapper);
             agentEventPublisher.registerSession(sessionId, new Consumer<AgentEventPublisher.PublishedEvent>() {
                 @Override

@@ -16,6 +16,12 @@ import java.util.List;
 import java.util.UUID;
 
 /**
+ * SSH 连接配置及底层传输会话领域服务。
+ * <p>
+ * connectionId 表示一份连接配置和一条可复用的底层 SSH Session；terminalSessionId
+ * 表示某个窗口自己的 Shell Channel。多个终端可以共享 connectionId，但关闭任意一个
+ * terminalSessionId 时不能影响同 connectionId 下的其他终端。
+ *
  * @author jasonlat
  * 2026-09-12  12:51
  */
@@ -110,6 +116,7 @@ public class SshConnectionService implements ISshConnectionService {
         if (connectionId == null || connectionId.isBlank()) {
             throw new AppException(ResponseCode.ILLEGAL_PARAMETER);
         }
+        // 删除连接配置会使所有窗口失去归属信息，因此仍有任意活动终端时拒绝删除。
         if (terminalSessionPort.hasActiveSessions(connectionId)) {
             throw new IllegalArgumentException("该连接仍被其他窗口使用，请先关闭所有终端窗口");
         }
@@ -148,7 +155,9 @@ public class SshConnectionService implements ISshConnectionService {
     }
 
     /**
-     * 建立SSH连接
+     * 建立或复用 connectionId 对应的底层 SSH 连接。
+     * 新窗口再次调用此方法时，基础设施层会复用健康 Session，随后 openTerminal 再创建
+     * 独立 ChannelShell。
      *
      * @param connectionId 连接ID
      * @return 是否连接成功
@@ -179,7 +188,10 @@ public class SshConnectionService implements ISshConnectionService {
     }
 
     /**
-     * 断开SSH连接
+     * 请求断开底层 SSH 连接。
+     * <p>
+     * 调用方通常会先关闭自己持有的 terminalSessionId；只有同 connectionId 下已经没有
+     * 活动终端时才真正断开 JSch Session，避免一个窗口把其他窗口一起踢下线。
      *
      * @param connectionId 连接ID
      */

@@ -5,13 +5,17 @@ import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 终端会话服务接口
- * 负责管理 SSH 终端会话，包括打开/写入/读取/调整大小/关闭会话
+ * 终端会话服务接口。
+ * <p>
+ * 每次 {@link #openTerminal(String, int, int)} 都必须生成新的 terminalSessionId，并在
+ * connectionId 对应的共享 SSH Session 上打开独立 ChannelShell。读写、尺寸、Reader、
+ * Long Poll 和关闭操作都以 terminalSessionId 隔离，因此多个窗口连接同一服务器时不会
+ * 互相消费输出或关闭对方的终端。
  */
 public interface ITerminalSessionPort {
 
     /**
-     * 打开终端会话
+     * 在指定底层 SSH 连接上打开一个新的独立终端会话；重复调用不会复用旧终端。
      *
      * @param connectionId SSH连接ID
      * @param cols         终端列数
@@ -75,7 +79,7 @@ public interface ITerminalSessionPort {
     void resize(String sessionId, int cols, int rows);
 
     /**
-     * 关闭终端会话
+     * 只关闭指定 terminalSessionId 对应的 Shell Channel，不释放共享的底层 SSH Session。
      *
      * @param sessionId 会话ID
      */

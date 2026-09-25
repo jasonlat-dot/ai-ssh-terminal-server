@@ -16,8 +16,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * SSH终端领域服务实现
- * 遵循单一职责原则，将终端会话管理委托给基础设施层
+ * SSH 终端领域服务实现。
+ * <p>
+ * 领域缓存和基础设施缓存都以 terminalSessionId 为键，而不是以 connectionId 为键。
+ * 因而同一服务器/连接可以同时存在多个终端实体，每个终端拥有独立读写和生命周期；
+ * 具体 ChannelShell 的创建与释放委托给基础设施层。
  */
 @Slf4j
 @Service
@@ -32,7 +35,10 @@ public class SshTerminalService implements ISshTerminalService {
     private final ISshSessionPort sshSessionService;
     private final ITerminalSessionPort terminalSessionService;
 
-    /** 会话ID -> 终端会话实体 映射 */
+    /**
+     * terminalSessionId -> 终端会话实体。
+     * 多个实体可以具有相同 connectionId，这是多窗口连接同一服务器的领域层基础。
+     */
     private final Map<String, TerminalSessionEntity> sessionCache = new ConcurrentHashMap<>();
 
     public SshTerminalService(ISshSessionPort sshSessionService,
@@ -50,7 +56,7 @@ public class SshTerminalService implements ISshTerminalService {
             throw new IllegalStateException("SSH连接未建立，请先连接");
         }
 
-        // 2. 通过基础设施层打开独立终端会话。同一个 connectionId 可以同时对应多个窗口。
+        // 2. 每次调用都创建新的 terminalSessionId + ChannelShell；只复用底层 JSch Session。
         String sessionId = terminalSessionService.openTerminal(connectionId, cols, rows);
 
         // 3. 创建并缓存会话实体；其他窗口的会话继续保留。
@@ -121,6 +127,7 @@ public class SshTerminalService implements ISshTerminalService {
     public void closeTerminal(String sessionId) {
         log.info("关闭终端会话 sessionId={}", sessionId);
 
+        // 只删除当前窗口的终端实体和 ChannelShell；其他同 connectionId 会话不会被遍历或关闭。
         TerminalSessionEntity entity = sessionCache.remove(sessionId);
         if (entity != null) {
             terminalSessionService.closeSession(sessionId);

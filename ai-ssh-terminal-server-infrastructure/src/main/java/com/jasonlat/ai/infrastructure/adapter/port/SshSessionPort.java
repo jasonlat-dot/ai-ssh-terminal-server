@@ -14,6 +14,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
+ * JSch 底层 SSH Session 管理器。
+ * <p>
+ * 映射关系为 {@code connectionId -> Session}。一个健康 Session 可以承载多个
+ * ChannelShell；终端窗口的隔离由 {@link TerminalSessionPort} 管理，本类不感知窗口数量。
+ *
  * @author jasonlat
  * 2026-09-11  21:07
  */
@@ -33,6 +38,10 @@ public class SshSessionPort implements ISshSessionPort {
     /** 连续 5 次心跳无响应才判定连接失效，容忍海外链路的短时抖动。 */
     private static final int SERVER_ALIVE_COUNT_MAX = 5;
 
+    /**
+     * 每个连接配置只保留一条底层 SSH 传输；同一服务器若保存为不同 connectionId，
+     * 仍会按不同配置建立独立 Session。
+     */
     private final ConcurrentHashMap<String, Session> sshSessions = new ConcurrentHashMap<>(4);
     /** 同一 connectionId 的建连、复用和断开必须串行，避免两个窗口同时重建连接。 */
     private final ConcurrentHashMap<String, Object> connectionLocks = new ConcurrentHashMap<>(4);
@@ -40,7 +49,8 @@ public class SshSessionPort implements ISshSessionPort {
 
 
     /**
-     * 建立 SSH 连接
+     * 建立或复用 SSH 连接。该方法可能被多个窗口同时调用，connectionLock 保证同一
+     * connectionId 最多只有一个线程执行真实建连，其余线程会看到并复用已连接 Session。
      *
      * @param connectionId 连接ID
      * @param host         主机地址
@@ -55,6 +65,7 @@ public class SshSessionPort implements ISshSessionPort {
         Object connectionLock = connectionLocks.computeIfAbsent(connectionId, ignored -> new Object());
         synchronized (connectionLock) {
             Session previous = sshSessions.get(connectionId);
+            // 健康 Session 上可以继续 openChannel("shell")，不能因新窗口接入而替换它。
             if (previous != null && previous.isConnected()) {
                 log.info("SSH连接复用 connectionId={} host={}:{} user={}", connectionId, host, port, username);
                 return true;
@@ -151,6 +162,10 @@ public class SshSessionPort implements ISshSessionPort {
         }
     }
 
+    /**
+     * 释放底层传输 Session。调用前必须由领域层确认该 connectionId 已无活动终端；
+     * 单个窗口关闭只应清理自己的 ChannelShell，不应直接进入此方法。
+     */
     private void closeSession(String connectionId, Session session) {
         if (session == null) {
             return;

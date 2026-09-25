@@ -30,8 +30,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * 配置了 subAgents 的父 Agent 装配时，每个子 Agent 都会被包装为本工具
  * （工具名/描述即子 Agent 的 name/description，LLM 通过函数调用触发派发）。
- * 派发过程：为子 Agent 创建独立 Runner 与会话，同步收集全部事件，
- * 取最后一个事件的文本作为执行结果返回给父 Agent。
+ * 派发过程：为子 Agent 创建独立 Runner 与会话，逐事件回流文本和工具活动；同时收集事件，
+ * 在子 Agent 结束后提取最终模型回复作为工具结果返回父 Agent。
  * <p>
  * 注：本工具在装配阶段创建（非 Spring 管理），需传入 runnerFactory 手工构造 Runner。
  */
@@ -94,7 +94,7 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
     }
 
     /**
-     * 执行派发：以独立会话运行子 Agent，阻塞收集全部事件后汇总结果。
+     * 执行派发：以独立会话运行子 Agent；Runner 事件实时发布给父对话，完成后再汇总结果。
      * 执行异常时返回 {success:false, error:...}，由父 Agent 感知并决定下一步。
      */
     @Override
@@ -126,6 +126,8 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
         log.info("子Agent派发开始 | subAgent:{} | request:{} | invocationId:{}", subAgent.name(), request, invocationId);
         Content content = Content.fromParts(Part.fromText(request));
 
+        // 独立子 Session 不共享父 Session state，需要显式复制终端、取消句柄和事件关联 ID。
+        // agentCallId 使用父工具 functionCallId，使整个子 Agent 生命周期可以更新同一张 UI 卡片。
         ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
         initialState.put(TERMINAL_SESSION_STATE_KEY, terminalSessionId);
         initialState.put(RUNNER_AGENT_NAME, subAgent.name());
@@ -155,6 +157,7 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
                 .doOnNext(event -> {
                     if (cancellation != null) cancellation.throwIfCancelled();
                     if (agentEventPublisher != null) {
+                        // 不等待 toList 完成：模型文本和工具事件到达一条就立即回流一条。
                         publishEvent(parentSessionId, event, functionCallId);
                     }
                 })

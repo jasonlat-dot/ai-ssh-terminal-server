@@ -10,7 +10,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * 将嵌套 Agent Runner 产生的事件转发到发起当前对话的事件流。
+ * Agent 事件的进程内路由中心。
+ * <p>
+ * 子 Runner 与工具通常运行在独立线程/独立 ADK Session 中，不能直接持有 HTTP 层的
+ * {@code ResponseBodyEmitter}。发布方只提交 ADK {@link Event} 和关联 ID，本类再根据
+ * invocation、业务会话或终端会话找到 Case 层注册的监听器。
+ * <p>
+ * 本类只负责“把事件送到正确的对话”，不负责把 ADK Event 转成前端 JSON；协议转换由
+ * Case 层的 {@code NestedAgentEventForwarder} 完成。
  */
 @Component
 @Slf4j
@@ -22,7 +29,8 @@ public class AgentEventPublisher implements IAgentEventPublisher {
     private final Map<String, Consumer<PublishedEvent>> listeners = new ConcurrentHashMap<>();
 
     /**
-     * 按 ADK 业务会话路由事件；当子调用的 invocation 尚未登记或无法准确获取时使用。
+     * 按对话业务会话路由事件。当前子 Agent 链路的主通道：父请求在进入 RootNode 前注册，
+     * 子 Runner 和 executeCommand 使用相同 sessionId 将事件送回原来的 HTTP 流。
      */
     private final Map<String, Consumer<PublishedEvent>> sessionListeners = new ConcurrentHashMap<>();
 
@@ -167,8 +175,17 @@ public class AgentEventPublisher implements IAgentEventPublisher {
     }
 
     /**
-     * 按本次对话的业务会话投递子 Agent 活动。关联 ID 随事件一起传递，
-     * 不能用终端 ID 路由：同一个终端可能同时承载多条对话。
+     * 按本次对话的业务会话投递子 Agent 活动。
+     * <p>
+     * 不能使用终端 ID 作为此处的主路由键：同一个 SSH 终端可能同时承载多条 AI 对话。
+     * 三个关联字段不会参与路由，但会随事件传给 Case 层，供前端恢复
+     * “父派发工具 -> 子 Agent -> 子 Agent 工具”的层级关系。
+     *
+     * @param sessionId       父对话 sessionId，决定事件进入哪一条 /chat_stream
+     * @param event           子 Runner 或工具产生的标准 ADK 事件
+     * @param agentCallId     一次子 Agent 执行的唯一 ID；同一子 Agent 的文本和工具共享该值
+     * @param parentToolCallId 触发本次派发的父工具调用 ID
+     * @param sourceAgent     事件来源子 Agent 的名称
      */
     public void publishToSession(String sessionId, Event event, String agentCallId,
                                  String parentToolCallId, String sourceAgent) {
@@ -213,7 +230,13 @@ public class AgentEventPublisher implements IAgentEventPublisher {
     }
 
     /**
-     * 对外发布的不可变事件包装，携带是否来自嵌套 Agent 的标记。
+     * 对外发布的不可变事件包装。
+     *
+     * @param event            原始 ADK 事件
+     * @param nested           是否来自嵌套 Agent
+     * @param agentCallId      子 Agent 执行 ID，前端用它归组 agent_text/tool_call/tool_result
+     * @param parentToolCallId 父派发工具调用 ID，用于保留父子调用关系
+     * @param sourceAgent      事件来源 Agent 名称，用于展示和兜底识别生命周期事件
      */
     public record PublishedEvent(Event event, boolean nested, String agentCallId,
                                  String parentToolCallId, String sourceAgent) {
