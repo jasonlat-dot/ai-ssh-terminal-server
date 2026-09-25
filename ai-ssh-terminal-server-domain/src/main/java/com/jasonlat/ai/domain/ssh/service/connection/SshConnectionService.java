@@ -119,6 +119,8 @@ public class SshConnectionService implements ISshConnectionService {
         if (terminalSessionPort.hasActiveSessions(connectionId)) {
             throw new IllegalArgumentException("该连接仍被其他窗口使用，请先关闭所有终端窗口");
         }
+        // 删除配置前清理可能由连接测试或终端打开失败遗留的底层 SSH Session。
+        sshSessionPort.disconnect(connectionId);
         repository.deleteConnection(connectionId);
         log.info("SSH连接删除成功 connectionId={}", connectionId);
 
@@ -178,29 +180,6 @@ public class SshConnectionService implements ISshConnectionService {
                 entity.getPassword(),
                 entity.getPrivateKey()
         );
-    }
-
-    /**
-     * 请求断开底层 SSH 连接。
-     * <p>
-     * 调用方通常会先关闭自己持有的 terminalSessionId；只有同 connectionId 下已经没有
-     * 活动终端时才真正断开 JSch Session，避免一个窗口把其他窗口一起踢下线。
-     *
-     * @param connectionId 连接ID
-     */
-    @Override
-    public void disconnect(String connectionId) {
-        /*
-         * 一个窗口关闭时，它会先关闭自己的 terminalSessionId，再调用 disconnect。
-         * 如果同一个 connectionId 下仍有其他窗口的 ChannelShell，必须保留共享的
-         * 底层 SSH Session，否则会把其他窗口一起踢下线。
-         */
-        if (terminalSessionPort.hasActiveSessions(connectionId)) {
-            log.info("SSH连接仍被其他终端使用，跳过底层断开 connectionId={}", connectionId);
-            return;
-        }
-        // 断开只影响内存中的底层传输，不再写入连接配置表。
-        sshSessionPort.disconnect(connectionId);
     }
 
 }

@@ -428,33 +428,6 @@ public class SshConnectionDomainServiceTest {
     }
 
     /**
-     * 测试：断开SSH连接
-     */
-    @Test
-    public void test_disconnect() {
-        // 先创建连接
-        SshConnectionEntity entity = SshConnectionEntity.builder()
-                .connectionName("测试连接-断开测试")
-                .host("192.168.1.100")
-                .port(22)
-                .username("testuser")
-                .authType(AuthTypeEnum.PASSWORD)
-                .password("testPassword")
-                .userId("test-user")
-                .build();
-        sshConnectionDomainService.createConnection(entity, null);
-        String connectionId = entity.getConnectionId();
-
-        // 执行断开（即使未连接也不应报错）
-        sshConnectionDomainService.disconnect(connectionId);
-
-        // 配置记录仍然存在，断开只清理内存中的 SSH 传输。
-        SshConnectionEntity result = sshConnectionDomainService.getConnection(connectionId);
-        Assert.assertNotNull("查询结果不应为空", result);
-        log.info("测试结果：断开连接成功，connectionId:{}", connectionId);
-    }
-
-    /**
      * 测试：完整生命周期（创建 → 查询 → 更新 → 查询 → 删除 → 查询）
      */
     @Test

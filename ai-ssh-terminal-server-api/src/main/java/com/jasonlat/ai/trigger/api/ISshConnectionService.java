@@ -41,9 +41,4 @@ public interface ISshConnectionService {
      */
     Response<Void> connect(String connectionId);
 
-    /**
-     * 断开SSH连接
-     */
-    Response<Void> disconnect(String connectionId);
-
 }

@@ -208,26 +208,6 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
         }
     }
 
-    @RequestMapping(value = "disconnect", method = RequestMethod.POST)
-    @Override
-    public Response<Void> disconnect(@RequestParam("connectionId") String connectionId) {
-        try {
-            log.info("断开SSH连接 connectionId={}", connectionId);
-            sshConnectionDomainService.disconnect(connectionId);
-
-            return Response.<Void>builder()
-                    .code(ResponseCode.SUCCESS.getCode())
-                    .info("已断开连接")
-                    .build();
-        } catch (Exception e) {
-            log.error("断开SSH连接失败 connectionId={}", connectionId, e);
-            return Response.<Void>builder()
-                    .code(ResponseCode.UN_ERROR.getCode())
-                    .info("断开连接失败: " + e.getMessage())
-                    .build();
-        }
-    }
-
     // ========== DTO <-> Entity 转换 ==========
 
     private SshConnectionEntity toEntity(SshConnectionRequestDTO dto) {

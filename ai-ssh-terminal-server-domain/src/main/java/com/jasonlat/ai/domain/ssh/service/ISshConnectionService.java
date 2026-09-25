@@ -45,10 +45,4 @@ public interface ISshConnectionService {
      */
     boolean connect(String connectionId);
 
-    /**
-     * 断开SSH连接
-     * @param connectionId 连接ID
-     */
-    void disconnect(String connectionId);
-
 }
