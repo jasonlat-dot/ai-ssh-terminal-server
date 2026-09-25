@@ -1,7 +1,9 @@
 package com.jasonlat.ai.trigger.http;
 
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.trigger.api.dto.*;
 import com.jasonlat.ai.trigger.api.response.Response;
@@ -192,10 +194,19 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
             @RequestParam("sessionId") String sessionId) {
         TerminalSessionEntity entity = sshTerminalDomainService.getTerminalSession(sessionId);
         boolean connected = sshTerminalDomainService.sessionExists(sessionId);
+        TerminalTermination termination = connected
+                ? null : sshTerminalDomainService.getTerminalTermination(sessionId);
+        TerminalDisconnectReason disconnectReason = connected ? null
+                : termination != null ? termination.getReason()
+                : entity != null ? TerminalDisconnectReason.CHANNEL_DISCONNECTED
+                : TerminalDisconnectReason.SESSION_NOT_FOUND;
         TerminalConnectionStateDTO state = TerminalConnectionStateDTO.builder()
                 .sessionId(sessionId)
-                .connectionId(entity != null ? entity.getConnectionId() : null)
+                .connectionId(entity != null ? entity.getConnectionId()
+                        : termination != null ? termination.getConnectionId() : null)
                 .connected(connected)
+                .disconnectReason(disconnectReason == null ? null : disconnectReason.name())
+                .reconnectAllowed(disconnectReason != null && disconnectReason.isReconnectAllowed())
                 .build();
         return Response.<TerminalConnectionStateDTO>builder()
                 .code(ResponseCode.SUCCESS.getCode())
@@ -226,6 +237,9 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                 response.setEof(readResult.isEof());
                 response.setTimeout(readResult.isTimeout());
                 response.setBufferOverflow(readResult.isBufferOverflow());
+                response.setDisconnectReason(readResult.getDisconnectReason() == null
+                        ? null : readResult.getDisconnectReason().name());
+                response.setReconnectAllowed(readResult.isReconnectAllowed());
 
                 return Response.<TerminalReadResultDTO>builder()
                         .code(ResponseCode.SUCCESS.getCode())
@@ -235,9 +249,8 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
             });
         } catch (AppException e) {
             /*
-             * 后端重启或旧 Terminal 已被清理时，明确把 S0003 返回给客户端。
-             * 客户端据此重建 SSH 和 Terminal，而不是把它当作普通 HTTP 网络波动
-             * 对一个已经不存在的 sessionId 无限重试。
+             * 极小竞态下，会话可能在领域层检查后、基础设施读取前刚好被清理。
+             * 客户端收到 S0003 后应查询 /connected 获取断开原因，不能直接自动重连。
              */
             log.warn("Terminal Long Poll 会话不可用 sessionId={} code={} reason={}",
                     sessionId, e.getCode(), e.getMessage());

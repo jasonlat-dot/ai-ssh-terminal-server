@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.ssh.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -94,6 +95,9 @@ public interface ITerminalSessionPort {
      * @return 是否存在
      */
     boolean sessionExists(String sessionId);
+
+    /** 查询短期保留的终端结束原因；记录过期或从未存在时返回 null。 */
+    TerminalTermination getTermination(String sessionId);
 
     /**
      * 判断某个连接配置下是否仍有活动终端。

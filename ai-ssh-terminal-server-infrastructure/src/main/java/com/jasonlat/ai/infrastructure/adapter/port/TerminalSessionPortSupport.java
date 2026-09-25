@@ -1,6 +1,8 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -17,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -74,8 +77,6 @@ public class TerminalSessionPortSupport {
      */
     protected static final int MAX_AGENT_COMMAND_OUTPUT_SIZE = 2 * 1024 * 1024;
 
-
-
     /**
      * terminalSessionId -> TerminalSessionContext。
      * <p>
@@ -93,6 +94,10 @@ public class TerminalSessionPortSupport {
      */
     protected final Map<String, TerminalSessionContext> terminalSessions = new ConcurrentHashMap<>();
 
+    /** 已结束会话的有界短期记录，帮助恢复网络后的前端区分空闲回收和网络断开。 */
+    private final Map<String, TerminalTermination> terminatedSessions = new ConcurrentHashMap<>();
+    private final Object terminationLock = new Object();
+
     /** 创建中的预占和已创建的终端都计入配额，防止并发打开绕过上限。 */
     private final Object quotaLock = new Object();
     private final ConcurrentMap<String, Integer> sessionsPerUser = new ConcurrentHashMap<>();
@@ -103,6 +108,59 @@ public class TerminalSessionPortSupport {
 
     protected TerminalSessionPortSupport(TerminalSessionProperties terminalProperties) {
         this.terminalProperties = terminalProperties;
+    }
+
+    public TerminalTermination getTermination(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return null;
+        }
+        synchronized (terminationLock) {
+            TerminalTermination termination = terminatedSessions.get(sessionId);
+            if (termination == null) {
+                return null;
+            }
+            if (isTerminationExpired(termination, System.currentTimeMillis())) {
+                terminatedSessions.remove(sessionId, termination);
+                return null;
+            }
+            return termination;
+        }
+    }
+
+    private void rememberTermination(TerminalSessionContext context, TerminalDisconnectReason reason) {
+        long now = System.currentTimeMillis();
+        TerminalDisconnectReason actualReason = reason == null
+                ? TerminalDisconnectReason.SESSION_NOT_FOUND : reason;
+        TerminalTermination termination = TerminalTermination.builder()
+                .sessionId(context.sessionId)
+                .connectionId(context.connectionId)
+                .reason(actualReason)
+                .terminatedAtMillis(now)
+                .build();
+
+        synchronized (terminationLock) {
+            terminatedSessions.entrySet().removeIf(entry -> isTerminationExpired(entry.getValue(), now));
+            if (!terminatedSessions.containsKey(context.sessionId)
+                    && terminatedSessions.size() >= terminalProperties.getMaxTerminationRecords()) {
+                String oldestSessionId = null;
+                long oldestTimestamp = Long.MAX_VALUE;
+                for (TerminalTermination value : terminatedSessions.values()) {
+                    if (value.getTerminatedAtMillis() < oldestTimestamp) {
+                        oldestTimestamp = value.getTerminatedAtMillis();
+                        oldestSessionId = value.getSessionId();
+                    }
+                }
+                if (oldestSessionId != null) {
+                    terminatedSessions.remove(oldestSessionId);
+                }
+            }
+            terminatedSessions.put(context.sessionId, termination);
+        }
+    }
+
+    private boolean isTerminationExpired(TerminalTermination termination, long now) {
+        long ttlMillis = TimeUnit.MINUTES.toMillis(terminalProperties.getTerminationRecordTtlMinutes());
+        return now - termination.getTerminatedAtMillis() >= ttlMillis;
     }
 
     /**
@@ -708,12 +766,17 @@ public class TerminalSessionPortSupport {
      * 清理一个 Terminal Session。
      * <p>
      * 这里只释放当前 Context 的 ChannelShell 和流，不断开其所属的共享 JSch Session。
-     * 底层 Session 是否可断开由 SshConnectionService 结合 hasActiveSessions() 决定。
+     * 底层 Session 是否可断开由终端领域服务结合 hasActiveSessions() 决定。
      * 本方法设计为：可以被重复调用。
      * 例如：
      * closeSession() 即使被重复触发，也不会重复释放资源。
      */
     protected boolean cleanup(String sessionId) {
+        return cleanup(sessionId, TerminalDisconnectReason.CLIENT_CLOSED);
+    }
+
+    /** 按明确原因清理终端，并为前端保留一条短期终止记录。 */
+    protected boolean cleanup(String sessionId, TerminalDisconnectReason reason) {
         /*
          * remove 是原子操作。
          * 第一个调用 cleanup 的线程可以拿到 context。
@@ -733,11 +796,13 @@ public class TerminalSessionPortSupport {
             context.closed.set(true);
         }
 
+        rememberTermination(context, reason);
+
         /*
          * Terminal 被关闭以后，如果前端正有 Long Poll 请求挂起，必须立即结束。
          * 不能让请求继续等待到 25 秒超时。这里是主动关闭，所以不一定真的读取到了 EOF，eof=false。
          */
-        completePendingRead(context, TerminalReadResult.disconnected(false));
+        completePendingRead(context, TerminalReadResult.disconnected(false, reason));
         failActiveAgentCommand(context, "SSH 终端会话已关闭");
 
         /*

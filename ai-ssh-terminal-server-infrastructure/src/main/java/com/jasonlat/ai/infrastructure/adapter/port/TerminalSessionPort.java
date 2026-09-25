@@ -1,6 +1,7 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
@@ -591,7 +592,8 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             if (context.eofReached.get() || !isChannelConnected(context.channel)) {
                 return CompletableFuture.completedFuture(
                         TerminalReadResult.disconnected(
-                                context.eofReached.get()
+                                context.eofReached.get(),
+                                TerminalDisconnectReason.CHANNEL_DISCONNECTED
                         )
                 );
             }
@@ -721,7 +723,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             return;
         }
         sshSessionService.withConnectionLock(context.connectionId, () -> {
-            cleanup(sessionId);
+            cleanup(sessionId, TerminalDisconnectReason.CLIENT_CLOSED);
         });
     }
 
@@ -775,7 +777,8 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                      * Channel 断开或 Reader 退出都表示终端已经无法继续正常工作，
                      * 这两种情况不需要等待 idleTimeout。
                      */
-                    boolean channelDisconnected = !isChannelConnected(context.channel);
+                    boolean channelDisconnected = context.eofReached.get()
+                            || !isChannelConnected(context.channel);
                     boolean readerExited = context.readerThread != null && !context.readerRunning.get();
 
                     /* 从最近一次终端输入、Agent 命令或 resize 开始计算空闲时长。 */
@@ -799,20 +802,22 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                     }
 
                     /* 多个条件同时成立时，优先记录最直接的故障原因。 */
-                    String reason = channelDisconnected ? "channel-disconnected"
-                            : readerExited ? "reader-exited" : "idle-timeout";
+                    TerminalDisconnectReason disconnectReason = channelDisconnected
+                            ? TerminalDisconnectReason.CHANNEL_DISCONNECTED
+                            : readerExited ? TerminalDisconnectReason.READER_ERROR
+                            : TerminalDisconnectReason.IDLE_TIMEOUT;
 
                     /*
                      * cleanup 使用条件删除保证同一个 sessionId 只被一个线程实际回收。
                      * 返回 true 才代表本轮确实释放了 Channel、流、Reader、缓冲区和配额。
                      */
-                    if (cleanup(context.sessionId)) {
+                    if (cleanup(context.sessionId, disconnectReason)) {
                         cleanedSessionIds.add(context.sessionId);
                         log.info("回收终端会话 sessionId={} connectionId={} userId={} reason={} idleMs={}",
                                 context.sessionId,
                                 context.connectionId,
                                 context.userId,
-                                reason,
+                                disconnectReason,
                                 now - context.lastActiveAtMillis.get());
                     }
                 }

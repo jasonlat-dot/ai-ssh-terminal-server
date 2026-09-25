@@ -5,7 +5,9 @@ import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -186,6 +188,11 @@ public class SshTerminalService implements ISshTerminalService {
     }
 
     @Override
+    public TerminalTermination getTerminalTermination(String sessionId) {
+        return terminalSessionService.getTermination(sessionId);
+    }
+
+    @Override
     public String readTerminal(String sessionId) {
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
@@ -198,7 +205,10 @@ public class SshTerminalService implements ISshTerminalService {
     public CompletableFuture<TerminalReadResult> readTerminalAsync(String sessionId) {
         TerminalSessionEntity entity = sessionCache.get(sessionId);
         if (entity == null || !entity.isActive()) {
-            throw new AppException(ResponseCode.TERMINAL_SESSION_NOT_FOUNT);
+            TerminalTermination termination = terminalSessionService.getTermination(sessionId);
+            TerminalDisconnectReason reason = termination == null
+                    ? TerminalDisconnectReason.SESSION_NOT_FOUND : termination.getReason();
+            return CompletableFuture.completedFuture(TerminalReadResult.disconnected(false, reason));
         }
         return terminalSessionService.readAsync(sessionId);
     }

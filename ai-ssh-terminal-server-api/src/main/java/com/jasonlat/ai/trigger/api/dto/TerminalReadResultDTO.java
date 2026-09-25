@@ -56,4 +56,10 @@ public class TerminalReadResultDTO {
      */
     private boolean bufferOverflow;
 
+    /** 终端断开原因；正常读取时为空。 */
+    private String disconnectReason;
+
+    /** 前端是否可以针对当前断开原因执行有限次数自动重连。 */
+    private boolean reconnectAllowed;
+
 }

@@ -56,6 +56,12 @@ public class TerminalReadResult {
      */
     private boolean bufferOverflow;
 
+    /** 终端断开原因；DATA/TIMEOUT/REPLACED 时为空。 */
+    private TerminalDisconnectReason disconnectReason;
+
+    /** 前端是否可以针对该原因执行有限次数自动重连。 */
+    private boolean reconnectAllowed;
+
 
     /**
      * Long Poll 返回状态。
@@ -127,6 +133,13 @@ public class TerminalReadResult {
      * 创建 SSH 断开响应。
      */
     public static TerminalReadResult disconnected(boolean eof) {
+        return disconnected(eof, TerminalDisconnectReason.CHANNEL_DISCONNECTED);
+    }
+
+    /** 创建带明确原因的终端断开响应。 */
+    public static TerminalReadResult disconnected(boolean eof, TerminalDisconnectReason reason) {
+        TerminalDisconnectReason actualReason = reason == null
+                ? TerminalDisconnectReason.SESSION_NOT_FOUND : reason;
         return TerminalReadResult.builder()
                 .status(Status.DISCONNECTED)
                 .data("")
@@ -135,6 +148,8 @@ public class TerminalReadResult {
                 .eof(eof)
                 .timeout(false)
                 .bufferOverflow(false)
+                .disconnectReason(actualReason)
+                .reconnectAllowed(actualReason.isReconnectAllowed())
                 .build();
     }
 
@@ -143,15 +158,7 @@ public class TerminalReadResult {
      * 创建 Reader 异常响应。
      */
     public static TerminalReadResult readerError() {
-        return TerminalReadResult.builder()
-                .status(Status.READER_ERROR)
-                .data("")
-                .hasData(false)
-                .connected(false)
-                .eof(false)
-                .timeout(false)
-                .bufferOverflow(false)
-                .build();
+        return readerError(false);
     }
 
     /**
@@ -166,6 +173,8 @@ public class TerminalReadResult {
                 .eof(false)
                 .timeout(false)
                 .bufferOverflow(false)
+                .disconnectReason(TerminalDisconnectReason.READER_ERROR)
+                .reconnectAllowed(true)
                 .build();
     }
 

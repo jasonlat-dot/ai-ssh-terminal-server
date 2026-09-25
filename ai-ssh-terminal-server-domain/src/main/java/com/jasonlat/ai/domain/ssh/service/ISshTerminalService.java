@@ -2,6 +2,7 @@ package com.jasonlat.ai.domain.ssh.service;
 
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -61,6 +62,9 @@ public interface ISshTerminalService {
      * @return 是否存在
      */
     boolean sessionExists(String sessionId);
+
+    /** 查询短期保留的终端结束原因。 */
+    TerminalTermination getTerminalTermination(String sessionId);
 
     /**
      * 读取终端当前输出（不执行命令，用于同步状态）
