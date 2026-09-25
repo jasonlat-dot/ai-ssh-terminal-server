@@ -1,5 +1,6 @@
 package com.jasonlat.ai.domain.agent.model.valobj.dynamic;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,8 +23,10 @@ import java.util.List;
 @NoArgsConstructor
 public class DynamicTask {
     /** 任务唯一标识，缺失时由 PlanParser / BatchSubAgentDispatchTool 自动生成 task-{uuid} */
+    @JsonAlias("id")
     private String taskId;
     /** 要派发的子 Agent 名称，必须存在于 AgentCatalog 注册表中 */
+    @JsonAlias("agent")
     private String agentName;
     /** 下发给子 Agent 的完整任务指令 */
     private String request;

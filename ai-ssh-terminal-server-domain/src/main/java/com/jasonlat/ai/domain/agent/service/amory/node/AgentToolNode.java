@@ -111,9 +111,17 @@ public class AgentToolNode extends AbstractAmorySupport {
                 adkTools.add(new SubAgentDispatchTool(subAgent, customRunnerFactory, agentEventPublisher));
             }
 
-            // 批量派发工具：主 Agent 自行拆解任务列表并发派发 2-11节，agentEventPublisher 推送。前后有好几个地方都要有这个。
+            List<String> allowedSubAgentNames = subAgentNames.stream()
+                    .map(subAgentName ->
+                            aiAgentConfigTableVO.getAppName()
+                                    + NAME_SEPARATOR
+                                    + subAgentName)
+                    .toList();
+
+            // 批量派发工具：主 Agent 自行拆解任务列表并发派发，agentEventPublisher 推送。
             adkTools.add(new BatchSubAgentDispatchTool(
-                    agents.stream().map(AiAgentConfigTableVO.Module.Agent::getName).toList(),
+                    aiAgentConfigTableVO.getAppName(),
+                    allowedSubAgentNames,
                     dynamicAgentOrchestrator,
                     agentEventPublisher));
 

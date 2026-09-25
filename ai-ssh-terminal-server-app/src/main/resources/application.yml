@@ -17,12 +17,12 @@ spring:
 #      termination-record-ttl-minutes: 5
 #      max-termination-records: 1000
 
-ai:
-  ssh:
-    # 后端到 SSH 服务器的全局 HTTP CONNECT 代理；代理必须允许 CONNECT 目标SSH端口。
-    http-proxy:
-      enabled: ${SSH_HTTP_PROXY_ENABLED:false}
-      host: ${SSH_HTTP_PROXY_HOST:}
-      port: ${SSH_HTTP_PROXY_PORT:8080}
-      username: ${SSH_HTTP_PROXY_USERNAME:}
-      password: ${SSH_HTTP_PROXY_PASSWORD:}
+#ai:
+#  ssh:
+#    # 后端到 SSH 服务器的全局 HTTP CONNECT 代理；代理必须允许 CONNECT 目标SSH端口。
+#    http-proxy:
+#      enabled: ${SSH_HTTP_PROXY_ENABLED:false}
+#      host: ${SSH_HTTP_PROXY_HOST:}
+#      port: ${SSH_HTTP_PROXY_PORT:8080}
+#      username: ${SSH_HTTP_PROXY_USERNAME:}
+#      password: ${SSH_HTTP_PROXY_PASSWORD:}
