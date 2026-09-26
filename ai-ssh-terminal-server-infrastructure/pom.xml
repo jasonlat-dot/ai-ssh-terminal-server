@@ -10,6 +10,10 @@
     <artifactId>ai-ssh-terminal-server-infrastructure</artifactId>
 
     <dependencies>
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+        </dependency>
 
 
         <dependency>

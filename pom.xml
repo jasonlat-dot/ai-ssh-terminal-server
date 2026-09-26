@@ -19,6 +19,7 @@
     <langchain4j.version>1.4.0</langchain4j.version>
     <postgresql.version>42.7.5</postgresql.version>
     <google.sdk.version>1.2.0</google.sdk.version>
+    <minio.version>8.5.17</minio.version>
   </properties>
   <developers>
     <developer>
@@ -47,6 +48,11 @@
   </repositories>
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>io.minio</groupId>
+        <artifactId>minio</artifactId>
+        <version>${minio.version}</version>
+      </dependency>
       <!--        谷歌adk 偏向于制作agent  start -->
       <dependency>
         <groupId>com.google.adk</groupId>

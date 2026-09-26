@@ -4,6 +4,14 @@ spring:
     name: ${rootArtifactId}-app
   profiles:
     active: sit
+  servlet:
+    multipart:
+      max-file-size: ${FILE_MAX_SIZE:20MB}
+      max-request-size: ${FILE_MAX_REQUEST_SIZE:21MB}
+      # 上传正文优先落临时磁盘，避免大量并发请求占满堆内存。
+      file-size-threshold: 0B
+      # 延迟到Controller参数绑定时解析，使文件接口的异常处理器能返回统一JSON。
+      resolve-lazily: true
 
 # SIT 会继续加载 application-sit.yml；终端容量配置放在公共配置中，所有环境使用同一组安全默认值。
 #ai:
@@ -18,6 +26,31 @@ spring:
 #      max-termination-records: 1000
 
 ai:
+  file:
+    upload:
+      max-file-size: ${FILE_MAX_SIZE:20MB}
+      max-concurrent-uploads: ${FILE_MAX_CONCURRENT_UPLOADS:4}
+      download-url-ttl: ${FILE_DOWNLOAD_URL_TTL:15m}
+      # 本阶段只做格式准入与存储，不做文档解析、病毒扫描或聊天绑定。
+      allowed-extensions: [png, jpg, jpeg, webp, pdf, txt, log, csv, json, yaml, yml, md, docx, xlsx]
+    storage:
+      default-id: ${FILE_STORAGE_DEFAULT_ID:minio-main}
+      minio:
+        # 默认不启用。未启用时上传接口返回 FILE_STORAGE_NOT_CONFIGURED，应用仍可启动。
+        enabled: ${MINIO_ENABLED:false}
+        storage-id: minio-main
+        endpoint: ${MINIO_ENDPOINT:}
+        # 浏览器可访问的对象API地址；为空时使用endpoint。不能填写MinIO控制台地址。
+        public-endpoint: ${MINIO_PUBLIC_ENDPOINT:}
+        access-key: ${MINIO_ACCESS_KEY:}
+        secret-key: ${MINIO_SECRET_KEY:}
+        # 预先创建私有桶，应用不会自动建桶或修改桶策略。
+        bucket: ${MINIO_BUCKET:}
+        region: ${MINIO_REGION:us-east-1}
+        connect-timeout: 5s
+        read-timeout: 30s
+        write-timeout: 60s
+        call-timeout: 2m
   ssh:
     command:
       # 连续没有命令输出时快速判定卡死；持续输出不会触发该限制。

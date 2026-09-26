@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jasonlat.ai.infrastructure.dao.IFileAssetDao">
+    <insert id="insert" parameterType="com.jasonlat.ai.infrastructure.dao.po.FileAssetPO">
+        INSERT INTO file_asset
+            (file_id, owner_id, original_name, content_type, size_bytes,
+             storage_id, bucket, object_key, status)
+        VALUES
+            (#{fileId}, #{ownerId}, #{originalName}, #{contentType}, #{size},
+             #{storageId}, #{bucket}, #{objectKey}, #{status})
+    </insert>
+
+    <update id="update" parameterType="com.jasonlat.ai.infrastructure.dao.po.FileAssetPO">
+        UPDATE file_asset
+        SET sha256 = #{sha256},
+            object_version = #{objectVersion},
+            etag = #{etag},
+            status = #{status},
+            error_code = #{errorCode},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE file_id = #{fileId}
+    </update>
+</mapper>
