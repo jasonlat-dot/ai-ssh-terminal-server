@@ -19,6 +19,9 @@ public class ReActEventDTO {
      */
     private String event;
 
+    /** event=error 时的业务错误码，前端无需解析中文提示来判断失败原因。 */
+    private String code;
+
     /**
      * 事件内容（文本、片断 ID 等）
      */

@@ -27,6 +27,8 @@ ai:
             chat-model:
               model: gpt-5.5
               reasoning-effort: medium
+              # 按实际模型和中转服务能力声明；不支持 PDF 的服务请移除 application/pdf。
+              supported-media-types: [image/png, image/jpeg, image/webp, application/pdf]
               tool-skills-list:
                 - type: resource
                   root-path: agent/skills

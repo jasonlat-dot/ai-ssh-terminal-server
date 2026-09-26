@@ -10,6 +10,11 @@
     <artifactId>ai-ssh-terminal-server-api</artifactId>
 
     <dependencies>
+        <!-- 请求中的服务端身份字段使用 JsonIgnore，不能接受客户端 JSON 注入。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

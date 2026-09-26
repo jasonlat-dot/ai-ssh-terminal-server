@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * @author jasonlat
@@ -60,6 +61,13 @@ public class RunnerNode extends AbstractAmorySupport {
 
         Runner Runner = getRunner(dynamicContext, aiAgentConfigTableVO, appName);
 
+        // 使用主 Runner 实际选中的模型配置；主 Agent 有覆盖配置时不能误用模块默认能力。
+        AiAgentConfigTableVO.Module module = aiAgentConfigTableVO.getModule();
+        AiAgentConfigTableVO.Module.ChatModel runnerModel = module.getLlmAgents().stream()
+                .filter(agent -> agent.getName().equals(module.getRunner().getAgentName()))
+                .map(agent -> agent.getChatModel() == null ? module.getChatModel() : agent.getChatModel())
+                .findFirst().orElse(module.getChatModel());
+
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()
                 .appName(appName)
                 .agentName(agentName)
@@ -69,7 +77,8 @@ public class RunnerNode extends AbstractAmorySupport {
                 .runner(Runner)
                 // 透传 Agent 的 API 配置与模型名，供意图识别等旁路能力复用（见 AiAgentRegisterVO）。这样就都统一了，都用一套LLM配置
                 .openAiApi(dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(appName)))
-                .chatModelName(aiAgentConfigTableVO.getModule().getChatModel().getModel())
+                .chatModelName(runnerModel.getModelOrDefault(module.getChatModel().getModel()))
+                .supportedMediaTypes(Set.copyOf(runnerModel.getSupportedMediaTypes()))
                 .build();
         // 把装配完成的子 Agent 分组登记到注册表，供子 Agent 派发时按名称查找
         agentCatalog.register(agentId, dynamicContext.getAgentGroup());

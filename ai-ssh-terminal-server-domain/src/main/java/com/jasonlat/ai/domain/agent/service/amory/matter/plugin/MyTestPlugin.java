@@ -40,10 +40,10 @@ public class MyTestPlugin extends BasePlugin {
     @Override
     public Maybe<Content> onUserMessageCallback(InvocationContext invocationContext, Content userMessage) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🚀 用户输入信息 | invocationId:{} | userId:{} | content:{}",
+            log.info("插件日志-🚀 用户输入信息 | invocationId:{} | userId:{} | partCount:{}",
                     invocationContext.invocationId(),
                     invocationContext.userId(),
-                    userMessage.text());
+                    userMessage.parts().map(java.util.List::size).orElse(0));
         });
     }
 
@@ -82,15 +82,11 @@ public class MyTestPlugin extends BasePlugin {
                     callbackContext.agentName(),
                     request.model().orElse("default"),
                     toolNames);
-            /*
-             * 这里记录的是 ADK 完成 system instruction、历史消息、当前消息和工具结果
-             * 组装之后，真正交给模型适配器的 LlmRequest。一次 ReAct 可能调用模型多次，
-             * 因而同一 invocationId 下会看到多条日志；后续日志会包含工具返回结果。
-             */
-            log.debug("上下文日志-📤 ADK 最终大模型请求 | invocationId:{} | agent:{} | request:{}",
+            // 请求中可能包含附件正文和 Base64；只记录规模，避免打印正文或额外复制整份媒体。
+            log.debug("上下文日志-📤 ADK 最终大模型请求 | invocationId:{} | agent:{} | messageCount:{}",
                     callbackContext.invocationId(),
                     callbackContext.agentName(),
-                    request.toJson());
+                    request.contents().size());
         });
     }
 

@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.jasonlat.ai.infrastructure.dao.IFileAssetDao">
+    <select id="findById" resultType="com.jasonlat.ai.infrastructure.dao.po.FileAssetPO">
+        SELECT file_id AS fileId, owner_id AS ownerId, original_name AS originalName,
+               content_type AS contentType, size_bytes AS size, sha256,
+               storage_id AS storageId, bucket, object_key AS objectKey,
+               object_version AS objectVersion, etag, status, error_code AS errorCode
+        FROM file_asset
+        WHERE file_id = #{fileId}
+    </select>
+
     <insert id="insert" parameterType="com.jasonlat.ai.infrastructure.dao.po.FileAssetPO">
         INSERT INTO file_asset
             (file_id, owner_id, original_name, content_type, size_bytes,

@@ -9,6 +9,8 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
+import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
+import com.jasonlat.ai.domain.agent.service.multimodal.ChatAttachmentService;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;
@@ -67,6 +69,9 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
     @Resource
     private ILongTermMemoryService longTermMemoryService;
 
+    @Resource
+    private ChatAttachmentService chatAttachmentService;
+
     @Override
     protected ReActResultDTO doApply(ChatRequest request, DefaultReActFactory.DynamicContext context) throws Exception {
         long nodeStartNanos = System.nanoTime();
@@ -86,6 +91,11 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         Runner runner = registration.getRunner();
         String userMessage = getLastUserMessage(request, context);
+
+        // 在意图识别和写入历史前完成附件校验；无效文件不进入模型调用链。
+        ChatAttachmentService.Prepared attachments = chatAttachmentService.prepare(
+                ChatRequestContentSupport.fileIds(request), request.getAuthenticatedUserId(), registration.getSupportedMediaTypes());
+        String historyMessage = userMessage + attachments.summary();
 
         // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
         context.resetRoundBuffers();
@@ -150,7 +160,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         prepareAdkInvocation(runner, context, trimmedHistory);
 
         // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
-        context.appendUserMessage(userMessage);
+        context.appendUserMessage(historyMessage);
         log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
                 context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
 
@@ -164,19 +174,22 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
 
 
+        List<Part> userParts = new ArrayList<>();
+        userParts.add(Part.fromText(enrichedMessage));
+        userParts.addAll(attachments.parts());
         Content userContent = Content.builder()
                 .role("user")
-                .parts(List.of(Part.fromText(enrichedMessage)))
+                .parts(userParts)
                 .build();
-        log.debug("上下文日志-📝 本次 ADK 当前用户消息 | sessionId:{} | userContent:{}",
-                context.getChatSessionId(), userContent.toJson());
+        // 媒体正文可能很大，不把 Base64 和文件内容写进日志。
+        log.debug("本次 ADK 用户消息 | sessionId:{} | partCount:{}", context.getChatSessionId(), userParts.size());
 
         // 用户消息落库 + 长期记忆提取（用户侧）：委托领域服务完成"消息落库 + 偏好记忆提取"闭环，
         // case 层不再直接调用仓储层。仅首轮（step==0）落库 user 消息，避免多轮循环重复写入。
         longTermMemoryService.saveUserMessage(
                 context.getUserId(),
                 context.getChatSessionId(),
-                userMessage,
+                historyMessage,
                 context.getCurrentIntent(),
                 context.getStep() == 0
         );
@@ -326,7 +339,10 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         ConcurrentHashMap<String, Object> contextHashMap = new ConcurrentHashMap<>();
         // 终端ID
-        contextHashMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, context.getTerminalSessionId());
+        // 图片/文件问答不要求 SSH 连接，ConcurrentHashMap 不能写入 null。
+        if (context.getTerminalSessionId() != null && !context.getTerminalSessionId().isBlank()) {
+            contextHashMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, context.getTerminalSessionId());
+        }
         contextHashMap.put(AdkToolProvider.PARENT_SESSION_ID, context.getChatSessionId());
         contextHashMap.put(AdkToolProvider.RUN_CANCELLATION, context.getRunCancellation());
 

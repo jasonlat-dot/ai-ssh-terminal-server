@@ -2,6 +2,8 @@ package com.jasonlat.ai.infrastructure.adapter.repository;
 
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
+import com.jasonlat.ai.domain.file.model.valobj.FileStatus;
+import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.infrastructure.dao.IFileAssetDao;
 import com.jasonlat.ai.infrastructure.dao.po.FileAssetPO;
 import org.springframework.stereotype.Repository;
@@ -13,6 +15,17 @@ public class FileAssetRepository implements IFileAssetRepository {
 
     public FileAssetRepository(IFileAssetDao dao) {
         this.dao = dao;
+    }
+
+    @Override
+    public FileAssetEntity findById(String fileId) {
+        FileAssetPO po = dao.findById(fileId);
+        if (po == null) return null;
+        return FileAssetEntity.builder()
+                .fileId(po.getFileId()).ownerId(po.getOwnerId()).originalName(po.getOriginalName())
+                .contentType(po.getContentType()).size(po.getSize()).sha256(po.getSha256())
+                .location(new ObjectLocation(po.getStorageId(), po.getBucket(), po.getObjectKey(), po.getObjectVersion()))
+                .etag(po.getEtag()).status(FileStatus.valueOf(po.getStatus())).errorCode(po.getErrorCode()).build();
     }
 
     @Override

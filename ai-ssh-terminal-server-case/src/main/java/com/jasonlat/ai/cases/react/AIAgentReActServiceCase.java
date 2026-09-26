@@ -6,6 +6,10 @@ import com.jasonlat.ai.cases.IAIAgentReActServiceCase;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.ReActStreamCancellation;
 import com.jasonlat.ai.cases.react.node.RootNode;
+import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
+import com.jasonlat.ai.domain.agent.service.multimodal.ChatAttachmentService;
+import com.jasonlat.ai.trigger.api.dto.ReActEventDTO;
+import com.jasonlat.ai.types.exception.AppException;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -47,6 +51,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
 
     @Resource
     private ObjectMapper objectMapper;
+
+    @Resource
+    private ChatAttachmentService chatAttachmentService;
 
     /** 只保留正在执行或排队的会话锁，最后一个使用者离开后自动删除。 */
     private final ConcurrentHashMap<String, SessionLock> sessionLocks = new ConcurrentHashMap<>();
@@ -116,6 +123,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
      */
     @Override
     public ResponseBodyEmitter chatStream(ChatRequest requestDTO) {
+        ChatRequestContentSupport.validateAndNormalize(requestDTO);
         long requestStartNanos = System.nanoTime();
         // 1. 创建 SSE 发射器（30 分钟超时）
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(30 * 60 * 1000L);
@@ -198,6 +206,7 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
      */
     @Override
     public String chat(ChatRequest requestDTO) {
+        ChatRequestContentSupport.validateAndNormalize(requestDTO);
         long requestStartNanos = System.nanoTime();
         log.info("ReAct链路-请求接收 | mode:sync | sessionId:{} | userId:{} | agentId:{} | "
                         + "terminalSessionId:{} | messageLength:{}",
@@ -211,17 +220,27 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     .emitter(new ResponseBodyEmitter(30 * 60 * 1000L))
                     .build();
 
-            ReActResultDTO result = rootNode.apply(requestDTO, dynamicContext);
+            ReActResultDTO result = executeWithAttachmentPermit(requestDTO, dynamicContext);
             log.info("ReAct链路-同步请求完成 | sessionId:{} | stopReason:{} | steps:{} | "
                             + "toolCalls:{} | contentLength:{} | durationMs:{}",
                     requestDTO.getSessionId(), result.getStopReason(), result.getTotalSteps(),
                     result.getTotalToolCalls(), safeLength(result.getContent()), elapsedMillis(requestStartNanos));
             return result.getContent();
 
+        } catch (AppException e) {
+            throw e;
         } catch (Exception e) {
             log.error("ReAct链路-同步请求异常 | sessionId:{} | durationMs:{}",
                     requestDTO.getSessionId(), elapsedMillis(requestStartNanos), e);
             return "Error: " + e.getMessage();
+        }
+    }
+
+    /** 附件许可覆盖整个执行链；异常、取消和正常结束都会释放。 */
+    private ReActResultDTO executeWithAttachmentPermit(ChatRequest request, DefaultReActFactory.DynamicContext context)
+            throws Exception {
+        try (ChatAttachmentService.Permit ignored = chatAttachmentService.acquire(ChatRequestContentSupport.hasAttachments(request))) {
+            return rootNode.apply(request, context);
         }
     }
 
@@ -257,13 +276,26 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
             listenerRegistered = true;
 
             log.info("ReAct链路-进入 RootNode | sessionId:{}", sessionId);
-            ReActResultDTO result = rootNode.apply(requestDTO, context);
+            ReActResultDTO result = executeWithAttachmentPermit(requestDTO, context);
 
             log.info("ReAct链路-流式请求完成 | sessionId:{} | steps:{} | toolCalls:{} | "
                             + "toolResults:{} | stopReason:{} | contentLength:{} | durationMs:{}",
                     sessionId, result.getTotalSteps(), result.getTotalToolCalls(),
                     result.getToolResults() == null ? 0 : result.getToolResults().size(),
                     result.getStopReason(), safeLength(result.getContent()), elapsedMillis(executionStartNanos));
+        } catch (AppException exception) {
+            // 异步附件校验错误必须作为协议事件返回，不能只关闭连接让前端看到网络失败。
+            try {
+                ReActEventDTO event = new ReActEventDTO();
+                event.setEvent("error");
+                event.setCode(exception.getCode());
+                event.setContent(exception.getInfo());
+                emitter.send(objectMapper.writeValueAsString(event) + "\n");
+                context.getCompleted().set(true);
+                emitter.complete();
+            } catch (Exception sendError) {
+                emitter.completeWithError(sendError);
+            }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             log.info("ReAct链路-流式任务已中断 | sessionId:{} | cancelled:{} | durationMs:{}",

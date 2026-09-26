@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.ai.openai.api.OpenAiApi;
+import java.util.Set;
 
 /**
  * @author jasonlat
@@ -56,4 +57,8 @@ public class AiAgentRegisterVO {
      * 智能体配置的模型名称（供意图识别复用）
      */
     private String chatModelName;
+
+    /** 主 Runner 模型声明支持的媒体类型；不根据模型名称猜测能力。 */
+    @Builder.Default
+    private Set<String> supportedMediaTypes = Set.of();
 }

@@ -26,7 +26,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
-/** 在应用层选定的存储上执行上传规则：准入检查、元数据落库、对象写入、签名和失败补偿。 */
+/** 统一文件业务：选择存储、上传准入、状态与补偿，以及已上传附件的受控读取。 */
 @Slf4j
 @Service
 public class FileService implements IFileService {
@@ -62,6 +62,43 @@ public class FileService implements IFileService {
             return doUpload(storage, command, fileName, input);
         } finally {
             uploadSlots.release();
+        }
+    }
+
+    @Override
+    public FileAssetEntity requireUploadedFile(String fileId, String authenticatedUserId, boolean allowAnonymous) {
+        if (fileId == null || !fileId.matches("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) {
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
+        }
+        FileAssetEntity asset = repository.findById(fileId);
+        if (asset == null) throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
+        // 沿用上传时的 Principal 归属，不能拿请求体 userId 冒充文件所有者。
+        if (asset.getOwnerId() == null ? !allowAnonymous
+                : !asset.getOwnerId().equals(authenticatedUserId)) {
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_FORBIDDEN);
+        }
+        if (asset.getStatus() != FileStatus.UPLOADED) {
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
+        }
+        return asset;
+    }
+
+    @Override
+    public byte[] readContent(FileAssetEntity asset, long maxBytes) {
+        if (asset.getSize() <= 0 || asset.getSize() > maxBytes || asset.getSize() >= Integer.MAX_VALUE) {
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_LIMIT);
+        }
+        IObjectStorageService storage = storageResolver.resolve(asset.getLocation().storageId());
+        try (InputStream input = storage.openRead(asset.getLocation())) {
+            // 多读一个字节检测对象被替换或长度失配，绝不使用无限制 readAllBytes。
+            byte[] bytes = input.readNBytes((int) asset.getSize() + 1);
+            String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            if (bytes.length != asset.getSize() || !sha256.equalsIgnoreCase(asset.getSha256())) {
+                throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
+            }
+            return bytes;
+        } catch (IOException | NoSuchAlgorithmException e) {
+            throw new AppException(ResponseCode.FILE_READ_FAILED.getCode(), ResponseCode.FILE_READ_FAILED.getInfo(), e);
         }
     }
 

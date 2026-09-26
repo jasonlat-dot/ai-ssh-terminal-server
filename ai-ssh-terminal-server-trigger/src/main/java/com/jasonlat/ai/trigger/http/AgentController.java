@@ -7,6 +7,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.jasonlat.ai.cases.IAIAgentReActServiceCase;
+import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.service.IChatService;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
@@ -28,6 +29,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
+import java.security.Principal;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -220,11 +222,12 @@ public class AgentController implements IAgentService {
 
     @Override
     @RequestMapping(value = "/chat", method = RequestMethod.POST)
-    public Response<ChatResponse> chat(@RequestBody ChatRequest request) {
+    public Response<ChatResponse> chat(@RequestBody ChatRequest request, Principal principal) {
         try {
             Objects.requireNonNull(request.getAgentId(), "智能体ID不能为空");
             Objects.requireNonNull(request.getUserId(), "用户ID不能为空");
-            Objects.requireNonNull(request.getMessage(), "用户消息不能为空");
+            ChatRequestContentSupport.validateAndNormalize(request);
+            request.setAuthenticatedUserId(principal == null ? null : principal.getName());
             Objects.requireNonNull(request.getSessionId(), "会话ID不能为空");
 
             log.info("智能体对话 agentId:{} userId:{}", request.getAgentId(), request.getUserId());
@@ -273,7 +276,7 @@ public class AgentController implements IAgentService {
 
     @Override
     @RequestMapping(value = "/chat_stream", method = RequestMethod.POST)
-    public ResponseBodyEmitter chatStream(@RequestBody ChatRequest request, HttpServletResponse response) {
+    public ResponseBodyEmitter chatStream(@RequestBody ChatRequest request, HttpServletResponse response, Principal principal) {
         log.info("智能体流式对话 agentId:{} userId:{}", request.getAgentId(), request.getUserId());
         response.setContentType("text/event-stream");
         response.setCharacterEncoding("UTF-8");
@@ -283,7 +286,9 @@ public class AgentController implements IAgentService {
         try {
             Objects.requireNonNull(request.getAgentId(), "智能体ID不能为空");
             Objects.requireNonNull(request.getUserId(), "用户ID不能为空");
-            Objects.requireNonNull(request.getMessage(), "用户消息不能为空");
+            ChatRequestContentSupport.validateAndNormalize(request);
+            // 在切换到异步线程前提取可信身份，不使用前端传入的 userId 校验附件所有权。
+            request.setAuthenticatedUserId(principal == null ? null : principal.getName());
 
             String sessionId = request.getSessionId();
             if (StringUtils.isNotBlank(sessionId)) {
@@ -299,6 +304,8 @@ public class AgentController implements IAgentService {
             request.setSessionId(sessionId);
 //            throw new IllegalArgumentException("这是测试报错");
             return agentReActServiceCase.chatStream(request);
+        } catch (AppException e) {
+            return errorStream(e.getInfo(), e.getCode());
         } catch (Exception e) {
             log.error("ReAct 流式对话初始化失败", e);
             return errorStream(e.getMessage());
@@ -306,10 +313,15 @@ public class AgentController implements IAgentService {
     }
 
     private ResponseBodyEmitter errorStream(String message) {
+        return errorStream(message, null);
+    }
+
+    private ResponseBodyEmitter errorStream(String message, String code) {
         ResponseBodyEmitter emitter = new ResponseBodyEmitter(60_000L);
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent(ReActEventTypeEnum.ERROR.getCode());
+            event.setCode(code);
             event.setContent(message == null ? "流式对话初始化失败" : message);
             emitter.send(objectMapper.writeValueAsString(event) + "\n");
             emitter.complete();

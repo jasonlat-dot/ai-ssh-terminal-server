@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 import java.util.List;
+import java.security.Principal;
 
 /**
  * 智能体服务接口
@@ -25,7 +26,7 @@ public interface IAgentService {
 
     Response<Boolean> stopChat(SessionDataRequest request);
 
-    Response<ChatResponse> chat(ChatRequest request);
+    Response<ChatResponse> chat(ChatRequest request, Principal principal);
 
-    public ResponseBodyEmitter chatStream(ChatRequest request, HttpServletResponse response);
+    ResponseBodyEmitter chatStream(ChatRequest request, HttpServletResponse response, Principal principal);
 }

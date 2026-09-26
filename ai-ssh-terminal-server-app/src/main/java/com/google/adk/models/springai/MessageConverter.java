@@ -188,21 +188,31 @@ public class MessageConverter {
             MimeType mimeType = MimeType.valueOf(blob.mimeType().get());
             org.springframework.core.io.ByteArrayResource resource =
                 new org.springframework.core.io.ByteArrayResource(blob.data().get());
-            mediaList.add(new Media(mimeType, resource));
+            // Spring AI 1.1.5 按 application/pdf 构造 input file；提供带扩展名的中性文件名。
+            mediaList.add("application/pdf".equals(mimeType.toString())
+                ? Media.builder().mimeType(mimeType).data(resource).name("attachment.pdf").build()
+                : new Media(mimeType, resource));
           } catch (Exception e) {
-            System.err.println("Warning: Failed to process media part: " + e.getMessage());
+            throw new IllegalArgumentException("无法转换内联媒体附件", e);
           }
+        } else {
+          throw new IllegalArgumentException("内联媒体缺少 MIME 或正文");
         }
       } else if (part.fileData().isPresent()) {
         com.google.genai.types.FileData fileData = part.fileData().get();
         if (fileData.mimeType().isPresent() && fileData.fileUri().isPresent()) {
           try {
             MimeType mimeType = MimeType.valueOf(fileData.mimeType().get());
+            if ("application/pdf".equals(mimeType.toString())) {
+              throw new IllegalArgumentException("PDF 必须先读取正文，再以内联数据发送");
+            }
             URI uri = URI.create(fileData.fileUri().get());
             mediaList.add(new Media(mimeType, uri));
           } catch (Exception e) {
-            System.err.println("Warning: Failed to process media part: " + e.getMessage());
+            throw new IllegalArgumentException("无法转换媒体附件引用", e);
           }
+        } else {
+          throw new IllegalArgumentException("媒体附件缺少 MIME 或 URI");
         }
       }
     }

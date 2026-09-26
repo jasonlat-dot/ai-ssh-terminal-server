@@ -26,12 +26,21 @@ spring:
 #      max-termination-records: 1000
 
 ai:
+  chat:
+    attachments:
+      max-files: ${CHAT_ATTACHMENT_MAX_FILES:4}
+      max-total-size: ${CHAT_ATTACHMENT_MAX_TOTAL_SIZE:20MB}
+      max-text-chars: ${CHAT_ATTACHMENT_MAX_TEXT_CHARS:60000}
+      # 覆盖附件读取到模型调用结束的整个过程，控制媒体字节在内存中的并发驻留。
+      max-concurrent-requests: ${CHAT_ATTACHMENT_MAX_CONCURRENT_REQUESTS:2}
+      # 兼容当前无统一登录的上传链路；启用认证后建议关闭，并使用 Principal 记录归属。
+      allow-anonymous-files: ${CHAT_ATTACHMENT_ALLOW_ANONYMOUS_FILES:true}
   file:
     upload:
       max-file-size: ${FILE_MAX_SIZE:20MB}
       max-concurrent-uploads: ${FILE_MAX_CONCURRENT_UPLOADS:4}
       download-url-ttl: ${FILE_DOWNLOAD_URL_TTL:15m}
-      # 本阶段只做格式准入与存储，不做文档解析、病毒扫描或聊天绑定。
+      # 上传只做格式准入与存储；聊天能识别哪些格式由独立的附件转换策略决定。
       allowed-extensions: [png, jpg, jpeg, webp, pdf, txt, log, csv, json, yaml, yml, md, docx, xlsx]
     storage:
       default-id: ${FILE_STORAGE_DEFAULT_ID:minio-main}

@@ -129,6 +129,8 @@ public class AiAgentConfigTableVO {
              * 推理强度；minimal、low、medium、high（仅推理模型生效，非推理模型忽略）
              */
             private String reasoningEffort = "medium";
+            /** 模型及实际接入网关支持的媒体 MIME；默认空列表，仅接收文字及转换后的文本文件。 */
+            private List<String> supportedMediaTypes = new ArrayList<>();
             /** mcp列表 */
             private List<ToolMcp> toolMcpList = new ArrayList<>(4);
             /** Skills */

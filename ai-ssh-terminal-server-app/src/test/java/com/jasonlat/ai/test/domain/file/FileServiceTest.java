@@ -37,6 +37,7 @@ class FileServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         service = new FileService(repository, policy, resolver);
+        when(resolver.defaultStorage()).thenReturn(storage);
         when(storage.storageId()).thenReturn("minio-main");
         when(storage.newLocation(anyString())).thenAnswer(invocation ->
                 new ObjectLocation("minio-main", "private-files", invocation.getArgument(0), null));
@@ -120,6 +121,39 @@ class FileServiceTest {
                     assertThrows(AppException.class, () -> upload("test.txt", "hello")).getCode());
         }
         verify(storage, times(2)).put(any(), any(), anyLong());
+    }
+
+    @Test
+    void attachmentReadRequiresOwnerAndCompletedUpload() {
+        String id = "a7779ff9-3443-48ed-8b17-d32e767d63df";
+        FileAssetEntity asset = FileAssetEntity.builder().fileId(id).ownerId("alice").status(FileStatus.UPLOADED).build();
+        when(repository.findById(id)).thenReturn(asset);
+        assertEquals("CHAT_ATTACHMENT_FORBIDDEN", assertThrows(AppException.class,
+                () -> service.requireUploadedFile(id, "bob", true)).getCode());
+        assertSame(asset, service.requireUploadedFile(id, "alice", false));
+        asset.setStatus(FileStatus.UPLOADING);
+        assertEquals("CHAT_ATTACHMENT_INVALID", assertThrows(AppException.class,
+                () -> service.requireUploadedFile(id, "alice", false)).getCode());
+        asset.setStatus(FileStatus.UPLOADED);
+        asset.setOwnerId(null);
+        assertEquals("CHAT_ATTACHMENT_FORBIDDEN", assertThrows(AppException.class,
+                () -> service.requireUploadedFile(id, null, false)).getCode());
+        assertSame(asset, service.requireUploadedFile(id, null, true));
+    }
+
+    @Test
+    void readsOriginalStorageVersionAndRejectsChangedContent() throws Exception {
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+        ObjectLocation location = new ObjectLocation("old-storage", "private-files", "uploads/object", "version-1");
+        FileAssetEntity asset = FileAssetEntity.builder().location(location).size(bytes.length)
+                .sha256(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))).build();
+        when(resolver.resolve("old-storage")).thenReturn(storage);
+        when(storage.openRead(location)).thenReturn(new ByteArrayInputStream(bytes),
+                new ByteArrayInputStream("other".getBytes(StandardCharsets.UTF_8)));
+        assertArrayEquals(bytes, service.readContent(asset, 100));
+        assertEquals("CHAT_ATTACHMENT_CONTENT_INVALID", assertThrows(AppException.class,
+                () -> service.readContent(asset, 100)).getCode());
+        verify(resolver, never()).defaultStorage();
     }
 
     private FileUploadResult upload(String name, String content) {

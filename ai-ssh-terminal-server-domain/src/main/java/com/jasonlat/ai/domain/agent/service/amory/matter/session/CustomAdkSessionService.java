@@ -533,9 +533,15 @@ public class CustomAdkSessionService implements BaseSessionService {
         }
 
         if (isActualUserMessage(event)) {
-            // 必须保留完整富化消息，否则动态上下文会在模型调用前被删除。
-            return event.toBuilder().build();
-//            return sanitizeUserEvent(event);
+            // live Session 已保留完整消息供本次调用使用；跨请求快照不能长期保留大块媒体字节。
+            // 新请求由业务历史投影，重新分析附件需要再次提交 fileId。
+            Content content = event.content().orElse(null);
+            if (content == null) return event.toBuilder().build();
+            List<Part> parts = content.parts().orElse(List.of()).stream()
+                    .map(part -> part.inlineData().isPresent() || part.fileData().isPresent()
+                            ? Part.fromText("[历史附件正文未保留，需要重新分析时请再次携带 fileId]") : part)
+                    .toList();
+            return event.toBuilder().content(content.toBuilder().parts(parts).build()).build();
         }
 
         String role = resolveRole(event);

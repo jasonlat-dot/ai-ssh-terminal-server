@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalMessageConverter;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -25,6 +27,24 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 
 class MessageConverterPatchTest {
+
+  @Test
+  void mediaStaysOnItsOwnTurnWithoutDuplicationAndPdfHasFilename() {
+    Content first = Content.builder().role("user")
+        .parts(List.of(Part.fromText("image"), Part.fromBytes(new byte[]{1}, "image/png"))).build();
+    Content reply = Content.builder().role("model").parts(List.of(Part.fromText("seen"))).build();
+    Content second = Content.builder().role("user")
+        .parts(List.of(Part.fromText("pdf"), Part.fromBytes(new byte[]{2}, "application/pdf"))).build();
+    Prompt prompt = new LocalMessageConverter(new ObjectMapper()).toLlmPrompt(LlmRequest.builder()
+        .model("test-model").contents(List.of(first, reply, second)).tools(Map.of()).build());
+    UserMessage firstMessage = assertInstanceOf(UserMessage.class, prompt.getInstructions().get(0));
+    UserMessage secondMessage = assertInstanceOf(UserMessage.class, prompt.getInstructions().get(2));
+    assertEquals(1, firstMessage.getMedia().size());
+    assertEquals("image/png", firstMessage.getMedia().getFirst().getMimeType().toString());
+    assertEquals(1, secondMessage.getMedia().size());
+    assertEquals("application/pdf", secondMessage.getMedia().getFirst().getMimeType().toString());
+    assertTrue(secondMessage.getMedia().getFirst().getName().endsWith(".pdf"));
+  }
 
   @Test
   void shouldPreserveFunctionCallIdInToolResponse() {

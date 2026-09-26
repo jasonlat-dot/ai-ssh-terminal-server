@@ -33,6 +33,15 @@ public enum ResponseCode {
     FILE_TYPE_NOT_ALLOWED("FILE_TYPE_NOT_ALLOWED", "不支持上传此文件类型"),
     FILE_UPLOAD_BUSY("FILE_UPLOAD_BUSY", "当前上传请求过多，请稍后重试"),
     FILE_UPLOAD_FAILED("FILE_UPLOAD_FAILED", "文件上传失败，请稍后重试"),
+    CHAT_CONTENT_REQUIRED("CHAT_CONTENT_REQUIRED", "消息文字和附件不能同时为空"),
+    CHAT_ATTACHMENT_INVALID("CHAT_ATTACHMENT_INVALID", "附件引用无效、重复或文件尚未上传成功"),
+    CHAT_ATTACHMENT_FORBIDDEN("CHAT_ATTACHMENT_FORBIDDEN", "无权使用该附件"),
+    CHAT_ATTACHMENT_LIMIT("CHAT_ATTACHMENT_LIMIT", "附件数量、总大小或文本长度超过对话限制"),
+    CHAT_ATTACHMENT_UNSUPPORTED("CHAT_ATTACHMENT_UNSUPPORTED", "对话暂不支持该文件格式，请使用 PNG、JPEG、WebP、PDF 或 UTF-8 文本文件"),
+    CHAT_ATTACHMENT_CONTENT_INVALID("CHAT_ATTACHMENT_CONTENT_INVALID", "附件内容与格式或上传记录不一致"),
+    CHAT_MODEL_MEDIA_UNSUPPORTED("CHAT_MODEL_MEDIA_UNSUPPORTED", "当前智能体未配置支持该媒体类型，请检查 chat-model.supported-media-types"),
+    CHAT_ATTACHMENT_BUSY("CHAT_ATTACHMENT_BUSY", "当前附件对话请求过多，请稍后重试"),
+    FILE_READ_FAILED("FILE_READ_FAILED", "读取附件失败，请稍后重试"),
 
     /**
      * 用户端错误

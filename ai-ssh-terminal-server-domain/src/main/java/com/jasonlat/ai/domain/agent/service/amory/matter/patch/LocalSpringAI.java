@@ -162,7 +162,7 @@ public class LocalSpringAI extends BaseLlm {
 
         try {
             Prompt prompt = messageConverter.toLlmPrompt(llmRequest);
-            log.debug("SpringAI chat Prompt: {}", prompt.toString());
+            log.debug("SpringAI chat messageCount: {}", prompt.getInstructions().size());
             observabilityHandler.logRequest(prompt.toString(), model());
 
             ChatResponse chatResponse = chatModel.call(prompt);
@@ -196,7 +196,7 @@ public class LocalSpringAI extends BaseLlm {
                 emitter -> {
                     try {
                         Prompt prompt = messageConverter.toLlmPrompt(llmRequest);
-                        log.debug("SpringAI streaming Prompt: {}", prompt.toString());
+                        log.debug("SpringAI streaming messageCount: {}", prompt.getInstructions().size());
                         observabilityHandler.logRequest(prompt.toString(), model());
 
                         Flux<ChatResponse> responseFlux = streamingChatModel.stream(prompt);

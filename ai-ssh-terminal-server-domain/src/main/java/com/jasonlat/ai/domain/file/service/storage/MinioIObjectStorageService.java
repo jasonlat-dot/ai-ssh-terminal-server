@@ -7,6 +7,7 @@ import com.jasonlat.ai.domain.file.model.valobj.StoredObject;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.ObjectWriteResponse;
 import io.minio.PutObjectArgs;
@@ -86,6 +87,20 @@ public class MinioIObjectStorageService implements IObjectStorageService {
                     .build());
             return new StoredObject(new ObjectLocation(storageId(), location.bucket(),
                     location.objectKey(), response.versionId()), response.etag());
+        } catch (Exception e) {
+            throw unavailable(e);
+        }
+    }
+
+    @Override
+    public InputStream openRead(ObjectLocation location) {
+        validateConfiguration();
+        try {
+            // 通过服务端 SDK 读取，模型无需访问内网 MinIO，也不依赖已过期的下载链接。
+            GetObjectArgs.Builder args = GetObjectArgs.builder()
+                    .bucket(location.bucket()).object(location.objectKey()).region(settings.region());
+            if (location.versionId() != null) args.versionId(location.versionId());
+            return clients().writer().getObject(args.build());
         } catch (Exception e) {
             throw unavailable(e);
         }

@@ -34,7 +34,7 @@ public class FileServiceConfiguration {
                 minio.getWriteTimeout(), minio.getCallTimeout());
     }
 
-    /** app 提供配置和已注册端口，存储选择规则由 case 层实现。 */
+    /** app 提供配置和已注册实现，按当前结构装配领域层存储选择器。 */
     @Bean
     public IObjectStorageResolver objectStorageResolver(FileStorageProperties properties, List<IObjectStorageService> ports) {
         return new DefaultIObjectStorageResolver(properties.getDefaultId(), ports);
