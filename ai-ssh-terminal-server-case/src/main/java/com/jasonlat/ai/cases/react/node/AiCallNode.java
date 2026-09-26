@@ -367,7 +367,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         AgentInvocationContext invocation = AgentInvocationContext.builder()
                 .terminalSessionId(context.getTerminalSessionId())
                 .rootSessionId(context.getChatSessionId())
-                .runnerAgentName(runner.appName())
+                .runnerAgentName(runner.agent().name())
                 .cancellation(context.getRunCancellation())
                 .attachmentScope(attachmentScope)
                 .build();

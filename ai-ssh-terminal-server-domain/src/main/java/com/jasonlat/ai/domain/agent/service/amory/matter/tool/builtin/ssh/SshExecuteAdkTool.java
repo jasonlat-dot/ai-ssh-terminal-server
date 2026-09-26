@@ -90,7 +90,7 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                 String command = String.valueOf(args.getOrDefault("command", ""));
                 String terminalSessionId = invocation.terminalSessionId();
 
-                String agentName = (String) toolContext.state().get(AdkToolProvider.RUNNER_AGENT_NAME);
+                String agentName = invocation.runnerAgentName();
                 if (agentName == null || agentName.isBlank()) {
                     agentName = toolContext.agentName();
                 }

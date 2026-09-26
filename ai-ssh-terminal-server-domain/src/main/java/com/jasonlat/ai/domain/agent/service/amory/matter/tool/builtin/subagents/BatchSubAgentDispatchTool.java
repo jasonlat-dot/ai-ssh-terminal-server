@@ -297,7 +297,7 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                     .invocationContext(invocation)
                     .userId(toolContext.userId())
                     .agentId(toolContext.agentName())
-                    .parentSessionKey(toolContext.sessionId())
+                    .parentSessionKey(invocation.rootSessionId())
                     .parentSessionId(toolContext.invocationId())
                     .parentToolCallId(toolContext.functionCallId().orElse(null))
                     .build();

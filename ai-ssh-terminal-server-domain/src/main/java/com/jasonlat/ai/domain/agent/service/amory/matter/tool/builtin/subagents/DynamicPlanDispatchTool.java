@@ -146,7 +146,7 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
                     .agentId(toolContext.agentName())
                     .parentSessionId(toolContext.invocationId())
                     .parentToolCallId(toolContext.functionCallId().orElse(null))
-                    .parentSessionKey(toolContext.sessionId())
+                    .parentSessionKey(invocation.rootSessionId())
                     .invocationContext(invocation)
                     .build();
 

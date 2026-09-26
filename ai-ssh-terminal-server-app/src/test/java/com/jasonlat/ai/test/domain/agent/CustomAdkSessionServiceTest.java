@@ -5,8 +5,10 @@ import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.SshExecuteAdkTool;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 
+import static org.junit.Assert.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -106,8 +109,12 @@ class CustomAdkSessionServiceTest {
 
         Session invocationSession = service.getSession("app", "user", "session-1", Optional.empty())
                 .blockingGet();
-        assertEquals("terminal-A", invocationSession.state().get(
-                SshExecuteAdkTool.TERMINAL_SESSION_STATE_KEY));
+        AgentInvocationContext invocation =
+                (AgentInvocationContext) invocationSession.state()
+                        .get(AgentInvocationContext.STATE_KEY);
+
+        Assertions.assertNotNull(invocation);
+        assertEquals("terminal-A", invocation.terminalSessionId());
         assertEquals(2, invocationSession.events().size());
         assertEquals("检查 Docker", invocationSession.events().get(0).stringifyContent());
         assertEquals("Docker 正常", invocationSession.events().get(1).stringifyContent());
