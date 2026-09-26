@@ -1,8 +1,8 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.impl;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.impl;
 
 import com.jasonlat.ai.domain.agent.model.valobj.properties.SshCommandSafetyProperties;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyDecision;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyPolicy;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyPolicy;
 import org.springframework.stereotype.Component;
 
 import java.text.Normalizer;

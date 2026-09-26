@@ -1,8 +1,8 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.assembly.impl;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.assembly.contributor;
 
 import com.google.adk.tools.BaseTool;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
-import com.jasonlat.ai.domain.agent.service.amory.matter.skills.SkillsToolCallbackFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.skills.SkillsToolCallbackFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.adapter.springai.SpringToolCallbackAdkAdapterFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.assembly.AgentToolContributor;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.assembly.valobj.AgentToolAssemblyContext;

@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents;
 
 import com.google.adk.events.Event;
 import com.google.adk.tools.ToolContext;
@@ -6,7 +6,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 
 import java.util.Map;

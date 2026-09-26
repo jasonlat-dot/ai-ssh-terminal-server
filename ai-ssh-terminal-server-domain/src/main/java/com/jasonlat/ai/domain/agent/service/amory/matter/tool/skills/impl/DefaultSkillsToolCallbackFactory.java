@@ -1,7 +1,7 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.skills.impl;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.skills.impl;
 
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
-import com.jasonlat.ai.domain.agent.service.amory.matter.skills.SkillsToolCallbackFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.skills.SkillsToolCallbackFactory;
 import org.springaicommunity.agent.tools.SkillsTool;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.core.io.ClassPathResource;

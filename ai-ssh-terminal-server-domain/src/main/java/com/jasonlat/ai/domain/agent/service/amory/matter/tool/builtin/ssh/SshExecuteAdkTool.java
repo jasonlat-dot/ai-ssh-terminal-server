@@ -1,13 +1,13 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh;
 
 import com.google.adk.events.Event;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.*;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyDecision;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyPolicy;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import io.reactivex.rxjava3.core.Single;

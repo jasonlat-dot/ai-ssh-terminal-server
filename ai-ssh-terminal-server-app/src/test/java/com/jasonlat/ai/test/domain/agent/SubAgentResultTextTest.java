@@ -4,7 +4,7 @@ import com.google.adk.events.Event;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.SubAgentResultText;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentResultText;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

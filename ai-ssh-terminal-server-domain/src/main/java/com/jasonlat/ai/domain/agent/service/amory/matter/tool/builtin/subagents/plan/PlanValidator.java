@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.subagents.plan;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan;
 
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
 import org.springframework.stereotype.Service;

@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.register;
 
 import com.google.adk.tools.BaseTool;
 

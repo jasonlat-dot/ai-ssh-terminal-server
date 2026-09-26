@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security;
 
 import lombok.Getter;
 
