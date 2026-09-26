@@ -12,6 +12,7 @@ import java.security.Principal;
 /** 独立文件上传入口，本阶段不绑定聊天消息，也不对外提供按 ID 读取或删除接口。 */
 @RestController
 @RequestMapping("/api/v1/files")
+@CrossOrigin("*")
 public class FileController {
     private final IFileServiceCase fileServiceCase;
 

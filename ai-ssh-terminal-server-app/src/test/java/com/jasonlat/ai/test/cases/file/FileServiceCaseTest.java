@@ -1,7 +1,7 @@
 package com.jasonlat.ai.test.cases.file;
 
 import com.jasonlat.ai.cases.file.FileServiceCase;
-import com.jasonlat.ai.cases.file.storage.ObjectStorageResolver;
+import com.jasonlat.ai.domain.file.service.storage.resolver.IObjectStorageResolver;
 import com.jasonlat.ai.domain.file.service.IFileService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -15,12 +15,12 @@ import static org.mockito.Mockito.*;
 class FileServiceCaseTest {
     @Test
     void missingStorageFailsBeforeOpeningStreamOrEnteringDomain() {
-        ObjectStorageResolver resolver = mock(ObjectStorageResolver.class);
+        IObjectStorageResolver resolver = mock(IObjectStorageResolver.class);
         IFileService service = mock(IFileService.class);
         MultipartFile file = mock(MultipartFile.class);
         when(resolver.defaultStorage()).thenThrow(new AppException(ResponseCode.FILE_STORAGE_NOT_CONFIGURED));
 
-        FileServiceCase serviceCase = new FileServiceCase(resolver, service);
+        FileServiceCase serviceCase = new FileServiceCase(service);
         AppException e = assertThrows(AppException.class, () -> serviceCase.upload(file, null));
 
         assertEquals("FILE_STORAGE_NOT_CONFIGURED", e.getCode());

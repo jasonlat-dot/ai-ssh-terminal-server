@@ -1,4 +1,4 @@
-package com.jasonlat.ai.infrastructure.model.settings;
+package com.jasonlat.ai.domain.file.model.valobj;
 
 import java.time.Duration;
 

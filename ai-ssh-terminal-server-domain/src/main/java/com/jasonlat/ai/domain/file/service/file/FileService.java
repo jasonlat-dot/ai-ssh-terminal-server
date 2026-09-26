@@ -1,9 +1,11 @@
-package com.jasonlat.ai.domain.file.service;
+package com.jasonlat.ai.domain.file.service.file;
 
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.*;
+import com.jasonlat.ai.domain.file.service.IFileService;
+import com.jasonlat.ai.domain.file.service.IObjectStorageService;
+import com.jasonlat.ai.domain.file.service.storage.resolver.IObjectStorageResolver;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
@@ -34,18 +36,23 @@ public class FileService implements IFileService {
     private final FileUploadPolicy policy;
     /** 当前实例的上传并发许可，限制向对象存储传输时的缓冲区占用。 */
     private final Semaphore uploadSlots;
+    /** 存储策略解析 */
+    private final IObjectStorageResolver storageResolver;
 
-    public FileService(IFileAssetRepository repository, FileUploadPolicy policy) {
+    public FileService(IFileAssetRepository repository, FileUploadPolicy policy, IObjectStorageResolver storageResolver) {
         this.repository = repository;
         this.policy = policy;
         this.uploadSlots = new Semaphore(policy.maxConcurrentUploads());
+        this.storageResolver = storageResolver;
     }
 
     /** 同步执行上传；输入流由调用方关闭，方法无论成功或失败都释放并发许可。 */
     @Override
-    public FileUploadResult upload(FileUploadCommand command, InputStream input, ObjectStoragePort storage) {
-        // 使用本次用例传入的策略，不读取默认配置，也不在共享服务上保存可变的当前存储。
+    public FileUploadResult upload(FileUploadCommand command, InputStream input) {
+
+        IObjectStorageService storage = storageResolver.defaultStorage();
         Objects.requireNonNull(storage, "storage");
+
         String fileName = validate(command, input);
         // 不排队等待许可，容量已满时立即返回 FILE_UPLOAD_BUSY，避免请求长期堆积。
         if (!uploadSlots.tryAcquire()) {
@@ -59,15 +66,19 @@ public class FileService implements IFileService {
     }
 
     /** 执行存储与数据库操作；两者不在同一事务中，因此失败后需要显式补偿。 */
-    private FileUploadResult doUpload(ObjectStoragePort storage, FileUploadCommand command,
-                                      String fileName, InputStream input) {
+    private FileUploadResult doUpload(IObjectStorageService storage, FileUploadCommand command, String fileName, InputStream input) {
         String fileId = UUID.randomUUID().toString();
         // 按 UTC 日期组织对象，随机 ID 避免同名覆盖，客户端文件名不参与路径拼接。
         String key = "uploads/" + LocalDate.now(ZoneOffset.UTC) + "/" + fileId;
         FileAssetEntity asset = FileAssetEntity.builder()
-                .fileId(fileId).ownerId(command.ownerId()).originalName(fileName)
-                .contentType(normalizeContentType(command.contentType())).size(command.size())
-                .location(storage.newLocation(key)).status(FileStatus.UPLOADING).build();
+                .fileId(fileId)
+                .ownerId(command.ownerId())
+                .originalName(fileName)
+                .contentType(normalizeContentType(command.contentType()))
+                .size(command.size())
+                .location(storage.newLocation(key))
+                .status(FileStatus.UPLOADING)
+                .build();
         try {
             // 先落元数据再上传。即使中途进程退出，仍可根据记录定位残留对象。
             repository.create(asset);
@@ -93,12 +104,12 @@ public class FileService implements IFileService {
 
             // 下载链接仅放进响应；数据库保留稳定对象位置，避免持久化已经过期的 URL。
             Instant expiresAt = Instant.now().plus(policy.downloadUrlTtl());
-            URI downloadUrl = storage.createDownloadUrl(
-                    asset.getLocation(), fileName, policy.downloadUrlTtl());
+            URI downloadUrl = storage.createDownloadUrl(asset.getLocation(), fileName, policy.downloadUrlTtl());
             asset.setStatus(FileStatus.UPLOADED);
+
             repository.update(asset);
-            log.info("文件上传完成 fileId={} storageId={} size={}",
-                    fileId, storage.storageId(), command.size());
+            log.info("文件上传完成 fileId={} storageId={} size={}", fileId, storage.storageId(), command.size());
+
             return new FileUploadResult(fileId, fileName, asset.getContentType(), command.size(),
                     asset.getSha256(), asset.getStatus().name(), downloadUrl.toString(), expiresAt);
         } catch (Exception failure) {
@@ -115,8 +126,7 @@ public class FileService implements IFileService {
     }
 
     /** 尽力删除残留对象并记录结果；补偿失败不能覆盖原始上传错误。 */
-    private void compensate(ObjectStoragePort storage, FileAssetEntity asset, Exception failure,
-                            boolean uploadConfirmed) {
+    private void compensate(IObjectStorageService storage, FileAssetEntity asset, Exception failure, boolean uploadConfirmed) {
         // PUT 超时可能只是响应丢失，甚至与后续 DELETE 交错；没有确认结果时保留待核对状态。
         asset.setStatus(uploadConfirmed ? FileStatus.FAILED : FileStatus.CLEANUP_REQUIRED);
         asset.setErrorCode(failure instanceof AppException e

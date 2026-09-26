@@ -1,8 +1,6 @@
 package com.jasonlat.ai.cases.file;
 
 import com.jasonlat.ai.cases.IFileServiceCase;
-import com.jasonlat.ai.cases.file.storage.ObjectStorageResolver;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadCommand;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadResult;
 import com.jasonlat.ai.domain.file.service.IFileService;
@@ -18,28 +16,27 @@ import java.io.InputStream;
 /** 文件上传应用门面：选择存储实例，隔离 Web 上传类型，管理输入流并转换领域结果。 */
 @Service
 public class FileServiceCase implements IFileServiceCase {
-    /** 应用层决定本次上传使用的存储；不直接依赖 MinIO、OSS 等具体实现。 */
-    private final ObjectStorageResolver storageResolver;
     /** 执行上传业务规则、元数据状态变更及失败补偿。 */
     private final IFileService fileService;
 
-    public FileServiceCase(ObjectStorageResolver storageResolver, IFileService fileService) {
-        this.storageResolver = storageResolver;
+    public FileServiceCase(IFileService fileService) {
         this.fileService = fileService;
     }
 
     /** authenticatedUserId 来自服务端认证上下文，不接受前端自报身份作为文件归属。 */
     @Override
     public FileUploadResponseDTO upload(MultipartFile file, String authenticatedUserId) {
+
         if (file == null) throw new AppException(ResponseCode.FILE_INVALID);
-        // 先选择并检查存储，配置缺失时不打开文件流，也不进入领域流程访问数据库。
-        ObjectStoragePort storage = storageResolver.defaultStorage();
+
         // MultipartFile 留在应用层；领域服务接收命令、输入流和选定的存储端口。
         try (InputStream input = file.getInputStream()) {
             FileUploadResult result = fileService.upload(new FileUploadCommand(
-                    file.getOriginalFilename(), file.getContentType(), file.getSize(), authenticatedUserId), input, storage);
+                    file.getOriginalFilename(), file.getContentType(), file.getSize(), authenticatedUserId), input);
+
             return new FileUploadResponseDTO(result.fileId(), result.fileName(), result.contentType(),
                     result.size(), result.sha256(), result.status(), result.downloadUrl(), result.urlExpiresAt());
+
         } catch (IOException e) {
             throw new AppException(ResponseCode.FILE_UPLOAD_FAILED.getCode(),
                     ResponseCode.FILE_UPLOAD_FAILED.getInfo(), e);

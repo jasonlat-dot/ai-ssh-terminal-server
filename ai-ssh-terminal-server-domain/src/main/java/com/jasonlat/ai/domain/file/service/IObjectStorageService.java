@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.file.adapter.port;
+package com.jasonlat.ai.domain.file.service;
 
 import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.domain.file.model.valobj.StoredObject;
@@ -8,7 +8,7 @@ import java.net.URI;
 import java.time.Duration;
 
 /** 对象存储策略。MinIO、OSS 等实现放在 infrastructure。 */
-public interface ObjectStoragePort {
+public interface IObjectStorageService {
     /** 当前存储实例的唯一 ID，与文件元数据中的 storageId 对应。 */
     String storageId();
 

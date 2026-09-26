@@ -1,9 +1,9 @@
-package com.jasonlat.ai.infrastructure.adapter.port.storage.minio;
+package com.jasonlat.ai.domain.file.service.storage;
 
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
+import com.jasonlat.ai.domain.file.model.valobj.MinioStorageSettings;
+import com.jasonlat.ai.domain.file.service.IObjectStorageService;
 import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.domain.file.model.valobj.StoredObject;
-import com.jasonlat.ai.infrastructure.model.settings.MinioStorageSettings;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.minio.GetPresignedObjectUrlArgs;
@@ -25,7 +25,7 @@ import java.util.Map;
 
 /** MinIO 存储适配器，封装 SDK 的上传、签名和删除操作，对上只暴露领域类型。 */
 @Component
-public class MinioObjectStorage implements ObjectStoragePort {
+public class MinioIObjectStorageService implements IObjectStorageService {
     /** 固定分片缓冲，结合上传并发限制控制内存，不随文件总大小分配 byte[]。 */
     private static final long PART_SIZE = 5L * 1024 * 1024;
     /** app 装配的连接参数快照，包含内部端点和可选的外部签名端点。 */
@@ -33,7 +33,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
     /** 首次使用时创建并复用；volatile 保证其他上传线程能看到完整初始化的客户端。 */
     private volatile Clients clients;
 
-    public MinioObjectStorage(MinioStorageSettings settings) {
+    public MinioIObjectStorageService(MinioStorageSettings settings) {
         this.settings = settings;
     }
 

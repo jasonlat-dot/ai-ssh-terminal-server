@@ -3,10 +3,10 @@ package com.jasonlat.ai.test.config;
 import com.jasonlat.ai.config.FileServiceConfiguration;
 import com.jasonlat.ai.config.SshInfrastructureConfiguration;
 import com.jasonlat.ai.config.properties.FileUploadProperties;
-import com.jasonlat.ai.cases.file.storage.ObjectStorageResolver;
+import com.jasonlat.ai.domain.file.service.storage.resolver.IObjectStorageResolver;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadPolicy;
-import com.jasonlat.ai.infrastructure.adapter.port.storage.minio.MinioObjectStorage;
-import com.jasonlat.ai.infrastructure.model.settings.MinioStorageSettings;
+import com.jasonlat.ai.domain.file.model.valobj.MinioStorageSettings;
+import com.jasonlat.ai.domain.file.service.storage.MinioIObjectStorageService;
 import com.jasonlat.ai.infrastructure.model.settings.SshCommandSettings;
 import com.jasonlat.ai.infrastructure.model.settings.SshHttpProxySettings;
 import com.jasonlat.ai.infrastructure.model.settings.TerminalSessionSettings;
@@ -23,17 +23,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class FileAndSshConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(FileServiceConfiguration.class, SshInfrastructureConfiguration.class)
-            .withBean(MinioObjectStorage.class);
+            .withBean(MinioIObjectStorageService.class);
 
     @Test
     void missingStorageStillStartsAndUploadResolutionReturnsBusinessError() {
         contextRunner.run(context -> {
-            assertThat(context).hasNotFailed().hasSingleBean(ObjectStorageResolver.class)
+            assertThat(context).hasNotFailed().hasSingleBean(IObjectStorageResolver.class)
                     .hasSingleBean(FileUploadPolicy.class).hasSingleBean(SshCommandSettings.class);
             assertThat(context.getBean(SshCommandSettings.class).idleTimeoutSeconds()).isEqualTo(10);
             assertThat(context.getBean(TerminalSessionSettings.class).maxTotalSessions()).isEqualTo(500);
             assertThat(context.getBean(SshHttpProxySettings.class).enabled()).isFalse();
-            ObjectStorageResolver resolver = context.getBean(ObjectStorageResolver.class);
+            IObjectStorageResolver resolver = context.getBean(IObjectStorageResolver.class);
             assertThat(assertThrows(AppException.class, resolver::defaultStorage).getCode())
                     .isEqualTo("FILE_STORAGE_NOT_CONFIGURED");
         });
@@ -79,7 +79,7 @@ class FileAndSshConfigurationTest {
     void incompleteMinioConfigurationFailsOnUseInsteadOfStartup() {
         contextRunner.withPropertyValues("ai.file.storage.minio.enabled=true").run(context -> {
             assertThat(context).hasNotFailed();
-            ObjectStorageResolver resolver = context.getBean(ObjectStorageResolver.class);
+            IObjectStorageResolver resolver = context.getBean(IObjectStorageResolver.class);
             assertThat(assertThrows(AppException.class, resolver::defaultStorage).getCode())
                     .isEqualTo("FILE_STORAGE_CONFIG_INVALID");
         });
