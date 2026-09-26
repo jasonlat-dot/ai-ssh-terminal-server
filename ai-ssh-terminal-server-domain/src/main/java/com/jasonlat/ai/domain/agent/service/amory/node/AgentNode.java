@@ -53,10 +53,9 @@ public class AgentNode extends AbstractAmorySupport {
         List<AiAgentConfigTableVO.Module.Agent> agentsConfig = aiAgentConfigTableVO.getModule().getLlmAgents();
         agentsConfig.forEach(agentConfig -> {
 
-            ChatModel chatModel = dynamicContext.getChatModelMap().get(agentConfig.getName());
-            if (chatModel == null) {
-                chatModel = dynamicContext.getChatModelMap().get(getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
-            }
+            // 选择实际模型，同时将对应媒体能力登记到当前 Agent。
+            ChatModel chatModel = dynamicContext.bindAgentChatModel(
+                    agentConfig.getName(), getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
 
             List<Object> adkTools = new ArrayList<>();
             // 原有 SSH 执行 Function 工具。

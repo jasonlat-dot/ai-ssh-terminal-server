@@ -12,8 +12,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.model.SessionSnapshot;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
+import com.jasonlat.ai.domain.agent.service.multimodal.context.InvocationAttachmentScope;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
@@ -98,6 +100,7 @@ public class CustomAdkSessionService implements BaseSessionService {
      * <p>工具结果不直接投影为孤立 FunctionResponse，避免破坏 ADK 协议配对；它们由
      * ToolResultProvider 以摘要形式进入动态 Prompt。</p>
      */
+    @Deprecated
     public void prepareInvocation(
             String appName,
             String userId,
@@ -105,10 +108,16 @@ public class CustomAdkSessionService implements BaseSessionService {
             List<Map<String, Object>> businessHistory,
             String terminalSessionId) {
 
-        ConcurrentHashMap<String, Object> contextMap = new ConcurrentHashMap<>();
-        contextMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+        AgentInvocationContext invocation = AgentInvocationContext.builder()
+                .terminalSessionId(terminalSessionId)
+                .rootSessionId(sessionId)
+                .runnerAgentName(appName)
+                .build();
 
-        prepareInvocation(appName, userId, sessionId, businessHistory, contextMap);
+        ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
+        initialState.put(AgentInvocationContext.STATE_KEY, invocation);
+
+        prepareInvocation(appName, userId, sessionId, businessHistory, initialState);
     }
 
     public void prepareInvocation(String appName, String userId, String sessionId,
@@ -139,7 +148,10 @@ public class CustomAdkSessionService implements BaseSessionService {
             snapshot.getRawEvents().addAll(projectedEvents);
             snapshot.setMediaReleased(false);
             snapshot.setLastUpdateTime(Instant.now());
-            // 存放动态数据
+
+            // 清除上一轮入口，再装入本轮状态。
+            // 只处理调用上下文，不清空需要跨轮保留的业务 state。
+            snapshot.getState().remove(AgentInvocationContext.STATE_KEY);
             snapshot.getState().putAll(context);
         }
 
@@ -158,6 +170,9 @@ public class CustomAdkSessionService implements BaseSessionService {
         int releasedEvents = 0;
         synchronized (snapshot) {
             snapshot.setMediaReleased(true);
+            // 这里只移除 Session 对上下文的引用，真正 close 由主请求负责。
+            snapshot.getState().remove(AgentInvocationContext.STATE_KEY);
+
             List<Event> events = snapshot.getRawEvents();
             for (int i = 0; i < events.size(); i++) {
                 Event original = events.get(i);
@@ -486,6 +501,10 @@ public class CustomAdkSessionService implements BaseSessionService {
                         if (snapshot.isMediaReleased()) storageEvent = withoutMedia(storageEvent);
                         snapshot.getRawEvents().add(storageEvent);
                         mergeStateDelta(snapshot, appendedEvent);
+                        // 本轮结束后的迟到回调不能恢复请求级上下文。
+                        if (snapshot.isMediaReleased()) {
+                            snapshot.getState().remove(AgentInvocationContext.STATE_KEY);
+                        }
                         trimEvents(snapshot.getRawEvents());
                         snapshot.setLastUpdateTime(resolveUpdateTime(appendedEvent));
                     }

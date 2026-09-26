@@ -8,10 +8,9 @@ import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import com.google.genai.types.Type;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.*;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvocationSupport;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentAttachmentSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.excution.DynamicAgentOrchestrator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanValidator;
@@ -67,6 +66,17 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
         this.eventPublisher = new SubAgentDispatchEventPublisher(agentEventPublisher);
     }
 
+    // 只接受任务输入字段，以及已经明确支持的别名。
+// 不接受 status、result 等由后端维护的执行字段。
+    private final Set<String> allowedFields = Set.of(
+            "taskId",
+            "agentName",
+            "request",
+            "dependsOn",
+            "timeoutSeconds",
+            "maxRetries"
+    );
+
     /**
      * 声明工具的函数签名：
      * tasks 为任务数组（每项含 agentName、request，可选 taskId/dependsOn/timeoutSeconds/maxRetries），
@@ -91,14 +101,15 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                 .description("""
                         一个待派发的子 Agent 任务。
                         字段规则：
-                        1. agentName 和 request 为必填字段。
+                        1. agentName 和 request 为必填字段。且必须是自己的 sub-agents 的名字
                         2. taskId 是当前批次内的任务唯一标识；省略时由后端自动生成。
                         3. dependsOn 只能引用当前 tasks 数组中其他任务的 taskId。
                         4. 没有前置依赖时，dependsOn 可以省略或传空数组。
                         5. timeoutSeconds 和 maxRetries 可以省略，由后端使用默认值。
                         6. 必须严格使用声明的字段名称，不要使用 id、agent、task、prompt、
                            dependencies 等别名，也不要添加未声明字段。
-                        """)
+                        7. 允许的任务实体字段有：
+                        """ + allowedFields.stream().toList())
                 .properties(ImmutableMap.of(
                         "taskId",
                         Schema.builder()
@@ -188,8 +199,9 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
-        Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
-        AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
+        AgentInvocationContext invocation = AgentInvocationSupport.require(toolContext);
+        AgentRunCancellation cancellation = invocation.cancellation();
+
         // 先发布工具调用，再执行计划，确保 UI 能展示“正在派发”状态。
         eventPublisher.publishCall(toolContext, name(), args);
         try {
@@ -200,6 +212,37 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
                 Map<String, Object> result = ImmutableMap.of("success", false, "error", "tasks is empty");
                 eventPublisher.publishResponse(toolContext, name(), result);
                 return Single.just(result);
+            }
+
+            for (int i = 0; i < rawTasks.size(); i++) {
+                Map<String, Object> item = rawTasks.get(i);
+
+                if (item == null) {
+                    Map<String, Object> result = Map.of(
+                            "success", false,
+                            "error", "tasks[" + i + "] 不能为空"
+                    );
+                    eventPublisher.publishResponse(toolContext, name(), result);
+                    return Single.just(result);
+                }
+
+                Set<String> unknownFields = new HashSet<>(item.keySet());
+                unknownFields.removeAll(allowedFields);
+
+                if (!unknownFields.isEmpty()) {
+                    // 仅记录字段名称，避免把任务正文和附件内容写入日志。
+                    log.warn("派发参数包含未知字段 taskIndex={} fields={}",
+                            i, unknownFields);
+
+                    Map<String, Object> result = Map.of(
+                            "success", false,
+                            "error", "tasks[" + i + "] 包含不支持的字段：" + unknownFields
+                                    + "。Agent 名称请使用 agentName，任务标识请使用 taskId，"
+                                    + "任务指令请使用 request。请修正参数后重新调用。"
+                    );
+                    eventPublisher.publishResponse(toolContext, name(), result);
+                    return Single.just(result);
+                }
             }
 
             /*
@@ -248,18 +291,15 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
             }
 
             // 构建执行上下文：透传父会话绑定的 SSH 终端会话，供子 Agent 内的 SSH 工具复用
-            Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
-            String terminalSessionId = terminalValue instanceof String value ? value : null;
             if (cancellation != null) cancellation.throwIfCancelled();
 
             AgentExecutionContext context = AgentExecutionContext.builder()
-                    .terminalSessionId(terminalSessionId)
+                    .invocationContext(invocation)
                     .userId(toolContext.userId())
                     .agentId(toolContext.agentName())
                     .parentSessionKey(toolContext.sessionId())
                     .parentSessionId(toolContext.invocationId())
                     .parentToolCallId(toolContext.functionCallId().orElse(null))
-                    .cancellation(cancellation)
                     .build();
 
             // 到这开始执行任务计划

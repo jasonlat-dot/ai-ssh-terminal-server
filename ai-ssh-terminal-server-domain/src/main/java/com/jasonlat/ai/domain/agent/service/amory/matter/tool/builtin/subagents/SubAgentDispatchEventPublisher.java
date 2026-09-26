@@ -6,6 +6,8 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvocationSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 
@@ -63,12 +65,12 @@ public final class SubAgentDispatchEventPublisher {
         if (agentEventPublisher == null) {
             return;
         }
-
+        AgentInvocationContext invocation = AgentInvocationSupport.find(toolContext);
+        String sessionId = invocation == null ? null : invocation.rootSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = toolContext == null ? null : toolContext.sessionId();
+        }
         String invocationId = toolContext == null ? null : toolContext.invocationId();
-        Object rootSession = toolContext == null ? null
-                : toolContext.state().get(AdkToolProvider.PARENT_SESSION_ID);
-        String sessionId = rootSession instanceof String value ? value
-                : toolContext == null ? null : toolContext.sessionId();
         String agentName = toolContext == null ? null : toolContext.agentName();
         String author = agentName == null || agentName.isBlank() || UNKNOWN.equals(agentName)
                 ? toolName

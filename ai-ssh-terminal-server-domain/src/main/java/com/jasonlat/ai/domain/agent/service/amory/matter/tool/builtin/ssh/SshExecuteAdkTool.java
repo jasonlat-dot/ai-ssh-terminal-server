@@ -4,6 +4,8 @@ import com.google.adk.events.Event;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.genai.types.*;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvocationSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
@@ -79,22 +81,23 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
         return Single.fromCallable(() -> {
-            Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
-            AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
+            AgentInvocationContext invocation = AgentInvocationSupport.require(toolContext);
+            AgentRunCancellation cancellation = invocation.cancellation();
             try {
-                if (cancellation != null) cancellation.registerCurrentThread();
+                if (cancellation != null) {
+                    cancellation.registerCurrentThread();
+                }
                 String command = String.valueOf(args.getOrDefault("command", ""));
-                Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
-                String terminalSessionId = terminalValue instanceof String value ? value : null;
+                String terminalSessionId = invocation.terminalSessionId();
 
                 String agentName = (String) toolContext.state().get(AdkToolProvider.RUNNER_AGENT_NAME);
                 if (agentName == null || agentName.isBlank()) {
                     agentName = toolContext.agentName();
                 }
                 // rootSessionId 用于事件路由；其余两个 ID 只用于恢复 UI 中的父子层级。
-                String rootSessionId = (String) toolContext.state().get(AdkToolProvider.PARENT_SESSION_ID);
-                String agentCallId = (String) toolContext.state().get(AdkToolProvider.NESTED_AGENT_CALL_ID);
-                String parentToolCallId = (String) toolContext.state().get(AdkToolProvider.PARENT_TOOL_CALL_ID);
+                String rootSessionId = invocation.rootSessionId();
+                String agentCallId = invocation.agentCallId();
+                String parentToolCallId = invocation.parentToolCallId();
                 String callId = toolContext.functionCallId().orElseGet(() -> "ssh_" + Event.generateEventId());
 
                 // 在真正执行前主动发布 FunctionCall，前端无需等命令结束即可显示“调用中”。

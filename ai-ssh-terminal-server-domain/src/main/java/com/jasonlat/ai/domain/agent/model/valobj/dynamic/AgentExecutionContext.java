@@ -1,5 +1,6 @@
 package com.jasonlat.ai.domain.agent.model.valobj.dynamic;
 
+import com.jasonlat.ai.domain.agent.service.multimodal.context.InvocationAttachmentScope;
 import lombok.Builder;
 import lombok.Value;
 
@@ -38,16 +39,23 @@ public class AgentExecutionContext {
     String parentToolCallId;
 
     /**
-     * 父会话绑定的 SSH 终端会话 ID，派发时透传给 SshExecuteAdkTool 的 ThreadLocal
-     */
-    String terminalSessionId;
-
-    /** 父请求的取消信号；并发派发任务不能只依赖父线程的中断状态。 */
-    AgentRunCancellation cancellation;
-
-    /**
      * 当前执行的任务 ID（预留）
      */
     String taskId;
 
+    /** 发起派发的 Agent 调用上下文，供执行器派生子调用上下文。 */
+    AgentInvocationContext invocationContext;
+
+    /** 保留原有读取方法，编排器的取消处理无需一起重写。 */
+    public AgentRunCancellation getCancellation() {
+        return invocationContext == null ? null : invocationContext.cancellation();
+    }
+
+    public String getTerminalSessionId() {
+        return invocationContext == null ? null : invocationContext.terminalSessionId();
+    }
+
+    public InvocationAttachmentScope getAttachmentScope() {
+        return invocationContext == null ? null : invocationContext.attachmentScope();
+    }
 }

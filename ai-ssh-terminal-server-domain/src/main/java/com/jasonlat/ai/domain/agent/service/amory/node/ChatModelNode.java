@@ -21,6 +21,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * @author jasonlat
@@ -33,9 +36,6 @@ public class ChatModelNode extends AbstractAmorySupport {
 
     @Resource
     private ToolAssemblyNode toolAssemblyNode;
-
-    @Resource
-    private DefaultMcpClientFactory mcpClientFactory;
 
     /**
      * 业务流程处理方法
@@ -56,9 +56,15 @@ public class ChatModelNode extends AbstractAmorySupport {
         AiAgentConfigTableVO.Module.ChatModel chatModelConfig = aiAgentConfigTableVO.getModule().getChatModel();
         // 获取默认配置的 openAiApi
         OpenAiApi defaultOpenAiApi = dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(aiAgentConfigTableVO.getAppName()));
+
         // 构建默认的 chatModel, 放入上下文。
+        String defaultModelKey = getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName());
         OpenAiChatModel defaultChatModel = buildChatModel(chatModelConfig, defaultOpenAiApi);
-        dynamicContext.getChatModelMap().put(getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()), defaultChatModel);
+
+        Set<String> defaultMediaTypes = resolveSupportedMediaTypes(chatModelConfig);
+        // 同一个键同时登记实际模型与其媒体能力。
+        dynamicContext.getChatModelMap().put(defaultModelKey, defaultChatModel);
+        dynamicContext.getChatModelMediaTypesMap().put(defaultModelKey, defaultMediaTypes);
 
         // 获取LlmAgents
         List<AiAgentConfigTableVO.Module.Agent> llmAgents = aiAgentConfigTableVO.getModule().getLlmAgents();
@@ -76,7 +82,10 @@ public class ChatModelNode extends AbstractAmorySupport {
                     llmAgentOpenAiApi = defaultOpenAiApi;
                 }
                 OpenAiChatModel llmAgentChatModel = buildChatModel(llmAgentChatModelConfig, llmAgentOpenAiApi);
+                Set<String> mediaTypes = resolveSupportedMediaTypes(llmAgentChatModelConfig);
+
                 dynamicContext.getChatModelMap().put(llmAgent.getName(), llmAgentChatModel);
+                dynamicContext.getChatModelMediaTypesMap().put(llmAgent.getName(), mediaTypes);
             }
         });
 
@@ -123,5 +132,23 @@ public class ChatModelNode extends AbstractAmorySupport {
                 .build();
     }
 
+    /**
+     * 空列表表示未声明媒体能力，仅支持文本。
+     * 这里只处理当前模型自己的配置，不在这里合并其他模型的能力。
+     */
+    private Set<String> resolveSupportedMediaTypes(AiAgentConfigTableVO.Module.ChatModel config) {
+        if (config.getSupportedMediaTypes() == null) {
+            return Set.of();
+        }
+
+        return config.getSupportedMediaTypes().stream()
+                .map(type -> {
+                    if (type == null || type.isBlank()) {
+                        throw new IllegalArgumentException("supported-media-types 不能包含空值");
+                    }
+                    return type.trim().toLowerCase(Locale.ROOT);
+                })
+                .collect(Collectors.toUnmodifiableSet());
+    }
 
 }

@@ -10,6 +10,8 @@ import com.google.genai.types.Part;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
+import com.jasonlat.ai.domain.agent.service.multimodal.context.InvocationAttachmentScope;
 import com.jasonlat.ai.domain.agent.service.multimodal.converter.ChatAttachmentService;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
@@ -97,247 +99,259 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         // 在意图识别和写入历史前完成附件校验；无效文件不进入模型调用链。
         ChatAttachmentService.Prepared attachments = chatAttachmentService.prepare(
                 ChatRequestContentSupport.fileIds(request), request.getAuthenticatedUserId(), registration.getSupportedMediaTypes());
-        String historyMessage = userMessage + attachments.summary();
+        try (InvocationAttachmentScope attachmentScope = new InvocationAttachmentScope(
+                             attachments.parts(), registration.getMediaTypesByAgent())) {
 
-        // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
-        context.resetRoundBuffers();
-        context.resetRoundToolCalls();
-        context.setStopReason(null);
-        context.setErrorMessage(null);
-        log.debug("ReAct链路-本轮缓冲已重置 | sessionId:{} | currentToolCalls:{} | "
-                        + "currentToolResults:{} | roundToolCalls:{}",
-                context.getChatSessionId(), context.getCurrentToolCalls().size(),
-                context.getCurrentToolResults().size(), context.getRoundToolCallCount().get());
+            String historyMessage = userMessage + attachments.summary();
 
-        // [Phase 3] 意图识别 —— 注入当前 Agent 的 API 配置后，再识别用户意图
-        // 复用智能体自己的模型配置，不单独配置意图识别模型
-        // 步骤：①configure 注入 API → ②classify 识别 → ③存入上下文 → ④不硬路由
-        IntentRequestVO.IntentRequestVOBuilder intentRequestVOBuilder = IntentRequestVO.builder()
-                .userId(context.getUserId())
-                .chatSessionId(context.getChatSessionId())
-                .userMessage(userMessage);
-        if (registration.getOpenAiApi() != null) {
-            intentRequestVOBuilder.llmIntentOpenAiApi(registration.getOpenAiApi());
-            intentRequestVOBuilder.llmIntentModelName(registration.getChatModelName());
-        }
-        IntentResultVO intentResult = intentService.classify(intentRequestVOBuilder.build());
-        log.info("识别到用户意图: {}, 置信度: {}, 候选: {}, 重分类: {}",
-                intentResult.getIntent().getLabel(),
-                intentResult.getConfidence(),
-                intentResult.getCandidateIntents(),
-                intentResult.isReclassified());
+            // 清空的是本次请求的输出缓冲，不清空 RootNode 刚加载的跨请求历史。
+            context.resetRoundBuffers();
+            context.resetRoundToolCalls();
+            context.setStopReason(null);
+            context.setErrorMessage(null);
+            log.debug("ReAct链路-本轮缓冲已重置 | sessionId:{} | currentToolCalls:{} | "
+                            + "currentToolResults:{} | roundToolCalls:{}",
+                    context.getChatSessionId(), context.getCurrentToolCalls().size(),
+                    context.getCurrentToolResults().size(), context.getRoundToolCallCount().get());
 
-        // 将意图保存到上下文供后续使用
-        context.setCurrentIntent(intentResult.getIntent().name());
-        context.setCurrentIntentResult(intentResult);
-        // 分类后同步任务态：处理 CONTINUE 续接、非业务意图跳过、新任务创建/覆盖。
-        syncTaskStateAfterClassification(context, userMessage, intentResult);
-
-        // COMPOUND / UNKNOWN / 低置信度：交给主模型自行判断，不再硬路由
-        if (intentResult.getIntent().equals(IntentTypeEnumVO.COMPOUND)) {
-            log.info("复合意图，候选 {} —— 交由主模型拆解", intentResult.getCandidateIntents());
-        } else if (intentResult.getIntent().equals(IntentTypeEnumVO.UNKNOWN) || intentResult.getConfidence() < 0.5) {
-            log.info("意图不确定 ({}，conf={}) —— 全交主模型决策", intentResult.getIntent(), intentResult.getConfidence());
-        }
-
-        /*
-         * 业务历史是唯一事实来源，ADK Session 只是本次调用的临时投影。
-         * RootNode 加载的是当前请求之前的历史，当前 user 会通过 runAsync 的 userContent
-         * 单独传入，因此裁剪结果可以直接投影给 ADK。
-         */
-        int historySizeBeforeTrim = context.getMessageHistory() == null
-                ? 0
-                : context.getMessageHistory().size();
-        long trimStartNanos = System.nanoTime();
-        log.info("ReAct链路-调用历史裁剪 | sessionId:{} | inputMessages:{} | tokenBudget:{}",
-                context.getChatSessionId(), historySizeBeforeTrim, 0);
-
-        List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(context.getMessageHistory(), 0);
-        context.setMessageHistory(new ArrayList<>(trimmedHistory));
-        log.info("ReAct链路-历史裁剪完成 | sessionId:{} | before:{} | after:{} | removed:{} | durationMs:{}",
-                context.getChatSessionId(), historySizeBeforeTrim, trimmedHistory.size(),
-                Math.max(0, historySizeBeforeTrim - trimmedHistory.size()), elapsedMillis(trimStartNanos));
-
-        // 同步覆盖 ADK 临时 Session：只投影裁剪后的历史和本次工具所需的终端会话 ID。
-        prepareAdkInvocation(runner, context, trimmedHistory);
-
-        // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
-        context.appendUserMessage(historyMessage);
-        log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
-                context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
-
-        // 动态 Prompt 只增强“本次用户消息”；原始消息仍保存在业务历史中，便于后续业务分析。
-        long promptStartNanos = System.nanoTime();
-        String enrichedMessage = buildEnrichedMessage(userMessage, context);
-        log.info("ReAct链路-动态 Prompt 构建完成 | sessionId:{} | originalLength:{} | "
-                        + "enrichedLength:{} | addedLength:{} | durationMs:{}",
-                context.getChatSessionId(), safeLength(userMessage), safeLength(enrichedMessage),
-                Math.max(0, safeLength(enrichedMessage) - safeLength(userMessage)), elapsedMillis(promptStartNanos));
-
-
-
-        List<Part> userParts = new ArrayList<>();
-        userParts.add(Part.fromText(enrichedMessage));
-        userParts.addAll(attachments.parts());
-        Content userContent = Content.builder()
-                .role("user")
-                .parts(userParts)
-                .build();
-        // 媒体正文可能很大，不把 Base64 和文件内容写进日志。
-        log.debug("本次 ADK 用户消息 | sessionId:{} | partCount:{}", context.getChatSessionId(), userParts.size());
-
-        // 用户消息落库 + 长期记忆提取（用户侧）：委托领域服务完成"消息落库 + 偏好记忆提取"闭环，
-        // case 层不再直接调用仓储层。仅首轮（step==0）落库 user 消息，避免多轮循环重复写入。
-        longTermMemoryService.saveUserMessage(
-                context.getUserId(),
-                context.getChatSessionId(),
-                historyMessage,
-                context.getCurrentIntent(),
-                context.getStep() == 0
-        );
-
-
-        // maxLlmCalls 限制的是 ADK 内部真实模型调用次数，而不是外层 Node 的执行次数。
-        RunConfig runConfig = RunConfig.builder()
-                .streamingMode(context.getStreamingMode())
-                .maxLlmCalls(context.getMaxLlmCalls())
-                .build();
-        log.debug("ReAct链路-RunConfig 构建完成 | sessionId:{} | streamingMode:{} | maxLlmCalls:{}",
-                context.getChatSessionId(), RunConfig.StreamingMode.SSE, context.getMaxLlmCalls());
-
-        ResponseBodyEmitter emitter = context.getEmitter();
-        // fullText 用于 SSE 累计正文和最终 DTO；assistantSegment 只保存尚未写入历史的连续文本段。
-        StringBuilder fullText = new StringBuilder();
-        StringBuilder assistantSegment = new StringBuilder();
-        boolean hasError = false;
-        int eventCount = 0;
-        Iterator<Event> eventIterator = null;
-
-        log.info("ADK invocation 开始 sessionId={}, userId={}, terminalSessionId={}, trimmedHistory={}, maxLlmCalls={}",
-                context.getChatSessionId(), context.getUserId(), context.getTerminalSessionId(),
-                trimmedHistory.size(), context.getMaxLlmCalls());
-        try {
-
-            eventIterator = runner.runAsync(context.getUserId(),
-                    context.getChatSessionId(), userContent, runConfig).blockingIterable().iterator();
-            while (eventIterator.hasNext()) {
-                Event event = eventIterator.next();
-                ensureNotCancelled(context);
-                eventCount++;
-
-                int functionCallCount = event.functionCalls().size();
-                int functionResponseCount = event.functionResponses().size();
-                log.debug("ReAct链路-收到 ADK Event | sessionId:{} | sequence:{} | eventId:{} | "
-                                + "author:{} | partial:{} | functionCalls:{} | functionResponses:{} | hasContent:{}",
-                        context.getChatSessionId(), eventCount, event.id(), event.author(),
-                        event.partial().orElse(false), functionCallCount, functionResponseCount,
-                        event.content().isPresent());
-
-                // 只转发 assistant/model 的纯文本 Part，FunctionCall/Response 由下方独立处理。
-                String eventText = extractAssistantText(event);
-                if (!eventText.isBlank()) {
-                    fullText.append(eventText);
-                    assistantSegment.append(eventText);
-                    log.debug("ReAct链路-处理 assistant 文本增量 | sessionId:{} | sequence:{} | "
-                                    + "chunkLength:{} | accumulatedLength:{}",
-                            context.getChatSessionId(), eventCount, eventText.length(), fullText.length());
-
-                    if (!sendTextEvent(emitter, eventText, fullText.toString())) {
-                        context.getCancelled().set(true);
-                        log.warn("ReAct链路-文本 SSE 发送失败，标记取消 | sessionId:{} | sequence:{}",
-                                context.getChatSessionId(), eventCount);
-                        ensureNotCancelled(context);
-                    }
-                }
-
-                // FunctionCall 表示 ADK 已决定并开始执行工具；这里只记录和通知前端，不执行工具。
-                List<Map<String, Object>> historyCalls = handleFunctionCalls(event.functionCalls(), context, emitter);
-                if (!historyCalls.isEmpty()) {
-                    // 工具调用是消息边界，先提交调用前的 assistant 文本，保证历史时序正确。
-                    flushAssistantSegment(context, assistantSegment);
-                    Map<String, Object> assistantToolCall = new HashMap<>();
-                    assistantToolCall.put("role", "assistant");
-                    assistantToolCall.put("content", "");
-                    assistantToolCall.put("tool_calls", historyCalls);
-                    context.appendMessage(assistantToolCall);
-                    log.debug("ReAct链路-assistant.tool_calls 已写入业务历史 | sessionId:{} | "
-                                    + "calls:{} | historySize:{}",
-                            context.getChatSessionId(), historyCalls.size(), context.getMessageHistory().size());
-                }
-
-                if (!event.functionResponses().isEmpty()) {
-                    // FunctionResponse 是 ADK 内部真实工具执行结果，以 toolCallId 与调用关联。
-                    flushAssistantSegment(context, assistantSegment);
-                    handleFunctionResponses(event.functionResponses(), context, emitter);
-                }
+            // [Phase 3] 意图识别 —— 注入当前 Agent 的 API 配置后，再识别用户意图
+            // 复用智能体自己的模型配置，不单独配置意图识别模型
+            // 步骤：①configure 注入 API → ②classify 识别 → ③存入上下文 → ④不硬路由
+            IntentRequestVO.IntentRequestVOBuilder intentRequestVOBuilder = IntentRequestVO.builder()
+                    .userId(context.getUserId())
+                    .chatSessionId(context.getChatSessionId())
+                    .userMessage(userMessage);
+            if (registration.getOpenAiApi() != null) {
+                intentRequestVOBuilder.llmIntentOpenAiApi(registration.getOpenAiApi());
+                intentRequestVOBuilder.llmIntentModelName(registration.getChatModelName());
             }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            context.getCancelled().set(true);
-            context.setStopReason(StopReasonEnum.USER_STOP.getCode());
-            log.info("ReAct链路-ADK invocation 已取消 | sessionId:{} | processedEvents:{} | "
-                            + "textLength:{} | toolCalls:{} | durationMs:{}",
-                    context.getChatSessionId(), eventCount, fullText.length(),
-                    context.getCurrentToolCalls().size(), elapsedMillis(nodeStartNanos));
-        } catch (Exception exception) {
-            if (context.getCancelled().get() || context.getRunCancellation().isCancelled()
-                    || Thread.currentThread().isInterrupted()) {
-                context.getCancelled().set(true);
-                context.setStopReason(StopReasonEnum.USER_STOP.getCode());
-                log.info("ReAct链路-ADK invocation 在取消后结束 | sessionId:{} | processedEvents:{} | cause:{}",
-                        context.getChatSessionId(), eventCount, safeMessage(exception));
-            } else {
-                hasError = true;
-                String errorMessage = "ADK Runner error: " + safeMessage(exception);
-                context.setErrorMessage(errorMessage);
-                context.setStopReason(StopReasonEnum.ERROR.getCode());
-                sendErrorEvent(emitter, errorMessage);
-                log.error("ReAct链路-ADK invocation 失败 | sessionId:{} | processedEvents:{} | "
-                                + "textLength:{} | toolCalls:{} | toolResults:{} | durationMs:{}",
-                        context.getChatSessionId(), eventCount, fullText.length(),
-                        context.getCurrentToolCalls().size(), context.getCurrentToolResults().size(),
-                        elapsedMillis(nodeStartNanos), exception);
-            }
-        } finally {
-            try {
-                // 提前退出 for/while 不会自动取消 Rx 订阅，先停止上游，避免取消后继续执行工具。
-                if (eventIterator instanceof Disposable disposable) disposable.dispose();
-            } finally {
-                // prepareAdkInvocation 已校验服务类型。此处仍持有流式会话执行锁。
-                ((CustomAdkSessionService) runner.sessionService()).releaseInvocationMedia(
-                        runner.appName(), context.getUserId(), context.getChatSessionId());
-            }
-            // 无论正常、取消还是异常，都保留已收到的文本，避免流式中途失败导致历史丢失。
-            flushAssistantSegment(context, assistantSegment);
-            context.appendAssistantContent(fullText.toString());
-        }
+            IntentResultVO intentResult = intentService.classify(intentRequestVOBuilder.build());
+            log.info("识别到用户意图: {}, 置信度: {}, 候选: {}, 重分类: {}",
+                    intentResult.getIntent().getLabel(),
+                    intentResult.getConfidence(),
+                    intentResult.getCandidateIntents(),
+                    intentResult.isReclassified());
 
-        // 外层 step 表示一次完整 ADK invocation；内部发生多少次 LLM/工具调用由 ADK 管理。
-        context.incrementStep();
-        context.getResult().setTotalSteps(context.getStep());
+            // 将意图保存到上下文供后续使用
+            context.setCurrentIntent(intentResult.getIntent().name());
+            context.setCurrentIntentResult(intentResult);
+            // 分类后同步任务态：处理 CONTINUE 续接、非业务意图跳过、新任务创建/覆盖。
+            syncTaskStateAfterClassification(context, userMessage, intentResult);
 
-        if (!fullText.isEmpty()) {
-            // 助手回复落库 + 结论记忆提取：委托领域服务完成闭环。
-            longTermMemoryService.saveAssistantMessage(
+            // COMPOUND / UNKNOWN / 低置信度：交给主模型自行判断，不再硬路由
+            if (intentResult.getIntent().equals(IntentTypeEnumVO.COMPOUND)) {
+                log.info("复合意图，候选 {} —— 交由主模型拆解", intentResult.getCandidateIntents());
+            } else if (intentResult.getIntent().equals(IntentTypeEnumVO.UNKNOWN) || intentResult.getConfidence() < 0.5) {
+                log.info("意图不确定 ({}，conf={}) —— 全交主模型决策", intentResult.getIntent(), intentResult.getConfidence());
+            }
+
+            /*
+             * 业务历史是唯一事实来源，ADK Session 只是本次调用的临时投影。
+             * RootNode 加载的是当前请求之前的历史，当前 user 会通过 runAsync 的 userContent
+             * 单独传入，因此裁剪结果可以直接投影给 ADK。
+             */
+            int historySizeBeforeTrim = context.getMessageHistory() == null
+                    ? 0
+                    : context.getMessageHistory().size();
+            long trimStartNanos = System.nanoTime();
+            log.info("ReAct链路-调用历史裁剪 | sessionId:{} | inputMessages:{} | tokenBudget:{}",
+                    context.getChatSessionId(), historySizeBeforeTrim, 0);
+
+            List<Map<String, Object>> trimmedHistory = chatContextService.trimHistory(context.getMessageHistory(), 0);
+            context.setMessageHistory(new ArrayList<>(trimmedHistory));
+            log.info("ReAct链路-历史裁剪完成 | sessionId:{} | before:{} | after:{} | removed:{} | durationMs:{}",
+                    context.getChatSessionId(), historySizeBeforeTrim, trimmedHistory.size(),
+                    Math.max(0, historySizeBeforeTrim - trimmedHistory.size()), elapsedMillis(trimStartNanos));
+
+            // 同步覆盖 ADK 临时 Session：只投影裁剪后的历史和本次工具所需的终端会话 ID。
+            prepareAdkInvocation(runner, context, trimmedHistory, attachmentScope);
+
+            // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
+            context.appendUserMessage(historyMessage);
+            log.debug("上下文日志-📚 本次投影到 ADK 的历史 | sessionId:{} | messages:{}",
+                    context.getChatSessionId(), objectMapper.writeValueAsString(trimmedHistory));
+
+            // 动态 Prompt 只增强“本次用户消息”；原始消息仍保存在业务历史中，便于后续业务分析。
+            long promptStartNanos = System.nanoTime();
+            String enrichedMessage = buildEnrichedMessage(userMessage, context);
+            log.info("ReAct链路-动态 Prompt 构建完成 | sessionId:{} | originalLength:{} | "
+                            + "enrichedLength:{} | addedLength:{} | durationMs:{}",
+                    context.getChatSessionId(), safeLength(userMessage), safeLength(enrichedMessage),
+                    Math.max(0, safeLength(enrichedMessage) - safeLength(userMessage)), elapsedMillis(promptStartNanos));
+
+
+            List<Part> userParts = new ArrayList<>();
+            userParts.add(Part.fromText(enrichedMessage));
+            userParts.addAll(attachments.parts());
+            Content userContent = Content.builder()
+                    .role("user")
+                    .parts(userParts)
+                    .build();
+            // 媒体正文可能很大，不把 Base64 和文件内容写进日志。
+            log.debug("本次 ADK 用户消息 | sessionId:{} | partCount:{}", context.getChatSessionId(), userParts.size());
+
+            // 用户消息落库 + 长期记忆提取（用户侧）：委托领域服务完成"消息落库 + 偏好记忆提取"闭环，
+            // case 层不再直接调用仓储层。仅首轮（step==0）落库 user 消息，避免多轮循环重复写入。
+            longTermMemoryService.saveUserMessage(
                     context.getUserId(),
                     context.getChatSessionId(),
-                    fullText.toString()
+                    historyMessage,
+                    context.getCurrentIntent(),
+                    context.getStep() == 0
             );
+
+
+            // maxLlmCalls 限制的是 ADK 内部真实模型调用次数，而不是外层 Node 的执行次数。
+            RunConfig runConfig = RunConfig.builder()
+                    .streamingMode(context.getStreamingMode())
+                    .maxLlmCalls(context.getMaxLlmCalls())
+                    .build();
+            log.debug("ReAct链路-RunConfig 构建完成 | sessionId:{} | streamingMode:{} | maxLlmCalls:{}",
+                    context.getChatSessionId(), RunConfig.StreamingMode.SSE, context.getMaxLlmCalls());
+
+            ResponseBodyEmitter emitter = context.getEmitter();
+            // fullText 用于 SSE 累计正文和最终 DTO；assistantSegment 只保存尚未写入历史的连续文本段。
+            StringBuilder fullText = new StringBuilder();
+            StringBuilder assistantSegment = new StringBuilder();
+            boolean hasError = false;
+            int eventCount = 0;
+            Iterator<Event> eventIterator = null;
+
+            log.info("ADK invocation 开始 sessionId={}, userId={}, terminalSessionId={}, trimmedHistory={}, maxLlmCalls={}",
+                    context.getChatSessionId(), context.getUserId(), context.getTerminalSessionId(),
+                    trimmedHistory.size(), context.getMaxLlmCalls());
+            try {
+
+                eventIterator = runner.runAsync(context.getUserId(),
+                        context.getChatSessionId(), userContent, runConfig).blockingIterable().iterator();
+                while (eventIterator.hasNext()) {
+                    Event event = eventIterator.next();
+                    ensureNotCancelled(context);
+                    eventCount++;
+
+                    int functionCallCount = event.functionCalls().size();
+                    int functionResponseCount = event.functionResponses().size();
+                    log.debug("ReAct链路-收到 ADK Event | sessionId:{} | sequence:{} | eventId:{} | "
+                                    + "author:{} | partial:{} | functionCalls:{} | functionResponses:{} | hasContent:{}",
+                            context.getChatSessionId(), eventCount, event.id(), event.author(),
+                            event.partial().orElse(false), functionCallCount, functionResponseCount,
+                            event.content().isPresent());
+
+                    // 只转发 assistant/model 的纯文本 Part，FunctionCall/Response 由下方独立处理。
+                    String eventText = extractAssistantText(event);
+                    if (!eventText.isBlank()) {
+                        fullText.append(eventText);
+                        assistantSegment.append(eventText);
+                        log.debug("ReAct链路-处理 assistant 文本增量 | sessionId:{} | sequence:{} | "
+                                        + "chunkLength:{} | accumulatedLength:{}",
+                                context.getChatSessionId(), eventCount, eventText.length(), fullText.length());
+
+                        if (!sendTextEvent(emitter, eventText, fullText.toString())) {
+                            context.getCancelled().set(true);
+                            log.warn("ReAct链路-文本 SSE 发送失败，标记取消 | sessionId:{} | sequence:{}",
+                                    context.getChatSessionId(), eventCount);
+                            ensureNotCancelled(context);
+                        }
+                    }
+
+                    // FunctionCall 表示 ADK 已决定并开始执行工具；这里只记录和通知前端，不执行工具。
+                    List<Map<String, Object>> historyCalls = handleFunctionCalls(event.functionCalls(), context, emitter);
+                    if (!historyCalls.isEmpty()) {
+                        // 工具调用是消息边界，先提交调用前的 assistant 文本，保证历史时序正确。
+                        flushAssistantSegment(context, assistantSegment);
+                        Map<String, Object> assistantToolCall = new HashMap<>();
+                        assistantToolCall.put("role", "assistant");
+                        assistantToolCall.put("content", "");
+                        assistantToolCall.put("tool_calls", historyCalls);
+                        context.appendMessage(assistantToolCall);
+                        log.debug("ReAct链路-assistant.tool_calls 已写入业务历史 | sessionId:{} | "
+                                        + "calls:{} | historySize:{}",
+                                context.getChatSessionId(), historyCalls.size(), context.getMessageHistory().size());
+                    }
+
+                    if (!event.functionResponses().isEmpty()) {
+                        // FunctionResponse 是 ADK 内部真实工具执行结果，以 toolCallId 与调用关联。
+                        flushAssistantSegment(context, assistantSegment);
+                        handleFunctionResponses(event.functionResponses(), context, emitter);
+                    }
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                context.getCancelled().set(true);
+                context.setStopReason(StopReasonEnum.USER_STOP.getCode());
+                log.info("ReAct链路-ADK invocation 已取消 | sessionId:{} | processedEvents:{} | "
+                                + "textLength:{} | toolCalls:{} | durationMs:{}",
+                        context.getChatSessionId(), eventCount, fullText.length(),
+                        context.getCurrentToolCalls().size(), elapsedMillis(nodeStartNanos));
+            } catch (Exception exception) {
+                if (context.getCancelled().get() || context.getRunCancellation().isCancelled()
+                        || Thread.currentThread().isInterrupted()) {
+                    context.getCancelled().set(true);
+                    context.setStopReason(StopReasonEnum.USER_STOP.getCode());
+                    log.info("ReAct链路-ADK invocation 在取消后结束 | sessionId:{} | processedEvents:{} | cause:{}",
+                            context.getChatSessionId(), eventCount, safeMessage(exception));
+                } else {
+                    hasError = true;
+                    String errorMessage = "ADK Runner error: " + safeMessage(exception);
+                    context.setErrorMessage(errorMessage);
+                    context.setStopReason(StopReasonEnum.ERROR.getCode());
+                    sendErrorEvent(emitter, errorMessage);
+                    log.error("ReAct链路-ADK invocation 失败 | sessionId:{} | processedEvents:{} | "
+                                    + "textLength:{} | toolCalls:{} | toolResults:{} | durationMs:{}",
+                            context.getChatSessionId(), eventCount, fullText.length(),
+                            context.getCurrentToolCalls().size(), context.getCurrentToolResults().size(),
+                            elapsedMillis(nodeStartNanos), exception);
+                }
+            } finally {
+                try {
+                    // 停止消费并取消上游订阅。
+                    if (eventIterator instanceof Disposable disposable) {
+                        disposable.dispose();
+                    }
+                } finally {
+                    // 即使取消订阅出现异常，也尝试保留已经收到的回复。
+                    try {
+                        flushAssistantSegment(context, assistantSegment);
+                    } finally {
+                        context.appendAssistantContent(fullText.toString());
+                    }
+                }
+            }
+
+            // 外层 step 表示一次完整 ADK invocation；内部发生多少次 LLM/工具调用由 ADK 管理。
+            context.incrementStep();
+            context.getResult().setTotalSteps(context.getStep());
+
+            if (!fullText.isEmpty()) {
+                // 助手回复落库 + 结论记忆提取：委托领域服务完成闭环。
+                longTermMemoryService.saveAssistantMessage(
+                        context.getUserId(),
+                        context.getChatSessionId(),
+                        fullText.toString()
+                );
+            }
+
+            boolean roundEndSent = sendRoundEndEvent(emitter, context.getStep(), context.getMaxSteps(), context.getTotalToolCallCount().get());
+
+            log.info("ReAct链路-AiCallNode 完成 | sessionId:{} | events:{} | toolCalls:{} | "
+                            + "toolResults:{} | textLength:{} | historySize:{} | roundEndSent:{} | "
+                            + "stopReason:{} | error:{} | durationMs:{}",
+                    context.getChatSessionId(), eventCount, context.getCurrentToolCalls().size(),
+                    context.getCurrentToolResults().size(), fullText.length(), context.getMessageHistory().size(),
+                    roundEndSent, context.getStopReason(), hasError, elapsedMillis(nodeStartNanos));
+            return router(request, context);
+        } finally {
+            // 覆盖正常结束、异常、取消及 prepare 后 Runner 启动失败的情况。
+            ((CustomAdkSessionService) runner.sessionService())
+                    .releaseInvocationMedia(
+                            runner.appName(),
+                            context.getUserId(),
+                            context.getChatSessionId());
         }
-
-        boolean roundEndSent = sendRoundEndEvent(emitter, context.getStep(), context.getMaxSteps(), context.getTotalToolCallCount().get());
-
-        log.info("ReAct链路-AiCallNode 完成 | sessionId:{} | events:{} | toolCalls:{} | "
-                        + "toolResults:{} | textLength:{} | historySize:{} | roundEndSent:{} | "
-                        + "stopReason:{} | error:{} | durationMs:{}",
-                context.getChatSessionId(), eventCount, context.getCurrentToolCalls().size(),
-                context.getCurrentToolResults().size(), fullText.length(), context.getMessageHistory().size(),
-                roundEndSent, context.getStopReason(), hasError, elapsedMillis(nodeStartNanos));
-        return router(request, context);
     }
 
     private void prepareAdkInvocation(Runner runner, DefaultReActFactory.DynamicContext context,
-                                      List<Map<String, Object>> priorHistory) {
+                                      List<Map<String, Object>> priorHistory, InvocationAttachmentScope attachmentScope) {
         long startNanos = System.nanoTime();
         log.info("ReAct链路-准备 ADK Session 投影 | sessionId:{} | appName:{} | historySize:{} | "
                         + "terminalSessionIdPresent:{}",
@@ -350,18 +364,19 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             throw new IllegalStateException("Runner must use CustomAdkSessionService for business-managed history");
         }
 
-        ConcurrentHashMap<String, Object> contextHashMap = new ConcurrentHashMap<>();
-        // 终端ID
-        // 图片/文件问答不要求 SSH 连接，ConcurrentHashMap 不能写入 null。
-        if (context.getTerminalSessionId() != null && !context.getTerminalSessionId().isBlank()) {
-            contextHashMap.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, context.getTerminalSessionId());
-        }
-        contextHashMap.put(AdkToolProvider.PARENT_SESSION_ID, context.getChatSessionId());
-        contextHashMap.put(AdkToolProvider.RUN_CANCELLATION, context.getRunCancellation());
+        AgentInvocationContext invocation = AgentInvocationContext.builder()
+                .terminalSessionId(context.getTerminalSessionId())
+                .rootSessionId(context.getChatSessionId())
+                .runnerAgentName(runner.appName())
+                .cancellation(context.getRunCancellation())
+                .attachmentScope(attachmentScope)
+                .build();
+        ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
 
-        sessionService.prepareInvocation(
-                runner.appName(), context.getUserId(), context.getChatSessionId(),
-                priorHistory, contextHashMap);
+        // 每轮整体替换上下文，空终端不会沿用上一轮的终端。
+        initialState.put(AgentInvocationContext.STATE_KEY, invocation);
+
+        sessionService.prepareInvocation(runner.appName(), context.getUserId(), context.getChatSessionId(), priorHistory, initialState);
         log.info("ReAct链路-ADK Session 投影完成 | sessionId:{} | projectedMessages:{} | durationMs:{}",
                 context.getChatSessionId(), sizeOf(priorHistory), elapsedMillis(startNanos));
     }

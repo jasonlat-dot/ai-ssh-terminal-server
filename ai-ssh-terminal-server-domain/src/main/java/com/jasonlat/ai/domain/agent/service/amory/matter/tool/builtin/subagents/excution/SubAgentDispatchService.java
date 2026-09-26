@@ -9,18 +9,17 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTask;
-import com.jasonlat.ai.domain.agent.model.valobj.dynamic.TaskStatus;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.*;
 import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentAttachmentSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentResultText;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.SubAgentDispatchTool;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -133,8 +132,7 @@ public class SubAgentDispatchService {
      * 已完成取消线程登记后的实际执行逻辑。一个重试 attempt 对应一个新的 agentCallId，
      * 因此前端能够把失败尝试与后续重试显示为不同的子 Agent 活动。
      */
-    private void executeRegistered(AgentExecutionContext context, DynamicTask task,
-                                   AgentRunCancellation cancellation) {
+    private void executeRegistered(AgentExecutionContext context, DynamicTask task, AgentRunCancellation cancellation) {
         task.setStatus(TaskStatus.RUNNING);
         String invocationId = UUID.randomUUID().toString();
         BaseAgent agent = agentCatalog.find(context.getAgentId(), task.getAgentName())
@@ -166,22 +164,11 @@ public class SubAgentDispatchService {
 
                 // 子 Runner 使用独立 ADK Session，继承取消句柄和父调用关联信息。
                 // SSH 终端绑定是可选的：存在时传递；实际执行 SSH 命令时再校验。
-                ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
-                String terminalSessionId = context.getTerminalSessionId();
-                if (terminalSessionId != null && !terminalSessionId.isBlank()) {
-                    initialState.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
-                }
-                initialState.put(AdkToolProvider.RUNNER_AGENT_NAME, agent.name());
-                initialState.put(AdkToolProvider.NESTED_AGENT_CALL_ID, agentCallId);
-                if (cancellation != null) initialState.put(AdkToolProvider.RUN_CANCELLATION, cancellation);
-                if (context.getParentSessionKey() != null) {
-                    initialState.put(AdkToolProvider.PARENT_SESSION_ID, context.getParentSessionKey());
-                }
-                if (context.getParentToolCallId() != null) {
-                    initialState.put(AdkToolProvider.PARENT_TOOL_CALL_ID, context.getParentToolCallId());
-                }
+                AgentInvocationContext childInvocation = getInvocationContext(context, agent, agentCallId);
 
-                Content content = Content.fromParts(Part.fromText(task.getRequest()));
+                ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
+                initialState.put(AgentInvocationContext.STATE_KEY, childInvocation);
+
                 // SSE 模式使 Runner 逐块产生模型文本；这里仍收集 events，只用于结束后的最终结果提取。
                 RunConfig runConfig = RunConfig.builder()
                         .autoCreateSession(false)
@@ -189,22 +176,31 @@ public class SubAgentDispatchService {
                         .build();
 
                 List<Event> events = new ArrayList<>();
-                Single.defer(() ->
-                                // 先用父请求的终端 ID 创建子 Session，再启动子 Agent。
-                                runner.sessionService().createSession(
-                                        runner.appName(), userId, initialState, childSessionId))
-                        .flatMapPublisher(session -> {
-                            log.info("子Agent Session 创建成功 | sessionKey:{} | terminalSessionId:{}",
-                                    session.sessionKey(), terminalSessionId);
-                            return runner.runAsync(userId, childSessionId, content, runConfig);
-                        })
+
+                SubAgentAttachmentSupport.run(
+                                runner,
+                                agent.name(),
+                                userId,
+                                childSessionId,
+                                task.getRequest(),
+                                initialState,
+                                childInvocation.attachmentScope(),
+                                cancellation,
+                                runConfig)
                         .timeout(Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
                         .blockingForEach(event -> {
-                            if (cancellation != null) cancellation.throwIfCancelled();
-                            // 边执行边发布，前端可以实时看到文本与工具调用；events 仅保留给最终摘要提取。
+                            if (cancellation != null) {
+                                cancellation.throwIfCancelled();
+                            }
+
                             events.add(event);
-                            agentEventPublisher.publishToSession(context.getParentSessionKey(), event,
-                                    agentCallId, context.getParentToolCallId(), agent.name());
+
+                            agentEventPublisher.publishToSession(
+                                    context.getParentSessionKey(),
+                                    event,
+                                    agentCallId,
+                                    context.getParentToolCallId(),
+                                    agent.name());
                         });
 
                 if (cancellation != null) cancellation.throwIfCancelled();
@@ -236,6 +232,19 @@ public class SubAgentDispatchService {
             }
         }
 
+    }
+
+    private static @NonNull AgentInvocationContext getInvocationContext(AgentExecutionContext context, BaseAgent agent, String agentCallId) {
+        AgentInvocationContext parentInvocation = context.getInvocationContext();
+        if (parentInvocation == null) {
+            throw new IllegalStateException("子 Agent 派发缺少调用上下文");
+        }
+        // 每次重试都有自己的 agentCallId，但共享主请求的附件和取消信号。
+        return parentInvocation.forChild(
+                agent.name(),
+                agentCallId,
+                context.getParentToolCallId()
+        );
     }
 
     /**

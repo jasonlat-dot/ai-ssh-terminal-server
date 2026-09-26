@@ -60,8 +60,6 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
     @Resource
     private AgentEventPublisher agentEventPublisher;
 
-    private static final Logger log = LoggerFactory.getLogger(OrchestratorAgentNode.class);
-
     /** 智能体名称分隔符 */
     private static final String NAME_SEPARATOR = "_";
 
@@ -134,10 +132,9 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
                     dynamicAgentOrchestrator,
                     agentEventPublisher));
 
-            ChatModel chatModel = dynamicContext.getChatModelMap().get(agentConfig.getName());
-            if (chatModel == null) {
-                chatModel = dynamicContext.getChatModelMap().get(getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
-            }
+            // 重建父 Agent 时复用同一绑定规则，避免模型与媒体能力不一致。
+            ChatModel chatModel = dynamicContext.bindAgentChatModel(
+                    agentConfig.getName(), getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
 
             String modelName = aiAgentConfigTableVO.getModule().getChatModel().getModel();
             AiAgentConfigTableVO.Module.ChatModel llmChatModel = agentConfig.getChatModel();

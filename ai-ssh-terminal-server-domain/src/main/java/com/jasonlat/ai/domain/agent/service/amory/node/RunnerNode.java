@@ -18,9 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author jasonlat
@@ -68,6 +66,12 @@ public class RunnerNode extends AbstractAmorySupport {
                 .map(agent -> agent.getChatModel() == null ? module.getChatModel() : agent.getChatModel())
                 .findFirst().orElse(module.getChatModel());
 
+        String runnerAgentName = module.getRunner().getAgentName();
+
+        // 内部 Set 在装配阶段已经不可变，这里再固定 Map，避免注册后被装配上下文修改。
+        Map<String, Set<String>> mediaTypesByAgent = Map.copyOf(dynamicContext.getAgentMediaTypesMap());
+        Set<String> runnerMediaTypes = mediaTypesByAgent.getOrDefault(runnerAgentName, Set.of());
+
         AiAgentRegisterVO aiAgentRegisterVO = AiAgentRegisterVO.builder()
                 .appName(appName)
                 .agentName(agentName)
@@ -78,7 +82,8 @@ public class RunnerNode extends AbstractAmorySupport {
                 // 透传 Agent 的 API 配置与模型名，供意图识别等旁路能力复用（见 AiAgentRegisterVO）。这样就都统一了，都用一套LLM配置
                 .openAiApi(dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(appName)))
                 .chatModelName(runnerModel.getModelOrDefault(module.getChatModel().getModel()))
-                .supportedMediaTypes(Set.copyOf(runnerModel.getSupportedMediaTypes()))
+                .supportedMediaTypes(runnerMediaTypes)
+                .mediaTypesByAgent(mediaTypesByAgent)
                 .build();
         // 把装配完成的子 Agent 分组登记到注册表，供子 Agent 派发时按名称查找
         agentCatalog.register(agentId, dynamicContext.getAgentGroup());

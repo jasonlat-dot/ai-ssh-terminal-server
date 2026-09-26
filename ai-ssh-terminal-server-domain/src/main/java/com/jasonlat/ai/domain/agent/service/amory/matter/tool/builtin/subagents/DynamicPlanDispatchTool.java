@@ -7,8 +7,11 @@ import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
+import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.DynamicTaskPlan;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvocationSupport;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentAttachmentSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.excution.DynamicAgentOrchestrator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanParser;
@@ -117,8 +120,9 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
      */
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
-        Object cancellationValue = toolContext.state().get(RUN_CANCELLATION);
-        AgentRunCancellation cancellation = cancellationValue instanceof AgentRunCancellation value ? value : null;
+        AgentInvocationContext invocation = AgentInvocationSupport.require(toolContext);
+        AgentRunCancellation cancellation = invocation.cancellation();
+
         String request = String.valueOf(args.getOrDefault("request", ""));
         // 先发布规划工具调用，再运行规划和 DAG 编排，前端可区分“规划中”和“执行中”。
         eventPublisher.publishCall(toolContext, name(), Map.of("request", request));
@@ -133,8 +137,6 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
 
             planValidator.validate(plan, 10);
 
-            Object terminalValue = toolContext.state().get(TERMINAL_SESSION_STATE_KEY);
-            String terminalSessionId = terminalValue instanceof String value ? value : null;
             if (cancellation != null) cancellation.throwIfCancelled();
 
             // 3. 构建执行上下文：透传父会话绑定的 SSH 终端会话
@@ -145,8 +147,7 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
                     .parentSessionId(toolContext.invocationId())
                     .parentToolCallId(toolContext.functionCallId().orElse(null))
                     .parentSessionKey(toolContext.sessionId())
-                    .terminalSessionId(terminalSessionId)
-                    .cancellation(cancellation)
+                    .invocationContext(invocation)
                     .build();
 
             // 4. 交给编排器按 DAG 并发执行

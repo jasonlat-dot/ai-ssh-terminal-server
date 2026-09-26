@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.ai.openai.api.OpenAiApi;
+
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -61,4 +63,8 @@ public class AiAgentRegisterVO {
     /** 主 Runner 模型声明支持的媒体类型；不根据模型名称猜测能力。 */
     @Builder.Default
     private Set<String> supportedMediaTypes = Set.of();
+
+    /** 每个运行时 Agent 对应的媒体能力，用于子任务附件准入。 */
+    @Builder.Default
+    private Map<String, Set<String>> mediaTypesByAgent = Map.of();
 }
