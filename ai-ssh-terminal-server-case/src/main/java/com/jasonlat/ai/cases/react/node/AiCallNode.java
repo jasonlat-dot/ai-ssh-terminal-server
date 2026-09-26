@@ -32,6 +32,7 @@ import com.jasonlat.ai.trigger.api.dto.ToolCallDTO;
 import com.jasonlat.ai.trigger.api.dto.ToolResultDTO;
 import com.jasonlat.ai.trigger.api.dto.enums.ToolStatusEnum;
 import com.jasonlat.design.framework.tree.StrategyHandler;
+import io.reactivex.rxjava3.disposables.Disposable;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -39,6 +40,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -209,14 +211,17 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         StringBuilder assistantSegment = new StringBuilder();
         boolean hasError = false;
         int eventCount = 0;
+        Iterator<Event> eventIterator = null;
 
         log.info("ADK invocation 开始 sessionId={}, userId={}, terminalSessionId={}, trimmedHistory={}, maxLlmCalls={}",
                 context.getChatSessionId(), context.getUserId(), context.getTerminalSessionId(),
                 trimmedHistory.size(), context.getMaxLlmCalls());
         try {
 
-            for (Event event : runner.runAsync(context.getUserId(),
-                    context.getChatSessionId(), userContent, runConfig).blockingIterable()) {
+            eventIterator = runner.runAsync(context.getUserId(),
+                    context.getChatSessionId(), userContent, runConfig).blockingIterable().iterator();
+            while (eventIterator.hasNext()) {
+                Event event = eventIterator.next();
                 ensureNotCancelled(context);
                 eventCount++;
 
@@ -294,6 +299,14 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                         elapsedMillis(nodeStartNanos), exception);
             }
         } finally {
+            try {
+                // 提前退出 for/while 不会自动取消 Rx 订阅，先停止上游，避免取消后继续执行工具。
+                if (eventIterator instanceof Disposable disposable) disposable.dispose();
+            } finally {
+                // prepareAdkInvocation 已校验服务类型。此处仍持有流式会话执行锁。
+                ((CustomAdkSessionService) runner.sessionService()).releaseInvocationMedia(
+                        runner.appName(), context.getUserId(), context.getChatSessionId());
+            }
             // 无论正常、取消还是异常，都保留已收到的文本，避免流式中途失败导致历史丢失。
             flushAssistantSegment(context, assistantSegment);
             context.appendAssistantContent(fullText.toString());

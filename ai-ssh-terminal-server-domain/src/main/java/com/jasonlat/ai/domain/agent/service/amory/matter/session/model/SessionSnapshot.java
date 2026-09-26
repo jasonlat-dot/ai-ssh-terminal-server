@@ -17,7 +17,7 @@ import java.util.List;
  * <p>它不是业务会话历史，也不是一次 {@code runAsync} 正在修改的 live Session：</p>
  * <ul>
  *     <li>业务历史由 ConversationContextStore 维护，是跨请求的唯一事实来源；</li>
- *     <li>本快照保存投影后的 ADK events 与运行 state，用于创建下一次 live Session；</li>
+ *     <li>本快照保存 ADK events 与运行 state；Runner 在同一轮追加用户消息后也会重新读取它；</li>
  *     <li>live Session 使用独立 events 列表，避免流式执行过程中直接污染快照。</li>
  * </ul>
  *
@@ -44,6 +44,9 @@ public class SessionSnapshot {
      * 不应被当作完整业务聊天记录。
      */
     private List<Event> rawEvents;
+
+    /** 本轮结束后置为 true；迟到事件也不得重新向快照写入媒体。由 snapshot 锁保护。 */
+    private boolean mediaReleased;
 
     /** 最近一次投影或非 partial 事件追加的时间。 */
     private Instant lastUpdateTime;

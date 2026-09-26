@@ -89,7 +89,10 @@ ai:
 
 这些限制独立于上传限制。并发数按单个后端实例计算，从读取附件到模型执行结束均占用许可；
 纯文本请求不占附件许可。原始字节还会产生 SDK 和 Base64 开销，20 MB 不是堆内存使用上限。
-流式完成、异常或任务取消退出时释放许可；ADK live Session 保留当前媒体，跨请求快照去掉媒体字节。
+流式完成、异常或任务取消退出时释放许可。ADK Runner 在追加本轮用户消息后会再次调用 getSession，
+所以本轮执行期间 live Session 和服务端快照都必须保留媒体，不能在 appendEvent 时替换为历史占位文字。
+AiCallNode 在 finally 中先取消事件订阅，再调用 releaseInvocationMedia 清理快照中的媒体字节；
+流式请求此时仍持有当前会话执行锁。清理后迟到的事件也会移除媒体，下轮 prepareInvocation 重新开启保留。
 
 文件归属沿用上传时的 Principal。Controller 在进入异步线程前保存可信身份，
 请求 JSON 的 userId 或 authenticatedUserId 不能替代文件所有者校验。
@@ -155,4 +158,6 @@ ai:
 
 新增或扩展了 ChatRequestContentTest、ChatAttachmentServiceTest、FileServiceTest、MessageConverterPatchTest、
 MultimodalSessionSnapshotTest，覆盖文件归属、容量、格式策略、跨轮媒体归属和快照内存保留边界。
+其中快照回归用例模拟“追加消息 → 再次 getSession → 转换为 Spring AI Media”，同时覆盖本轮结束释放、
+重复清理、迟到事件、下一轮重新携带附件及不同用户的会话隔离。
 按本次工作约定未运行编译、单元测试或真实模型/MinIO 联调。

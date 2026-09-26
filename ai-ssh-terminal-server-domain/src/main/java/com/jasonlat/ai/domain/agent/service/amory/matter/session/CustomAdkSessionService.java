@@ -137,6 +137,7 @@ public class CustomAdkSessionService implements BaseSessionService {
         synchronized (snapshot) {
             snapshot.getRawEvents().clear();
             snapshot.getRawEvents().addAll(projectedEvents);
+            snapshot.setMediaReleased(false);
             snapshot.setLastUpdateTime(Instant.now());
             // 存放动态数据
             snapshot.getState().putAll(context);
@@ -144,6 +145,46 @@ public class CustomAdkSessionService implements BaseSessionService {
 
         log.info("ADK invocation 已准备 appName={}, userId={}, sessionId={}", appName, userId, sessionId);
 
+    }
+
+    /**
+     * 本轮 Runner 停止消费后释放快照中的媒体正文，正常完成、异常和取消均需调用。
+     * ADK 会在追加用户消息后重新 getSession，因此不能在 appendEvent 时提前移除图片。
+     * 调用方应在当前会话执行锁释放前清理，避免影响下一轮；重复清理或会话已删除时无副作用。
+     */
+    public void releaseInvocationMedia(String appName, String userId, String sessionId) {
+        SessionSnapshot snapshot = findSnapshot(appName, userId, sessionId);
+        if (snapshot == null) return;
+        int releasedEvents = 0;
+        synchronized (snapshot) {
+            snapshot.setMediaReleased(true);
+            List<Event> events = snapshot.getRawEvents();
+            for (int i = 0; i < events.size(); i++) {
+                Event original = events.get(i);
+                Event sanitized = withoutMedia(original);
+                if (sanitized != original) {
+                    events.set(i, sanitized);
+                    releasedEvents++;
+                }
+            }
+        }
+        log.debug("ADK 本轮媒体已释放 appName={} userId={} sessionId={} eventCount={}",
+                appName, userId, sessionId, releasedEvents);
+    }
+
+    /** 只替换媒体 Part，保留文字及工具协议；构造新事件，避免修改 Runner 持有的对象。 */
+    private Event withoutMedia(Event event) {
+        Content content = event.content().orElse(null);
+        if (content == null) return event;
+        List<Part> parts = content.parts().orElse(List.of());
+        if (parts.stream().noneMatch(part -> part.inlineData().isPresent() || part.fileData().isPresent())) {
+            return event;
+        }
+        List<Part> sanitized = parts.stream()
+                .map(part -> part.inlineData().isPresent() || part.fileData().isPresent()
+                        ? Part.fromText("[历史附件正文未保留，需要重新分析时请再次携带 fileId]") : part)
+                .toList();
+        return event.toBuilder().content(content.toBuilder().parts(sanitized).build()).build();
     }
 
     /**
@@ -283,7 +324,10 @@ public class CustomAdkSessionService implements BaseSessionService {
         }
 
         // 在副本上过滤，查询参数不能反向裁剪内部快照。
-        List<Event> events = new ArrayList<>(snapshot.getRawEvents());
+        List<Event> events;
+        synchronized (snapshot) {
+            events = new ArrayList<>(snapshot.getRawEvents());
+        }
         if (configOpt.isPresent()) {
             GetSessionConfig config = configOpt.get();
             if (config.afterTimestamp().isPresent()) {
@@ -433,11 +477,13 @@ public class CustomAdkSessionService implements BaseSessionService {
         return BaseSessionService.super.appendEvent(session, liveEvent)
                 .map(appendedEvent -> {
                     /*
-                     * 快照用于跨请求恢复，可以净化和截断；当前运行中的 live Session
-                     * 必须保留完整结构，两者不能共享同一个可变 events List。
+                     * Runner 本轮也会重新读取快照，媒体必须保留到本轮结束。
+                     * 两者使用独立列表；工具/文字仍采用原有截断规则。
                      */
                     Event storageEvent = prepareEventForStorage(appendedEvent);
                     synchronized (snapshot) {
+                        // 取消后迟到的回调不能重新挂住已释放的媒体字节。
+                        if (snapshot.isMediaReleased()) storageEvent = withoutMedia(storageEvent);
                         snapshot.getRawEvents().add(storageEvent);
                         mergeStateDelta(snapshot, appendedEvent);
                         trimEvents(snapshot.getRawEvents());
@@ -522,7 +568,7 @@ public class CustomAdkSessionService implements BaseSessionService {
     }
 
     /**
-     * 生成跨请求存储版本的事件。
+     * 生成运行期快照事件；媒体在本轮结束后统一清理。
      *
      * <p>FunctionCall/FunctionResponse 是协议结构，必须优先按 Part 类型识别，不能仅
      * 依据 role。ADK 的 FunctionResponse 通常使用 role=user，但它不是用户新消息。</p>
@@ -533,15 +579,8 @@ public class CustomAdkSessionService implements BaseSessionService {
         }
 
         if (isActualUserMessage(event)) {
-            // live Session 已保留完整消息供本次调用使用；跨请求快照不能长期保留大块媒体字节。
-            // 新请求由业务历史投影，重新分析附件需要再次提交 fileId。
-            Content content = event.content().orElse(null);
-            if (content == null) return event.toBuilder().build();
-            List<Part> parts = content.parts().orElse(List.of()).stream()
-                    .map(part -> part.inlineData().isPresent() || part.fileData().isPresent()
-                            ? Part.fromText("[历史附件正文未保留，需要重新分析时请再次携带 fileId]") : part)
-                    .toList();
-            return event.toBuilder().content(content.toBuilder().parts(parts).build()).build();
+            // 这里不是上一轮历史：ADK 追加本轮消息后会立即 getSession 再调用模型。
+            return event.toBuilder().build();
         }
 
         String role = resolveRole(event);
