@@ -16,6 +16,7 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanParser;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanValidator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlannerAgentBuilder;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolRegistry;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
@@ -50,6 +51,8 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
     private PlanParser planParser;
     @Resource
     private PlanValidator planValidator;
+    @Resource
+    private AdkToolRegistry adkToolRegistry;
 
     /**
      * 发布器用于把子 Agent Runner 和 SSH 工具产生的事件转发到父请求 SSE 流。
@@ -103,7 +106,8 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
              * 这里只添加配置型工具，不添加 executeCommand，
              * 因此父 Agent 仍然只能通过子 Agent 操作 SSH。
              */
-            List<Object> adkTools = new ArrayList<>(dynamicContext.getConfiguredAdkToolMap().getOrDefault(agentConfig.getName(), List.of()));
+            List<Object> adkTools = new ArrayList<>(adkToolRegistry.getAllAdkTools());
+            adkTools.addAll(dynamicContext.getConfiguredAdkToolMap().getOrDefault(agentConfig.getName(), List.of()));
 
             // 为每个声明的子 Agent 构建单独的派发工具（工具名即子 Agent 名，LLM 可直接点名调用）
             for (String subAgentName : subAgentNames) {
