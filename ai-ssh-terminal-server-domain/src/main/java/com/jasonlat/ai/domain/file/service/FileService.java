@@ -24,12 +24,17 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
+/** 编排同步上传：准入检查、元数据落库、对象写入、签名下载和失败补偿。 */
 @Slf4j
 @Service
 public class FileService implements IFileService {
+    /** 根据存储实例 ID 选择实现，领域服务不直接依赖 MinIO SDK。 */
     private final ObjectStorageResolver storageResolver;
+    /** 保存文件位置与上传状态，便于后续业务引用和故障排查。 */
     private final IFileAssetRepository repository;
+    /** app 装配的不可变上传规则，运行过程中不会被外部配置对象修改。 */
     private final FileUploadPolicy policy;
+    /** 当前实例的上传并发许可，限制向对象存储传输时的缓冲区占用。 */
     private final Semaphore uploadSlots;
 
     public FileService(ObjectStorageResolver storageResolver, IFileAssetRepository repository,
@@ -40,11 +45,13 @@ public class FileService implements IFileService {
         this.uploadSlots = new Semaphore(policy.maxConcurrentUploads());
     }
 
+    /** 同步执行上传；输入流由调用方关闭，方法无论成功或失败都释放并发许可。 */
     @Override
     public FileUploadResult upload(FileUploadCommand command, InputStream input) {
         // 先检查存储配置，确保未启用存储时返回业务错误，不访问数据库或存储网络。
         ObjectStoragePort storage = storageResolver.defaultStorage();
         String fileName = validate(command, input);
+        // 不排队等待许可，容量已满时立即返回 FILE_UPLOAD_BUSY，避免请求长期堆积。
         if (!uploadSlots.tryAcquire()) {
             throw new AppException(ResponseCode.FILE_UPLOAD_BUSY);
         }
@@ -55,9 +62,11 @@ public class FileService implements IFileService {
         }
     }
 
+    /** 执行存储与数据库操作；两者不在同一事务中，因此失败后需要显式补偿。 */
     private FileUploadResult doUpload(ObjectStoragePort storage, FileUploadCommand command,
                                       String fileName, InputStream input) {
         String fileId = UUID.randomUUID().toString();
+        // 按 UTC 日期组织对象，随机 ID 避免同名覆盖，客户端文件名不参与路径拼接。
         String key = "uploads/" + LocalDate.now(ZoneOffset.UTC) + "/" + fileId;
         FileAssetEntity asset = FileAssetEntity.builder()
                 .fileId(fileId).ownerId(command.ownerId()).originalName(fileName)
@@ -71,11 +80,13 @@ public class FileService implements IFileService {
                     ResponseCode.FILE_UPLOAD_FAILED.getInfo(), e);
         }
 
+        // 只有收到存储的成功返回才算确认；超时不代表存储端一定没有写入。
         boolean uploadConfirmed = false;
         try {
             UploadInputStream stream = new UploadInputStream(input, command.size());
             StoredObject stored = storage.put(asset.getLocation(), stream, command.size());
             uploadConfirmed = true;
+            // 采用实际返回的版本号，后续补偿才能准确删除本次上传的对象版本。
             asset.setLocation(stored.location());
             asset.setEtag(stored.etag());
             // 防止调用方声明的大小与真实输入不一致；不能把截断文件当作成功。
@@ -84,6 +95,7 @@ public class FileService implements IFileService {
             }
             asset.setSha256(HexFormat.of().formatHex(stream.digest.digest()));
 
+            // 下载链接仅放进响应；数据库保留稳定对象位置，避免持久化已经过期的 URL。
             Instant expiresAt = Instant.now().plus(policy.downloadUrlTtl());
             URI downloadUrl = storage.createDownloadUrl(
                     asset.getLocation(), fileName, policy.downloadUrlTtl());
@@ -106,6 +118,7 @@ public class FileService implements IFileService {
         }
     }
 
+    /** 尽力删除残留对象并记录结果；补偿失败不能覆盖原始上传错误。 */
     private void compensate(ObjectStoragePort storage, FileAssetEntity asset, Exception failure,
                             boolean uploadConfirmed) {
         // PUT 超时可能只是响应丢失，甚至与后续 DELETE 交错；没有确认结果时保留待核对状态。
@@ -128,6 +141,7 @@ public class FileService implements IFileService {
         }
     }
 
+    /** 检查大小、文件名及扩展名，返回用于展示的文件名；不执行真实内容解析或扫描。 */
     private String validate(FileUploadCommand command, InputStream input) {
         if (command == null || input == null || command.size() <= 0
                 || command.originalName() == null || command.originalName().isBlank()) {
@@ -153,6 +167,7 @@ public class FileService implements IFileService {
         return name;
     }
 
+    /** 将缺失或格式不合法的客户端 MIME 声明归一为二进制类型，仅用于元数据记录。 */
     private String normalizeContentType(String type) {
         if (type == null || type.length() > 127
                 || !type.matches("[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+-]+")) {
@@ -163,8 +178,11 @@ public class FileService implements IFileService {
 
     /** 在 SDK 消费流时计算摘要和限制字节数，不复制完整文件到堆内存。 */
     private static final class UploadInputStream extends FilterInputStream {
+        /** 本次请求声明的字节数，实际读取超过该值即终止。 */
         private final long limit;
+        /** 随字节读取逐步更新的 SHA-256 计算器。 */
         private final MessageDigest digest;
+        /** 已从底层流读取的字节数，用于完成后的长度一致性检查。 */
         private long count;
 
         private UploadInputStream(InputStream input, long limit) throws NoSuchAlgorithmException {
@@ -185,6 +203,7 @@ public class FileService implements IFileService {
 
         @Override
         public int read(byte[] buffer, int offset, int length) throws IOException {
+            // 最多额外探测一个字节，以区分“恰好读完”和“实际内容超过声明大小”。
             int read = in.read(buffer, offset, (int) Math.min(length, limit - count + 1));
             if (read > 0) {
                 checkCount(read);

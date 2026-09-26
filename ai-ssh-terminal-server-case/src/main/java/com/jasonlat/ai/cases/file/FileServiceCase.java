@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.InputStream;
 
+/** 文件上传应用门面：隔离 Web 上传类型，管理输入流生命周期并转换领域结果。 */
 @Service
 public class FileServiceCase implements IFileServiceCase {
     private final IFileService fileService;
@@ -21,6 +22,7 @@ public class FileServiceCase implements IFileServiceCase {
         this.fileService = fileService;
     }
 
+    /** authenticatedUserId 来自服务端认证上下文，不接受前端自报身份作为文件归属。 */
     @Override
     public FileUploadResponseDTO upload(MultipartFile file, String authenticatedUserId) {
         if (file == null) throw new AppException(ResponseCode.FILE_INVALID);

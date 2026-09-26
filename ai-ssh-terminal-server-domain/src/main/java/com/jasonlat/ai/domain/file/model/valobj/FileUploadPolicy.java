@@ -3,7 +3,14 @@ package com.jasonlat.ai.domain.file.model.valobj;
 import java.time.Duration;
 import java.util.Set;
 
-/** 文件上传规则；使用字节数和 JDK 类型表达，不依赖 Spring DataSize 或 Properties。 */
+/**
+ * 文件上传规则快照，由 app 配置转换得到，不依赖 Spring 配置类型。
+ *
+ * @param maxFileSizeBytes 单个文件允许的最大字节数
+ * @param maxConcurrentUploads 当前后端实例允许同时执行的上传数，不是跨实例的用户配额
+ * @param downloadUrlTtl 签名下载地址有效时长，当前限制为 1 秒至 7 天
+ * @param allowedExtensions 允许的文件扩展名集合，不带点；只作格式准入，不替代内容检查
+ */
 public record FileUploadPolicy(
         long maxFileSizeBytes,
         int maxConcurrentUploads,

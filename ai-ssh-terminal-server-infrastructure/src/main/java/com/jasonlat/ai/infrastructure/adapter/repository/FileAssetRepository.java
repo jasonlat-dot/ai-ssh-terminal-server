@@ -6,6 +6,7 @@ import com.jasonlat.ai.infrastructure.dao.IFileAssetDao;
 import com.jasonlat.ai.infrastructure.dao.po.FileAssetPO;
 import org.springframework.stereotype.Repository;
 
+/** 将领域文件元数据映射为数据库记录，对象正文不经过数据库。 */
 @Repository
 public class FileAssetRepository implements IFileAssetRepository {
     private final IFileAssetDao dao;
@@ -24,6 +25,7 @@ public class FileAssetRepository implements IFileAssetRepository {
         requireChanged(dao.update(toPO(asset)));
     }
 
+    /** 确认唯一文件记录写入成功，避免无匹配记录时仍向上报告成功。 */
     private void requireChanged(int rows) {
         if (rows != 1) throw new IllegalStateException("文件元数据写入失败");
     }
@@ -36,6 +38,7 @@ public class FileAssetRepository implements IFileAssetRepository {
         po.setContentType(asset.getContentType());
         po.setSize(asset.getSize());
         po.setSha256(asset.getSha256());
+        // 将领域中的存储位置值对象展开为表字段，后续可直接按实例和对象路径排查。
         po.setStorageId(asset.getLocation().storageId());
         po.setBucket(asset.getLocation().bucket());
         po.setObjectKey(asset.getLocation().objectKey());

@@ -23,11 +23,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 
+/** MinIO 存储适配器，封装 SDK 的上传、签名和删除操作，对上只暴露领域类型。 */
 @Component
 public class MinioObjectStorage implements ObjectStoragePort {
     /** 固定分片缓冲，结合上传并发限制控制内存，不随文件总大小分配 byte[]。 */
     private static final long PART_SIZE = 5L * 1024 * 1024;
+    /** app 装配的连接参数快照，包含内部端点和可选的外部签名端点。 */
     private final MinioStorageSettings settings;
+    /** 首次使用时创建并复用；volatile 保证其他上传线程能看到完整初始化的客户端。 */
     private volatile Clients clients;
 
     public MinioObjectStorage(MinioStorageSettings settings) {
@@ -92,6 +95,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
     public URI createDownloadUrl(ObjectLocation location, String fileName, Duration ttl) {
         validateConfiguration();
         try {
+            // 编码中文、空格等字符，放入 Content-Disposition 的 filename* 下载文件名参数。
             String encodedName = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
             GetPresignedObjectUrlArgs.Builder args = GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET).bucket(location.bucket()).object(location.objectKey())
@@ -119,6 +123,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
         }
     }
 
+    /** 双重检查创建客户端；锁只保护初始化，不包住文件传输过程。 */
     private Clients clients() {
         Clients current = clients;
         if (current != null) return current;
@@ -133,6 +138,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
                             .callTimeout(settings.callTimeout())
                             .build();
                     MinioClient writer = newClient(settings.endpoint(), http);
+                    // 外部地址参与签名计算，不能先按内部地址签名再替换返回 URL 的域名。
                     MinioClient signer = blank(settings.publicEndpoint())
                             ? writer : newClient(settings.publicEndpoint(), http);
                     clients = new Clients(writer, signer, http);
@@ -181,6 +187,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
         return value == null || value.isBlank();
     }
 
+    /** 应用关闭时释放本适配器创建的 HTTP 线程池及空闲连接。 */
     @PreDestroy
     public void close() {
         Clients current = clients;
