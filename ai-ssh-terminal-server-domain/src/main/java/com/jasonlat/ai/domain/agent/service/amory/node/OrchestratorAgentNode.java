@@ -22,6 +22,7 @@ import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -140,6 +141,15 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
                 modelName = llmChatModel.getModelOrDefault(modelName);
             }
 
+            OpenAiApi openAiApi = dynamicContext.getOpenAiApiMap().get(agentConfig.getName());
+
+            if (openAiApi == null) {
+                openAiApi = dynamicContext.getOpenAiApiMap().get(getDefaultAiApiMapKey(aiAgentConfigTableVO.getAppName()));
+            }
+
+            if (openAiApi == null) {
+                throw new IllegalStateException("未找到 " + agentConfig.getName() + " Agent 的模型 OpenAiApi 配置。" );
+            }
 
             // 动态规划派发工具：由独立规划器 LLM 生成任务计划后派发
             adkTools.add(new DynamicPlanDispatchTool(
@@ -147,7 +157,7 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
                     dynamicAgentOrchestrator,
                     planParser,
                     planValidator,
-                    dynamicContext.getOpenAiApiMap().get(agentConfig.getName()),
+                    openAiApi,
                     modelName,
                     agents.stream().map(AiAgentConfigTableVO.Module.Agent::getName).toList(),
                     agentEventPublisher));

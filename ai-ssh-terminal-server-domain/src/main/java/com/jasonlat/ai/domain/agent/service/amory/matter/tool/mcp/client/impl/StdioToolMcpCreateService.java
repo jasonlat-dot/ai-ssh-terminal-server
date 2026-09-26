@@ -1,8 +1,8 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.impl;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.IToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.IToolMcpCreateService;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.ServerParameters;

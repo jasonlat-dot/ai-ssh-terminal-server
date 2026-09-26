@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client;
 
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import org.springframework.ai.tool.ToolCallback;

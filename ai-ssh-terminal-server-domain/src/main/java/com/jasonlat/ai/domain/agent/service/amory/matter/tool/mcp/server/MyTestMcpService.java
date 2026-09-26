@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.mcp.server;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.server;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;

@@ -30,7 +30,12 @@ ai:
               tool-skills-list:
                 - type: resource
                   root-path: agent/skills
-
+              tool-mcp-list:
+                - sse:
+                    name: baidu-search
+                    base-uri: http://appbuilder.baidu.com
+                    sse-endpoint: /v2/ai_search/mcp/sse?api_key=${baidu.api-key}
+                    request-timeout: 300000
             llm-agents:
               - name: sshOperator
                 description: SSH 命令执行与结果分析智能体，帮助用户在远程服务器上执行操作

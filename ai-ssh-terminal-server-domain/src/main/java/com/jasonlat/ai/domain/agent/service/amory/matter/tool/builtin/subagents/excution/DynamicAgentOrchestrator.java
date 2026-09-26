@@ -140,11 +140,34 @@ public class DynamicAgentOrchestrator {
         // 汇总返回：计划、各任务最终状态（含成功/失败/跳过数）、是否全部成功
         Map<String, Object> response = new HashMap<>();
 
+        /*
+         * 根据任务的实际状态生成统计和展示摘要。
+         * output 供前端普通工具结果卡片展示；
+         * tasks 保留子任务的完整结果，供模型和前端详情使用。
+         */
+        List<DynamicTask> taskResults = new ArrayList<>(tasks.values());
+        int totalCount = taskResults.size();
+        long completedCount = taskResults.stream().filter(task -> task.getStatus() == TaskStatus.COMPLETED).count();
+        long failedCount = taskResults.stream().filter(task -> task.getStatus() == TaskStatus.FAILED).count();
+        long skippedCount = taskResults.stream().filter(task -> task.getStatus() == TaskStatus.SKIPPED).count();
+        // 防御性统计：存在未到达终态的任务时，不将它们算作成功。
+        long unfinishedCount = totalCount - completedCount - failedCount - skippedCount;
+        String output = String.format(
+                "共 %d 个任务，成功 %d 个，失败 %d 个，跳过 %d 个", totalCount, completedCount, failedCount, skippedCount);
+
+        if (unfinishedCount > 0) {
+            output += String.format("，未完成 %d 个", unfinishedCount);
+        }
+
         response.put("plan", plan);
-        response.put("tasks", new ArrayList<>(tasks.values()));
-        response.put("allSucceeded", tasks.values().stream().allMatch(task -> task.getStatus().equals(TaskStatus.COMPLETED)));
-        response.put("failedCount", tasks.values().stream().filter(task -> task.getStatus().equals(TaskStatus.FAILED)).count());
-        response.put("skippedCount", tasks.values().stream().filter(task -> task.getStatus().equals(TaskStatus.SKIPPED)).count());
+        response.put("tasks", taskResults);
+        response.put("allSucceeded", completedCount == totalCount);
+        response.put("totalCount", totalCount);
+        response.put("completedCount", completedCount);
+        response.put("failedCount", failedCount);
+        response.put("skippedCount", skippedCount);
+        response.put("unfinishedCount", unfinishedCount);
+        response.put("output", output);
 
         return response;
     }

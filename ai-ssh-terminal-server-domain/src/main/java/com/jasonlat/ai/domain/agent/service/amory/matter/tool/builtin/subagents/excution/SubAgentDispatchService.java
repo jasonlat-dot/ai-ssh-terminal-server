@@ -160,19 +160,17 @@ public class SubAgentDispatchService {
             String agentCallId = "dispatch_" + invocationId + "_" + attempt;
             publishAgentActivity(context, task, agentCallId, null);
             try {
-                String terminalSessionId = context.getTerminalSessionId();
-                if (terminalSessionId == null || terminalSessionId.isBlank()) {
-                    throw new IllegalStateException("父 Agent 未绑定 SSH 终端会话");
-                }
-
                 Runner runner = runnerFactory.create(agent, agent.name(), List.of());
                 String userId = "subAgent-user-" + context.getUserId();
                 String childSessionId = "subAgent-" + invocationId + "-" + attempt;
 
-                // 子 Runner 使用独立 ADK Session，但必须继承请求级终端、取消句柄和父调用关联信息。
-                // executeCommand 从这些 state 中取值，才能执行到正确终端并把事件发回父 /chat_stream。
+                // 子 Runner 使用独立 ADK Session，继承取消句柄和父调用关联信息。
+                // SSH 终端绑定是可选的：存在时传递；实际执行 SSH 命令时再校验。
                 ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
-                initialState.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+                String terminalSessionId = context.getTerminalSessionId();
+                if (terminalSessionId != null && !terminalSessionId.isBlank()) {
+                    initialState.put(AdkToolProvider.TERMINAL_SESSION_STATE_KEY, terminalSessionId);
+                }
                 initialState.put(AdkToolProvider.RUNNER_AGENT_NAME, agent.name());
                 initialState.put(AdkToolProvider.NESTED_AGENT_CALL_ID, agentCallId);
                 if (cancellation != null) initialState.put(AdkToolProvider.RUN_CANCELLATION, cancellation);

@@ -5,8 +5,8 @@ import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.IToolMcpCreateService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.factory.DefaultMcpClientFactory;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.IToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.factory.DefaultMcpClientFactory;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
@@ -102,11 +102,9 @@ public class ChatModelNode extends AbstractAmorySupport {
     }
 
     private OpenAiChatModel buildChatModel(AiAgentConfigTableVO.Module.ChatModel chatModelConfig, OpenAiApi openAiApi ) {
-        List<ToolCallback> toolCallbacks = getMcpToolCallbacks(chatModelConfig);
-        // 构建对话模型
+        // 构建对话模型, 不在此处构建 skills 和 mcp 服务了
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(chatModelConfig.getModel())
-                .toolCallbacks(toolCallbacks)
                 // 不要让 spring ai 内部调用工具 否则google adk 拿不到工具结果
                 .internalToolExecutionEnabled(false)
                 // 开启流式 usage 统计：OpenAI 协议要求 stream_options.include_usage=true，
@@ -125,23 +123,5 @@ public class ChatModelNode extends AbstractAmorySupport {
                 .build();
     }
 
-    private @NonNull List<ToolCallback> getMcpToolCallbacks(AiAgentConfigTableVO.Module.ChatModel chatModelConfig) {
-        List<ToolCallback> toolCallbacks = new ArrayList<>(8);
-        // 获取默认的 mcpSyncClient
-        List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList = chatModelConfig.getToolMcpList();
-        if ((toolMcpList != null && !toolMcpList.isEmpty())) {
-            toolMcpList.forEach(toolMcp -> {
-                try {
-                    IToolMcpCreateService toolMcpCreateService = mcpClientFactory.getToolMcpCreateService(toolMcp);
-                    ToolCallback[] mcpToolCallbacks = toolMcpCreateService.buildToolCallback(toolMcp);
-                    toolCallbacks.addAll(List.of(mcpToolCallbacks));
-                } catch (Exception e) {
-                    log.error("创建 mcpSyncClient 失败", e);
-                    throw new RuntimeException(e);
-                }
-            });
-        }
-        return toolCallbacks;
-    }
 
 }

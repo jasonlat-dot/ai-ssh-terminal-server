@@ -1,10 +1,10 @@
-package com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.factory;
+package com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.factory;
 
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.IToolMcpCreateService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.impl.LocalToolMcpCreateService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.impl.SSEToolMcpCreateService;
-import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.impl.StdioToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.IToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.impl.LocalToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.impl.SSEToolMcpCreateService;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.mcp.client.impl.StdioToolMcpCreateService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import jakarta.annotation.Resource;
