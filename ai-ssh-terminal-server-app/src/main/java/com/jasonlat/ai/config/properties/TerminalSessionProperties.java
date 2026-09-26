@@ -1,15 +1,13 @@
-package com.jasonlat.ai.infrastructure.config;
+package com.jasonlat.ai.config.properties;
 
 import lombok.Data;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * SSH 终端容量和空闲回收配置。
  */
 @Data
-@Component
 @ConfigurationProperties(prefix = "ai.ssh.terminal")
 public class TerminalSessionProperties implements InitializingBean {
 

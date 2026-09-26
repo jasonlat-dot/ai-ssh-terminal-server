@@ -3,7 +3,7 @@ package com.jasonlat.ai.infrastructure.adapter.port.storage.minio;
 import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
 import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.domain.file.model.valobj.StoredObject;
-import com.jasonlat.ai.infrastructure.config.FileStorageProperties;
+import com.jasonlat.ai.infrastructure.model.settings.MinioStorageSettings;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import io.minio.GetPresignedObjectUrlArgs;
@@ -27,21 +27,21 @@ import java.util.Map;
 public class MinioObjectStorage implements ObjectStoragePort {
     /** 固定分片缓冲，结合上传并发限制控制内存，不随文件总大小分配 byte[]。 */
     private static final long PART_SIZE = 5L * 1024 * 1024;
-    private final FileStorageProperties.Minio properties;
+    private final MinioStorageSettings settings;
     private volatile Clients clients;
 
-    public MinioObjectStorage(FileStorageProperties properties) {
-        this.properties = properties.getMinio();
+    public MinioObjectStorage(MinioStorageSettings settings) {
+        this.settings = settings;
     }
 
     @Override
     public String storageId() {
-        return properties.getStorageId();
+        return settings.storageId();
     }
 
     @Override
     public boolean enabled() {
-        return properties.isEnabled();
+        return settings.enabled();
     }
 
     @Override
@@ -50,15 +50,15 @@ public class MinioObjectStorage implements ObjectStoragePort {
             throw new AppException(ResponseCode.FILE_STORAGE_NOT_CONFIGURED);
         }
         // 不在构造方法中创建 SDK 客户端，否则空 endpoint 会令整个应用启动失败。
-        if (blank(properties.getEndpoint()) || blank(properties.getAccessKey())
-                || blank(properties.getSecretKey()) || blank(properties.getBucket())
-                || blank(properties.getRegion()) || blank(properties.getStorageId())
-                || properties.getStorageId().length() > 64 || properties.getRegion().length() > 128
-                || !validEndpoint(properties.getEndpoint())
-                || (!blank(properties.getPublicEndpoint()) && !validEndpoint(properties.getPublicEndpoint()))
-                || !properties.getBucket().matches("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
-                || !validTimeout(properties.getConnectTimeout()) || !validTimeout(properties.getReadTimeout())
-                || !validTimeout(properties.getWriteTimeout()) || !validTimeout(properties.getCallTimeout())) {
+        if (blank(settings.endpoint()) || blank(settings.accessKey())
+                || blank(settings.secretKey()) || blank(settings.bucket())
+                || blank(settings.region()) || blank(settings.storageId())
+                || settings.storageId().length() > 64 || settings.region().length() > 128
+                || !validEndpoint(settings.endpoint())
+                || (!blank(settings.publicEndpoint()) && !validEndpoint(settings.publicEndpoint()))
+                || !settings.bucket().matches("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+                || !validTimeout(settings.connectTimeout()) || !validTimeout(settings.readTimeout())
+                || !validTimeout(settings.writeTimeout()) || !validTimeout(settings.callTimeout())) {
             throw new AppException(ResponseCode.FILE_STORAGE_CONFIG_INVALID);
         }
         clients();
@@ -66,7 +66,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
 
     @Override
     public ObjectLocation newLocation(String objectKey) {
-        return new ObjectLocation(storageId(), properties.getBucket(), objectKey, null);
+        return new ObjectLocation(storageId(), settings.bucket(), objectKey, null);
     }
 
     @Override
@@ -76,7 +76,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
             // 第一阶段仅存储文件：不把客户端声明的 MIME 当作可信内容，默认强制下载。
             ObjectWriteResponse response = clients().writer().putObject(PutObjectArgs.builder()
                     .bucket(location.bucket()).object(location.objectKey())
-                    .region(properties.getRegion())
+                    .region(settings.region())
                     .stream(input, size, PART_SIZE)
                     .contentType("application/octet-stream")
                     .headers(Map.of("Content-Disposition", "attachment"))
@@ -95,7 +95,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
             String encodedName = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
             GetPresignedObjectUrlArgs.Builder args = GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET).bucket(location.bucket()).object(location.objectKey())
-                    .region(properties.getRegion()).expiry(Math.toIntExact(ttl.toSeconds()))
+                    .region(settings.region()).expiry(Math.toIntExact(ttl.toSeconds()))
                     .extraQueryParams(Map.of(
                             "response-content-type", "application/octet-stream",
                             "response-content-disposition", "attachment; filename=\"download\"; filename*=UTF-8''" + encodedName));
@@ -111,7 +111,7 @@ public class MinioObjectStorage implements ObjectStoragePort {
         validateConfiguration();
         try {
             RemoveObjectArgs.Builder args = RemoveObjectArgs.builder()
-                    .bucket(location.bucket()).object(location.objectKey()).region(properties.getRegion());
+                    .bucket(location.bucket()).object(location.objectKey()).region(settings.region());
             if (location.versionId() != null) args.versionId(location.versionId());
             clients().writer().removeObject(args.build());
         } catch (Exception e) {
@@ -127,14 +127,14 @@ public class MinioObjectStorage implements ObjectStoragePort {
                 OkHttpClient http = null;
                 try {
                     http = new OkHttpClient.Builder()
-                            .connectTimeout(properties.getConnectTimeout())
-                            .readTimeout(properties.getReadTimeout())
-                            .writeTimeout(properties.getWriteTimeout())
-                            .callTimeout(properties.getCallTimeout())
+                            .connectTimeout(settings.connectTimeout())
+                            .readTimeout(settings.readTimeout())
+                            .writeTimeout(settings.writeTimeout())
+                            .callTimeout(settings.callTimeout())
                             .build();
-                    MinioClient writer = newClient(properties.getEndpoint(), http);
-                    MinioClient signer = blank(properties.getPublicEndpoint())
-                            ? writer : newClient(properties.getPublicEndpoint(), http);
+                    MinioClient writer = newClient(settings.endpoint(), http);
+                    MinioClient signer = blank(settings.publicEndpoint())
+                            ? writer : newClient(settings.publicEndpoint(), http);
                     clients = new Clients(writer, signer, http);
                 } catch (RuntimeException e) {
                     if (http != null) {
@@ -151,8 +151,8 @@ public class MinioObjectStorage implements ObjectStoragePort {
 
     private MinioClient newClient(String endpoint, OkHttpClient http) {
         return MinioClient.builder().endpoint(endpoint)
-                .credentials(properties.getAccessKey(), properties.getSecretKey())
-                .region(properties.getRegion()).httpClient(http).build();
+                .credentials(settings.accessKey(), settings.secretKey())
+                .region(settings.region()).httpClient(http).build();
     }
 
     private AppException unavailable(Exception cause) {

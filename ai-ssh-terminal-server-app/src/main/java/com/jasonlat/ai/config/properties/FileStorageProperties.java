@@ -1,16 +1,14 @@
-package com.jasonlat.ai.infrastructure.config;
+package com.jasonlat.ai.config.properties;
 
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 
 /** 不使用 @Data，避免生成包含密钥的 toString；配置完整性在上传请求中检查。 */
 @Getter
 @Setter
-@Component
 @ConfigurationProperties(prefix = "ai.file.storage")
 public class FileStorageProperties {
     private String defaultId = "minio-main";

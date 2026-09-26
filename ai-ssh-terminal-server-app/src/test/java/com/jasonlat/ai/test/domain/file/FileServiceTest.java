@@ -5,7 +5,6 @@ import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.*;
-import com.jasonlat.ai.domain.file.model.valobj.properties.FileUploadProperties;
 import com.jasonlat.ai.domain.file.service.FileService;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
@@ -15,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
+import java.time.Duration;
+import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
@@ -28,12 +29,13 @@ class FileServiceTest {
     private final ObjectStorageResolver resolver = mock(ObjectStorageResolver.class);
     private final ObjectStoragePort storage = mock(ObjectStoragePort.class);
     private final IFileAssetRepository repository = mock(IFileAssetRepository.class);
-    private final FileUploadProperties properties = new FileUploadProperties();
+    private final FileUploadPolicy policy = new FileUploadPolicy(20L * 1024 * 1024, 4,
+            Duration.ofMinutes(15), Set.of("txt"));
     private FileService service;
 
     @BeforeEach
     void setUp() throws Exception {
-        service = new FileService(resolver, repository, properties);
+        service = new FileService(resolver, repository, policy);
         when(resolver.defaultStorage()).thenReturn(storage);
         when(storage.storageId()).thenReturn("minio-main");
         when(storage.newLocation(anyString())).thenAnswer(invocation ->
@@ -78,7 +80,7 @@ class FileServiceTest {
     @Test
     void rejectsLargeFileBeforeDatabaseOrObjectWrite() {
         AppException e = assertThrows(AppException.class, () -> service.upload(
-                new FileUploadCommand("large.txt", "text/plain", properties.getMaxFileSize().toBytes() + 1, null),
+                new FileUploadCommand("large.txt", "text/plain", policy.maxFileSizeBytes() + 1, null),
                 new ByteArrayInputStream(new byte[0])));
         assertEquals("FILE_TOO_LARGE", e.getCode());
         verifyNoInteractions(repository);
@@ -116,8 +118,9 @@ class FileServiceTest {
 
     @Test
     void failedUploadReleasesConcurrencyPermit() {
-        properties.setMaxConcurrentUploads(1);
-        service = new FileService(resolver, repository, properties);
+        FileUploadPolicy singleUpload = new FileUploadPolicy(policy.maxFileSizeBytes(), 1,
+                policy.downloadUrlTtl(), policy.allowedExtensions());
+        service = new FileService(resolver, repository, singleUpload);
         doThrow(new AppException(ResponseCode.FILE_STORAGE_UNAVAILABLE))
                 .when(storage).put(any(), any(), anyLong());
         for (int i = 0; i < 2; i++) {

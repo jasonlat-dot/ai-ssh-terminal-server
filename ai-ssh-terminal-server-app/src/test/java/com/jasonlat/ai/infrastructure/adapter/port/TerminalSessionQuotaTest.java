@@ -1,7 +1,7 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
-import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
+import com.jasonlat.ai.infrastructure.model.settings.TerminalSessionSettings;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
 import org.junit.Assert;
@@ -22,7 +22,7 @@ public class TerminalSessionQuotaTest {
 
     @Test
     public void shouldEnforceUserConnectionAndTotalLimitsAtomically() throws Exception {
-        TerminalSessionProperties properties = properties(4, 2, 1);
+        TerminalSessionSettings properties = properties(4, 2, 1);
         TestTerminalSessionSupport support = new TestTerminalSessionSupport(properties);
 
         support.reserve("user-1", "connection-1");
@@ -77,8 +77,7 @@ public class TerminalSessionQuotaTest {
 
     @Test
     public void idleSessionMustWaitForLongPollToFinishBeforeCleanup() throws Exception {
-        TerminalSessionProperties properties = properties(10, 10, 10);
-        properties.setIdleTimeoutMinutes(1);
+        TerminalSessionSettings properties = new TerminalSessionSettings(10, 10, 10, 1, 5, 5, 1000);
         TerminalSessionPort port = new TerminalSessionPort(Mockito.mock(SshSessionPort.class), properties);
         TerminalSessionPortSupport.TerminalSessionContext context = connectedContext("session-idle");
         context.lastActiveAtMillis.set(System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(2));
@@ -96,7 +95,7 @@ public class TerminalSessionQuotaTest {
 
     @Test
     public void disconnectedSessionMustBeCleanedWithoutWaitingForIdleTimeout() throws Exception {
-        TerminalSessionProperties properties = properties(10, 10, 10);
+        TerminalSessionSettings properties = properties(10, 10, 10);
         TerminalSessionPort port = new TerminalSessionPort(Mockito.mock(SshSessionPort.class), properties);
         TerminalSessionPortSupport.TerminalSessionContext context = context("session-disconnected", false);
         CompletableFuture<TerminalReadResult> pendingRead = new CompletableFuture<>();
@@ -108,13 +107,8 @@ public class TerminalSessionQuotaTest {
         Assert.assertTrue(pendingRead.isDone());
     }
 
-    private TerminalSessionProperties properties(int total, int perUser, int perConnection) throws Exception {
-        TerminalSessionProperties properties = new TerminalSessionProperties();
-        properties.setMaxTotalSessions(total);
-        properties.setMaxSessionsPerUser(perUser);
-        properties.setMaxSessionsPerConnection(perConnection);
-        properties.afterPropertiesSet();
-        return properties;
+    private TerminalSessionSettings properties(int total, int perUser, int perConnection) throws Exception {
+        return new TerminalSessionSettings(total, perUser, perConnection, 30, 5, 5, 1000);
     }
 
     private void assertLimitExceeded(ThrowingRunnable runnable) throws Exception {
@@ -153,7 +147,7 @@ public class TerminalSessionQuotaTest {
     }
 
     private static final class TestTerminalSessionSupport extends TerminalSessionPortSupport {
-        private TestTerminalSessionSupport(TerminalSessionProperties properties) {
+        private TestTerminalSessionSupport(TerminalSessionSettings properties) {
             super(properties);
         }
 

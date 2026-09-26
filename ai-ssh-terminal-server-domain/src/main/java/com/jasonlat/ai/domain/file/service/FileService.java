@@ -5,7 +5,6 @@ import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.*;
-import com.jasonlat.ai.domain.file.model.valobj.properties.FileUploadProperties;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
@@ -30,15 +29,15 @@ import java.util.concurrent.Semaphore;
 public class FileService implements IFileService {
     private final ObjectStorageResolver storageResolver;
     private final IFileAssetRepository repository;
-    private final FileUploadProperties properties;
+    private final FileUploadPolicy policy;
     private final Semaphore uploadSlots;
 
     public FileService(ObjectStorageResolver storageResolver, IFileAssetRepository repository,
-                       FileUploadProperties properties) {
+                       FileUploadPolicy policy) {
         this.storageResolver = storageResolver;
         this.repository = repository;
-        this.properties = properties;
-        this.uploadSlots = new Semaphore(properties.getMaxConcurrentUploads());
+        this.policy = policy;
+        this.uploadSlots = new Semaphore(policy.maxConcurrentUploads());
     }
 
     @Override
@@ -85,9 +84,9 @@ public class FileService implements IFileService {
             }
             asset.setSha256(HexFormat.of().formatHex(stream.digest.digest()));
 
-            Instant expiresAt = Instant.now().plus(properties.getDownloadUrlTtl());
+            Instant expiresAt = Instant.now().plus(policy.downloadUrlTtl());
             URI downloadUrl = storage.createDownloadUrl(
-                    asset.getLocation(), fileName, properties.getDownloadUrlTtl());
+                    asset.getLocation(), fileName, policy.downloadUrlTtl());
             asset.setStatus(FileStatus.UPLOADED);
             repository.update(asset);
             log.info("文件上传完成 fileId={} storageId={} size={}",
@@ -134,7 +133,7 @@ public class FileService implements IFileService {
                 || command.originalName() == null || command.originalName().isBlank()) {
             throw new AppException(ResponseCode.FILE_INVALID);
         }
-        if (command.size() > properties.getMaxFileSize().toBytes()) {
+        if (command.size() > policy.maxFileSizeBytes()) {
             throw new AppException(ResponseCode.FILE_TOO_LARGE);
         }
         // 兼容浏览器传来的 C:\\fakepath，文件名仅作展示，不参与 objectKey 拼接。
@@ -145,7 +144,7 @@ public class FileService implements IFileService {
         }
         int dot = name.lastIndexOf('.');
         String extension = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
-        if (properties.getAllowedExtensions().stream().noneMatch(extension::equalsIgnoreCase)) {
+        if (policy.allowedExtensions().stream().noneMatch(extension::equalsIgnoreCase)) {
             throw new AppException(ResponseCode.FILE_TYPE_NOT_ALLOWED);
         }
         if (command.ownerId() != null && command.ownerId().length() > 128) {

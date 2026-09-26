@@ -3,8 +3,8 @@ package com.jasonlat.ai.infrastructure.adapter.port;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
-import com.jasonlat.ai.infrastructure.config.SshCommandProperties;
-import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
+import com.jasonlat.ai.infrastructure.model.settings.SshCommandSettings;
+import com.jasonlat.ai.infrastructure.model.settings.TerminalSessionSettings;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
@@ -60,21 +60,21 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     private static final String READER_ERROR_MESSAGE = "\u001b[0m\r\n" + "\u001b[31m" + "[SSH 终端读取异常，请重新连接]" + "\u001b[0m\r\n";
 
     private final SshSessionPort sshSessionService;
-    private final SshCommandProperties commandProperties;
+    private final SshCommandSettings commandSettings;
 
     @Autowired
     public TerminalSessionPort(SshSessionPort sshSessionService,
-                               TerminalSessionProperties terminalProperties,
-                               SshCommandProperties commandProperties) {
-        super(terminalProperties);
+                               TerminalSessionSettings terminalSettings,
+                               SshCommandSettings commandSettings) {
+        super(terminalSettings);
         this.sshSessionService = sshSessionService;
-        this.commandProperties = commandProperties;
+        this.commandSettings = commandSettings;
     }
 
     /** 保留现有测试和手工构造入口，默认使用 10 秒无输出、600 秒绝对上限。 */
     public TerminalSessionPort(SshSessionPort sshSessionService,
-                               TerminalSessionProperties terminalProperties) {
-        this(sshSessionService, terminalProperties, new SshCommandProperties());
+                               TerminalSessionSettings terminalSettings) {
+        this(sshSessionService, terminalSettings, SshCommandSettings.defaults());
     }
 
     /**
@@ -437,9 +437,9 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
     private String awaitCommandResult(AgentCommandCapture capture)
             throws InterruptedException, ExecutionException, TimeoutException {
         long startedAtNanos = System.nanoTime();
-        long idleTimeoutNanos = TimeUnit.SECONDS.toNanos(commandProperties.getIdleTimeoutSeconds());
+        long idleTimeoutNanos = TimeUnit.SECONDS.toNanos(commandSettings.idleTimeoutSeconds());
         long maxExecutionTimeoutNanos =
-                TimeUnit.SECONDS.toNanos(commandProperties.getMaxExecutionTimeoutSeconds());
+                TimeUnit.SECONDS.toNanos(commandSettings.maxExecutionTimeoutSeconds());
 
         while (true) {
             if (Thread.currentThread().isInterrupted()) {
@@ -455,11 +455,11 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
 
             if (idleElapsedNanos >= idleTimeoutNanos) {
                 throw new TimeoutException("SSH 命令连续 "
-                        + commandProperties.getIdleTimeoutSeconds() + " 秒没有输出");
+                        + commandSettings.idleTimeoutSeconds() + " 秒没有输出");
             }
             if (totalElapsedNanos >= maxExecutionTimeoutNanos) {
                 throw new TimeoutException("SSH 命令执行超过最大时间 "
-                        + commandProperties.getMaxExecutionTimeoutSeconds() + " 秒");
+                        + commandSettings.maxExecutionTimeoutSeconds() + " 秒");
             }
 
             long waitNanos = Math.min(
@@ -813,7 +813,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
          * 时间基准。配置中的分钟数只在这里转换一次为毫秒。
          */
         long now = System.currentTimeMillis();
-        long idleTimeoutMillis = TimeUnit.MINUTES.toMillis(terminalProperties.getIdleTimeoutMinutes());
+        long idleTimeoutMillis = TimeUnit.MINUTES.toMillis(terminalSettings.idleTimeoutMinutes());
         List<String> cleanedSessionIds = new ArrayList<>();
 
         for (TerminalSessionContext context : terminalSessions.values()) {

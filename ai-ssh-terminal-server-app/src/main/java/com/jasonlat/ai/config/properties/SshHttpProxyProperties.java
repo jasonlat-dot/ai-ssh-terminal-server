@@ -1,15 +1,15 @@
-package com.jasonlat.ai.infrastructure.config;
+package com.jasonlat.ai.config.properties;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * 后端连接 SSH 服务器时使用的全局 HTTP CONNECT 代理配置。
  */
-@Data
-@Component
+@Getter
+@Setter
 @ConfigurationProperties(prefix = "ai.ssh.http-proxy")
 public class SshHttpProxyProperties implements InitializingBean {
 

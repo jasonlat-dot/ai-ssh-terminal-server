@@ -1,7 +1,7 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
-import com.jasonlat.ai.infrastructure.config.SshHttpProxyProperties;
+import com.jasonlat.ai.infrastructure.model.settings.SshHttpProxySettings;
 import com.jasonlat.ai.types.utils.StringUtils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -51,17 +51,17 @@ public class SshSessionPort implements ISshSessionPort {
     /** 相同 connectionId 总会映射到同一个固定锁；锁数量不会随历史连接数增长。 */
     private final Object[] connectionLocks = createConnectionLocks();
     /** 全局 HTTP CONNECT 代理配置；所有 SSH Session 使用同一代理出口。 */
-    private final SshHttpProxyProperties httpProxyProperties;
+    private final SshHttpProxySettings httpProxySettings;
 
     /** Spring 运行时使用配置化构造方法。 */
     @Autowired
-    public SshSessionPort(SshHttpProxyProperties httpProxyProperties) {
-        this.httpProxyProperties = httpProxyProperties;
+    public SshSessionPort(SshHttpProxySettings httpProxySettings) {
+        this.httpProxySettings = httpProxySettings;
     }
 
     /** 保留给手工测试使用；默认关闭代理并保持原来的直连行为。 */
     public SshSessionPort() {
-        this(new SshHttpProxyProperties());
+        this(SshHttpProxySettings.disabled());
     }
 
     private static Object[] createConnectionLocks() {
@@ -205,20 +205,20 @@ public class SshSessionPort implements ISshSessionPort {
      * {@code host:port} 的 TCP 隧道，后续认证、心跳和 Channel 都运行在同一隧道中。
      */
     private void configureHttpProxy(Session session, String connectionId) {
-        if (!httpProxyProperties.isEnabled()) {
+        if (!httpProxySettings.enabled()) {
             return;
         }
 
-        ProxyHTTP proxy = new ProxyHTTP(httpProxyProperties.getHost(), httpProxyProperties.getPort());
-        if (StringUtils.isNotBlank(httpProxyProperties.getUsername())) {
-            proxy.setUserPasswd(httpProxyProperties.getUsername(), httpProxyProperties.getPassword());
+        ProxyHTTP proxy = new ProxyHTTP(httpProxySettings.host(), httpProxySettings.port());
+        if (StringUtils.isNotBlank(httpProxySettings.username())) {
+            proxy.setUserPasswd(httpProxySettings.username(), httpProxySettings.password());
         }
         session.setProxy(proxy);
         log.info("SSH HTTP代理已配置 connectionId={} proxy={}:{} authentication={}",
                 connectionId,
-                httpProxyProperties.getHost(),
-                httpProxyProperties.getPort(),
-                StringUtils.isNotBlank(httpProxyProperties.getUsername()));
+                httpProxySettings.host(),
+                httpProxySettings.port(),
+                StringUtils.isNotBlank(httpProxySettings.username()));
     }
 
     /**

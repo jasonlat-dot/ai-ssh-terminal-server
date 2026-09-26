@@ -1,15 +1,13 @@
-package com.jasonlat.ai.infrastructure.config;
+package com.jasonlat.ai.config.properties;
 
 import lombok.Data;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Agent 在交互式 SSH 终端中执行命令时使用的超时配置。
  */
 @Data
-@Component
 @ConfigurationProperties(prefix = "ai.ssh.command")
 public class SshCommandProperties implements InitializingBean {
 

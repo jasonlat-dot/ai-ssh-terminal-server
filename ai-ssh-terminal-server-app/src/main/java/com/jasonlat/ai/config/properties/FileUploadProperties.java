@@ -1,17 +1,15 @@
-package com.jasonlat.ai.domain.file.model.valobj.properties;
+package com.jasonlat.ai.config.properties;
 
 import lombok.Data;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 import org.springframework.util.unit.DataSize;
 
 import java.time.Duration;
 import java.util.Set;
 
-/** 上传业务限制，与具体存储厂商无关。 */
+/** 绑定上传配置；由 app 装配为领域使用的 FileUploadPolicy。 */
 @Data
-@Component
 @ConfigurationProperties(prefix = "ai.file.upload")
 public class FileUploadProperties implements InitializingBean {
     private DataSize maxFileSize = DataSize.ofMegabytes(20);

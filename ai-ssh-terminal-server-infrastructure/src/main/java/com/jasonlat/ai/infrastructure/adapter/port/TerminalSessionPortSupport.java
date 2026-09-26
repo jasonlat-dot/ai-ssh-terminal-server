@@ -3,7 +3,7 @@ package com.jasonlat.ai.infrastructure.adapter.port;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
-import com.jasonlat.ai.infrastructure.config.TerminalSessionProperties;
+import com.jasonlat.ai.infrastructure.model.settings.TerminalSessionSettings;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jcraft.jsch.ChannelShell;
@@ -104,10 +104,10 @@ public class TerminalSessionPortSupport {
     private final ConcurrentMap<String, Integer> sessionsPerConnection = new ConcurrentHashMap<>();
     private final AtomicInteger reservedSessionCount = new AtomicInteger();
 
-    protected final TerminalSessionProperties terminalProperties;
+    protected final TerminalSessionSettings terminalSettings;
 
-    protected TerminalSessionPortSupport(TerminalSessionProperties terminalProperties) {
-        this.terminalProperties = terminalProperties;
+    protected TerminalSessionPortSupport(TerminalSessionSettings terminalSettings) {
+        this.terminalSettings = terminalSettings;
     }
 
     /**
@@ -150,7 +150,7 @@ public class TerminalSessionPortSupport {
             // 每次写入顺带移除过期项，确保低流量场景下缓存也能逐步收缩。
             terminatedSessions.entrySet().removeIf(entry -> isTerminationExpired(entry.getValue(), now));
             if (!terminatedSessions.containsKey(context.sessionId)
-                    && terminatedSessions.size() >= terminalProperties.getMaxTerminationRecords()) {
+                    && terminatedSessions.size() >= terminalSettings.maxTerminationRecords()) {
                 // 达到硬上限时淘汰最旧记录，为本次终止原因留出固定容量。
                 String oldestSessionId = null;
                 long oldestTimestamp = Long.MAX_VALUE;
@@ -169,7 +169,7 @@ public class TerminalSessionPortSupport {
     }
 
     private boolean isTerminationExpired(TerminalTermination termination, long now) {
-        long ttlMillis = TimeUnit.MINUTES.toMillis(terminalProperties.getTerminationRecordTtlMinutes());
+        long ttlMillis = TimeUnit.MINUTES.toMillis(terminalSettings.terminationRecordTtlMinutes());
         return now - termination.getTerminatedAtMillis() >= ttlMillis;
     }
 
@@ -180,17 +180,17 @@ public class TerminalSessionPortSupport {
         synchronized (quotaLock) {
             int userSessions = sessionsPerUser.getOrDefault(userId, 0);
             int connectionSessions = sessionsPerConnection.getOrDefault(connectionId, 0);
-            if (reservedSessionCount.get() >= terminalProperties.getMaxTotalSessions()) {
+            if (reservedSessionCount.get() >= terminalSettings.maxTotalSessions()) {
                 throw sessionLimitExceeded("后端活动终端数已达到上限 "
-                        + terminalProperties.getMaxTotalSessions());
+                        + terminalSettings.maxTotalSessions());
             }
-            if (userSessions >= terminalProperties.getMaxSessionsPerUser()) {
+            if (userSessions >= terminalSettings.maxSessionsPerUser()) {
                 throw sessionLimitExceeded("当前用户的终端数已达到上限 "
-                        + terminalProperties.getMaxSessionsPerUser());
+                        + terminalSettings.maxSessionsPerUser());
             }
-            if (connectionSessions >= terminalProperties.getMaxSessionsPerConnection()) {
+            if (connectionSessions >= terminalSettings.maxSessionsPerConnection()) {
                 throw sessionLimitExceeded("当前 SSH 连接的终端数已达到上限 "
-                        + terminalProperties.getMaxSessionsPerConnection());
+                        + terminalSettings.maxSessionsPerConnection());
             }
             reservedSessionCount.incrementAndGet();
             sessionsPerUser.put(userId, userSessions + 1);

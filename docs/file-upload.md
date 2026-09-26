@@ -114,6 +114,18 @@ console.log(result.data.fileId, result.data.downloadUrl);
 - infrastructure/adapter/repository/FileAssetRepository：文件记录持久化。
 - trigger/http/advice/FileExceptionHandler：文件接口范围的统一 HTTP 状态与错误码映射。
 
+配置绑定集中在 app 的 `com.jasonlat.ai.config.properties` 包：FileStorageProperties、
+FileUploadProperties，以及 SSH 的 SshCommandProperties、SshHttpProxyProperties、TerminalSessionProperties。
+这些类由 FileServiceConfiguration / SshInfrastructureConfiguration 使用
+`@EnableConfigurationProperties` 注册，不再由下层组件扫描注册。
+
+app 将绑定结果转换成不可变参数再注入下层：
+- domain 使用 FileUploadPolicy，文件大小是普通 long 字节数，不依赖 Spring DataSize。
+- infrastructure 使用 MinioStorageSettings、SshCommandSettings、SshHttpProxySettings、TerminalSessionSettings。
+- 存储选择器由 app 显式装配，只接收默认存储 ID 和存储实现列表。
+
+所有 YAML 配置键和默认值保持不变，下层不引用 app 的 Properties 类。
+
 接入 OSS 时新增 ObjectStoragePort 实现及其配置，注册不同的 storageId，再更改 default-id。
 无需修改 Controller、case 和上传领域流程。旧记录仍保存原来的 storageId，不能直接覆盖其含义。
 
@@ -148,13 +160,14 @@ PUT 未返回确认结果（如网络超时），或补偿删除失败，记录 
 
 新增 FileServiceTest、FileStorageResolverTest、FileControllerTest，覆盖未配置存储、配置不完整、
 上传摘要与版本、超限、数据库失败补偿、补偿失败、并发许可释放和 HTTP 错误响应。
-测试使用模拟存储，不会连接真实 MinIO。
+测试使用模拟存储，不会连接真实 MinIO。FileAndSshConfigurationTest 额外验证 app 配置绑定、
+参数转换，以及未配置/不完整 MinIO 配置不会阻止启动。
 
 本次环境没有 Java/Maven，未执行编译、单元测试或真实上传。配置好 JDK 25 与 Maven 后可运行：
 
 ```bash
 mvn -pl ai-ssh-terminal-server-app -am test \
   -DskipTests=false \
-  -Dtest=FileServiceTest,FileStorageResolverTest,FileControllerTest \
+  -Dtest=FileServiceTest,FileStorageResolverTest,FileControllerTest,FileAndSshConfigurationTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
