@@ -25,5 +25,5 @@ public interface AdkToolProvider {
     /** 本次 HTTP 对话专属的取消对象，子 Runner 和 SSH 工具必须原样透传。 */
     String RUN_CANCELLATION = "ssh-run-cancellation";
 
-    List<? extends BaseTool> getTools();
+    List<? extends BaseTool> getAdkTool();
 }

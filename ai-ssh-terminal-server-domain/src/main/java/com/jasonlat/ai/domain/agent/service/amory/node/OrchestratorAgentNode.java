@@ -2,12 +2,10 @@ package com.jasonlat.ai.domain.agent.service.amory.node;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.models.springai.SpringAI;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
-import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalSpringAI;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
@@ -31,11 +29,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * 负责统筹调度其他子 Agent 的主节点
  * @author jasonlat
  * 2026-09-22  21:54
  */
 @Service
-public class AgentToolNode extends AbstractAmorySupport {
+public class OrchestratorAgentNode extends AbstractAmorySupport {
 
     @Resource
     private AgentWorkflowNode agentWorkflowNode;
@@ -57,7 +56,7 @@ public class AgentToolNode extends AbstractAmorySupport {
     @Resource
     private AgentEventPublisher agentEventPublisher;
 
-    private static final Logger log = LoggerFactory.getLogger(AgentToolNode.class);
+    private static final Logger log = LoggerFactory.getLogger(OrchestratorAgentNode.class);
 
     /** 智能体名称分隔符 */
     private static final String NAME_SEPARATOR = "_";
@@ -98,7 +97,12 @@ public class AgentToolNode extends AbstractAmorySupport {
                 continue;
             }
 
-            List<Object> adkTools = new ArrayList<>();
+            /*
+             * 父 Agent 重建时也要保留配置型共享工具，例如 Skill。
+             * 这里只添加配置型工具，不添加 executeCommand，
+             * 因此父 Agent 仍然只能通过子 Agent 操作 SSH。
+             */
+            List<Object> adkTools = new ArrayList<>(dynamicContext.getConfiguredAdkToolMap().getOrDefault(agentConfig.getName(), List.of()));
 
             // 为每个声明的子 Agent 构建单独的派发工具（工具名即子 Agent 名，LLM 可直接点名调用）
             for (String subAgentName : subAgentNames) {

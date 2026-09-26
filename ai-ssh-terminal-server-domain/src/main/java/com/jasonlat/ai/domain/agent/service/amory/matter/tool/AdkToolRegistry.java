@@ -21,7 +21,7 @@ public class AdkToolRegistry {
         this.providers = providers;
     }
 
-    public List<Object> getAllTools() {
+    public List<Object> getAllAdkTools() {
         List<Object> tools = new ArrayList<>();
         for (Map.Entry<String, AdkToolProvider> entry : providers.entrySet()) {
             addProviderTools(tools, entry.getKey(), entry.getValue());
@@ -33,12 +33,12 @@ public class AdkToolRegistry {
      * 根据 Spring Bean 名称获取指定工具。
      * 可传单个名称，也可直接传入 String 数组；返回顺序与参数顺序一致。
      * 示例：
-     * getAllTools("sshExecuteAdkTool");
-     * getAllTools(new String[]{"sshExecuteAdkTool", "fileAdkTool"});
+     * getAllFunctionTools("sshExecuteAdkTool");
+     * getAllFunctionTools(new String[]{"sshExecuteAdkTool", "fileAdkTool"});
      */
-    public List<Object> getAllTools(String... beanNames) {
+    public List<Object> getAllAdkTools(String... beanNames) {
         if (beanNames == null || beanNames.length == 0) {
-            return getAllTools();
+            return getAllAdkTools();
         }
         List<Object> tools = new ArrayList<>();
         Set<String> uniqueBeanNames = new LinkedHashSet<>();
@@ -61,7 +61,7 @@ public class AdkToolRegistry {
 
     private void addProviderTools(List<Object> tools, String beanName, AdkToolProvider provider) {
         try {
-            List<? extends BaseTool> providerTools = provider.getTools();
+            List<? extends BaseTool> providerTools = provider.getAdkTool();
             tools.addAll(providerTools);
             log.info("注册 ADK 工具成功 beanName={}, provider={}, count={}", beanName, provider.getClass().getSimpleName(), providerTools.size());
         } catch (Exception e) {

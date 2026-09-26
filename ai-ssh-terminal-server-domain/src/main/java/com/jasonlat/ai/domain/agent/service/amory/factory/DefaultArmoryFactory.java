@@ -2,6 +2,7 @@ package com.jasonlat.ai.domain.agent.service.amory.factory;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.tools.BaseTool;
 import com.jasonlat.ai.domain.agent.model.entity.ArmoryCommandEntity;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentConfigTableVO;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
@@ -59,6 +60,12 @@ public class DefaultArmoryFactory {
     @AllArgsConstructor
     @NoArgsConstructor
     public static class DynamicContext {
+
+        /**
+         * Agent 运行时名称 -> 根据配置装配出来的 ADK 工具。
+         * 当前主要保存 Skill 工具，后续 MCP 等工具也可以使用同一套装配机制。
+         */
+        private Map<String, List<BaseTool>> configuredAdkToolMap = new HashMap<>(8);
 
         /** LLM Api */
         private Map<String, OpenAiApi> openAiApiMap = new HashMap<>(8);

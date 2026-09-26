@@ -7,13 +7,12 @@ import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.IToolMcpCreateService;
 import com.jasonlat.ai.domain.agent.service.amory.matter.mcp.client.factory.DefaultMcpClientFactory;
-import com.jasonlat.ai.domain.agent.service.amory.matter.skills.IToolSkillsCreateService;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -33,13 +32,10 @@ public class ChatModelNode extends AbstractAmorySupport {
     private static final Logger log = LoggerFactory.getLogger(ChatModelNode.class);
 
     @Resource
-    private AgentNode agentNode;
+    private ToolAssemblyNode toolAssemblyNode;
 
     @Resource
     private DefaultMcpClientFactory mcpClientFactory;
-
-    @Resource
-    private IToolSkillsCreateService skillsCreateService;
 
     /**
      * 业务流程处理方法
@@ -102,39 +98,11 @@ public class ChatModelNode extends AbstractAmorySupport {
      */
     @Override
     public StrategyHandler<ArmoryCommandEntity, DefaultArmoryFactory.DynamicContext, AiAgentRegisterVO> get(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
-        return agentNode;
+        return toolAssemblyNode;
     }
 
     private OpenAiChatModel buildChatModel(AiAgentConfigTableVO.Module.ChatModel chatModelConfig, OpenAiApi openAiApi ) {
-        List<ToolCallback> toolCallbacks = new ArrayList<>(8);
-        // 获取默认的 mcpSyncClient
-        List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList = chatModelConfig.getToolMcpList();
-        if ((toolMcpList != null && !toolMcpList.isEmpty())) {
-            toolMcpList.forEach(toolMcp -> {
-                try {
-                    IToolMcpCreateService toolMcpCreateService = mcpClientFactory.getToolMcpCreateService(toolMcp);
-                    ToolCallback[] mcpToolCallbacks = toolMcpCreateService.buildToolCallback(toolMcp);
-                    toolCallbacks.addAll(List.of(mcpToolCallbacks));
-                } catch (Exception e) {
-                    log.error("创建 mcpSyncClient 失败", e);
-                    throw new RuntimeException(e);
-                }
-            });
-        }
-        // 获取默认的 skills
-        List<AiAgentConfigTableVO.Module.ChatModel.ToolSkills> toolSkillsList = chatModelConfig.getToolSkillsList();
-        if ((toolSkillsList != null && !toolSkillsList.isEmpty())) {
-            toolSkillsList.forEach(toolSkills -> {
-                try {
-                    ToolCallback[] toolSkillsCallbacks = skillsCreateService.buildToolCallback(toolSkills);
-                    toolCallbacks.addAll(List.of(toolSkillsCallbacks));
-                } catch (Exception e) {
-                    log.error("创建 skills 失败", e);
-                    throw new RuntimeException(e);
-                }
-            });
-        }
-
+        List<ToolCallback> toolCallbacks = getMcpToolCallbacks(chatModelConfig);
         // 构建对话模型
         OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
                 .model(chatModelConfig.getModel())
@@ -155,6 +123,25 @@ public class ChatModelNode extends AbstractAmorySupport {
                 .openAiApi(openAiApi)
                 .defaultOptions(optionsBuilder.build())
                 .build();
+    }
+
+    private @NonNull List<ToolCallback> getMcpToolCallbacks(AiAgentConfigTableVO.Module.ChatModel chatModelConfig) {
+        List<ToolCallback> toolCallbacks = new ArrayList<>(8);
+        // 获取默认的 mcpSyncClient
+        List<AiAgentConfigTableVO.Module.ChatModel.ToolMcp> toolMcpList = chatModelConfig.getToolMcpList();
+        if ((toolMcpList != null && !toolMcpList.isEmpty())) {
+            toolMcpList.forEach(toolMcp -> {
+                try {
+                    IToolMcpCreateService toolMcpCreateService = mcpClientFactory.getToolMcpCreateService(toolMcp);
+                    ToolCallback[] mcpToolCallbacks = toolMcpCreateService.buildToolCallback(toolMcp);
+                    toolCallbacks.addAll(List.of(mcpToolCallbacks));
+                } catch (Exception e) {
+                    log.error("创建 mcpSyncClient 失败", e);
+                    throw new RuntimeException(e);
+                }
+            });
+        }
+        return toolCallbacks;
     }
 
 }

@@ -6,8 +6,8 @@ import com.google.adk.tools.ToolContext;
 import com.google.genai.types.*;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyDecision;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.security.CommandSafetyPolicy;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.ssh.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
 import io.reactivex.rxjava3.core.Single;
@@ -61,7 +61,7 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
     }
 
     @Override
-    public List<? extends BaseTool> getTools() {
+    public List<? extends BaseTool> getAdkTool() {
         return List.of(this);
     }
 

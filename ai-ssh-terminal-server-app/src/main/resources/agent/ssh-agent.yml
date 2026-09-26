@@ -27,6 +27,10 @@ ai:
             chat-model:
               model: gpt-5.5
               reasoning-effort: medium
+              tool-skills-list:
+                - type: resource
+                  root-path: agent/skills
+
             llm-agents:
               - name: sshOperator
                 description: SSH 命令执行与结果分析智能体，帮助用户在远程服务器上执行操作

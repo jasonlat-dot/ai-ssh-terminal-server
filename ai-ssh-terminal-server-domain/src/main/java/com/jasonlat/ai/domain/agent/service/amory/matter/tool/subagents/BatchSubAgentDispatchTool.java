@@ -283,7 +283,7 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
     }
 
     @Override
-    public List<? extends BaseTool> getTools() {
+    public List<? extends BaseTool> getAdkTool() {
         return List.of(this);
     }
 

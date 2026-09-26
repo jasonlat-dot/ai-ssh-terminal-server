@@ -167,7 +167,7 @@ public class DynamicPlanDispatchTool extends BaseTool implements AdkToolProvider
     }
 
     @Override
-    public List<? extends BaseTool> getTools() {
+    public List<? extends BaseTool> getAdkTool() {
         return List.of(this);
     }
 }

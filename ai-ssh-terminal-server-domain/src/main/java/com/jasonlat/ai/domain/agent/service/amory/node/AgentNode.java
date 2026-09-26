@@ -8,7 +8,6 @@ import com.jasonlat.ai.domain.agent.service.amory.AbstractAmorySupport;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.patch.LocalSpringAI;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.AdkToolRegistry;
-import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.design.framework.tree.StrategyHandler;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
@@ -16,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -28,7 +28,7 @@ public class AgentNode extends AbstractAmorySupport {
     private static final Logger log = LoggerFactory.getLogger(AgentNode.class);
 
     @Resource
-    private AgentToolNode agentToolNode;
+    private OrchestratorAgentNode orchestratorAgentNode;
 
     @Resource
     private AdkToolRegistry adkToolRegistry;
@@ -58,6 +58,13 @@ public class AgentNode extends AbstractAmorySupport {
                 chatModel = dynamicContext.getChatModelMap().get(getDefaultChatModelMapKey(aiAgentConfigTableVO.getAppName()));
             }
 
+            List<Object> adkTools = new ArrayList<>();
+            // 原有 SSH 执行 Function 工具。
+            adkTools.addAll(adkToolRegistry.getAllAdkTools("sshExecuteAdkTool"));
+
+            // 配置型工具，例如 Skill。
+            adkTools.addAll(dynamicContext.getConfiguredAdkToolMap().getOrDefault(agentConfig.getName(), List.of()));
+
             LlmAgent llmAgent  = LlmAgent.builder()
                     .name(agentConfig.getName())
                     // ADK 1.2.0 的 SpringAI 在流式完成时固定上报 0/0/0；
@@ -66,7 +73,7 @@ public class AgentNode extends AbstractAmorySupport {
                     .description(agentConfig.getDescription())
                     .instruction(agentConfig.getInstruction())
                     .outputKey(agentConfig.getOutputKey())
-                    .tools(adkToolRegistry.getAllTools("sshExecuteAdkTool"))
+                    .tools(adkTools)
                     .build();
 
             dynamicContext.getAgentGroup().put(agentConfig.getName(), llmAgent);
@@ -89,6 +96,6 @@ public class AgentNode extends AbstractAmorySupport {
      */
     @Override
     public StrategyHandler<ArmoryCommandEntity, DefaultArmoryFactory.DynamicContext, AiAgentRegisterVO> get(ArmoryCommandEntity requestParameter, DefaultArmoryFactory.DynamicContext dynamicContext) throws Exception {
-        return agentToolNode;
+        return orchestratorAgentNode;
     }
 }
