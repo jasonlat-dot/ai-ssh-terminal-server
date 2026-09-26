@@ -12,67 +12,67 @@ spring:
       file-size-threshold: 0B
       # 延迟到Controller参数绑定时解析，使文件接口的异常处理器能返回统一JSON。
       resolve-lazily: true
-
-# SIT 会继续加载 application-sit.yml；终端容量配置放在公共配置中，所有环境使用同一组安全默认值。
+#
+## SIT 会继续加载 application-sit.yml；终端容量配置放在公共配置中，所有环境使用同一组安全默认值。
+##ai:
+##  ssh:
+##    terminal:
+##      max-total-sessions: 500
+##      max-sessions-per-user: 50
+##      max-sessions-per-connection: 8
+##      idle-timeout-minutes: 30
+##      cleanup-interval-minutes: 5
+##      termination-record-ttl-minutes: 5
+##      max-termination-records: 1000
+#
 #ai:
+#  chat:
+#    attachments:
+#      max-files: ${CHAT_ATTACHMENT_MAX_FILES:4}
+#      max-total-size: ${CHAT_ATTACHMENT_MAX_TOTAL_SIZE:20MB}
+#      max-text-chars: ${CHAT_ATTACHMENT_MAX_TEXT_CHARS:60000}
+#      # 覆盖附件读取到模型调用结束的整个过程，控制媒体字节在内存中的并发驻留。
+#      max-concurrent-requests: ${CHAT_ATTACHMENT_MAX_CONCURRENT_REQUESTS:2}
+#      # 兼容当前无统一登录的上传链路；启用认证后建议关闭，并使用 Principal 记录归属。
+#      allow-anonymous-files: ${CHAT_ATTACHMENT_ALLOW_ANONYMOUS_FILES:true}
+#  file:
+#    upload:
+#      max-file-size: ${FILE_MAX_SIZE:20MB}
+#      max-concurrent-uploads: ${FILE_MAX_CONCURRENT_UPLOADS:4}
+#      download-url-ttl: ${FILE_DOWNLOAD_URL_TTL:15m}
+#      # 上传只做格式准入与存储；聊天能识别哪些格式由独立的附件转换策略决定。
+#      allowed-extensions: [png, jpg, jpeg, webp, pdf, txt, log, csv, json, yaml, yml, md, docx, xlsx]
+#    storage:
+#      default-id: ${FILE_STORAGE_DEFAULT_ID:minio-main}
+#      minio:
+#        # 默认不启用。未启用时上传接口返回 FILE_STORAGE_NOT_CONFIGURED，应用仍可启动。
+#        enabled: ${MINIO_ENABLED:false}
+#        storage-id: minio-main
+#        endpoint: ${MINIO_ENDPOINT:}
+#        # 浏览器可访问的对象API地址；为空时使用endpoint。不能填写MinIO控制台地址。
+#        public-endpoint: ${MINIO_PUBLIC_ENDPOINT:}
+#        access-key: ${MINIO_ACCESS_KEY:}
+#        secret-key: ${MINIO_SECRET_KEY:}
+#        # 预先创建私有桶，应用不会自动建桶或修改桶策略。
+#        bucket: ${MINIO_BUCKET:}
+#        region: ${MINIO_REGION:us-east-1}
+#        connect-timeout: 5s
+#        read-timeout: 30s
+#        write-timeout: 60s
+#        call-timeout: 2m
 #  ssh:
-#    terminal:
-#      max-total-sessions: 500
-#      max-sessions-per-user: 50
-#      max-sessions-per-connection: 8
-#      idle-timeout-minutes: 30
-#      cleanup-interval-minutes: 5
-#      termination-record-ttl-minutes: 5
-#      max-termination-records: 1000
-
-ai:
-  chat:
-    attachments:
-      max-files: ${CHAT_ATTACHMENT_MAX_FILES:4}
-      max-total-size: ${CHAT_ATTACHMENT_MAX_TOTAL_SIZE:20MB}
-      max-text-chars: ${CHAT_ATTACHMENT_MAX_TEXT_CHARS:60000}
-      # 覆盖附件读取到模型调用结束的整个过程，控制媒体字节在内存中的并发驻留。
-      max-concurrent-requests: ${CHAT_ATTACHMENT_MAX_CONCURRENT_REQUESTS:2}
-      # 兼容当前无统一登录的上传链路；启用认证后建议关闭，并使用 Principal 记录归属。
-      allow-anonymous-files: ${CHAT_ATTACHMENT_ALLOW_ANONYMOUS_FILES:true}
-  file:
-    upload:
-      max-file-size: ${FILE_MAX_SIZE:20MB}
-      max-concurrent-uploads: ${FILE_MAX_CONCURRENT_UPLOADS:4}
-      download-url-ttl: ${FILE_DOWNLOAD_URL_TTL:15m}
-      # 上传只做格式准入与存储；聊天能识别哪些格式由独立的附件转换策略决定。
-      allowed-extensions: [png, jpg, jpeg, webp, pdf, txt, log, csv, json, yaml, yml, md, docx, xlsx]
-    storage:
-      default-id: ${FILE_STORAGE_DEFAULT_ID:minio-main}
-      minio:
-        # 默认不启用。未启用时上传接口返回 FILE_STORAGE_NOT_CONFIGURED，应用仍可启动。
-        enabled: ${MINIO_ENABLED:false}
-        storage-id: minio-main
-        endpoint: ${MINIO_ENDPOINT:}
-        # 浏览器可访问的对象API地址；为空时使用endpoint。不能填写MinIO控制台地址。
-        public-endpoint: ${MINIO_PUBLIC_ENDPOINT:}
-        access-key: ${MINIO_ACCESS_KEY:}
-        secret-key: ${MINIO_SECRET_KEY:}
-        # 预先创建私有桶，应用不会自动建桶或修改桶策略。
-        bucket: ${MINIO_BUCKET:}
-        region: ${MINIO_REGION:us-east-1}
-        connect-timeout: 5s
-        read-timeout: 30s
-        write-timeout: 60s
-        call-timeout: 2m
-  ssh:
-    command:
-      # 连续没有命令输出时快速判定卡死；持续输出不会触发该限制。
-      idle-timeout-seconds: ${SSH_COMMAND_IDLE_TIMEOUT_SECONDS:10}
-      # 即使命令持续输出也不能超过该绝对上限。
-      max-execution-timeout-seconds: ${SSH_COMMAND_MAX_EXECUTION_TIMEOUT_SECONDS:600}
-
-#ai:
-#  ssh:
-#    # 后端到 SSH 服务器的全局 HTTP CONNECT 代理；代理必须允许 CONNECT 目标SSH端口。
-#    http-proxy:
-#      enabled: ${SSH_HTTP_PROXY_ENABLED:false}
-#      host: ${SSH_HTTP_PROXY_HOST:}
-#      port: ${SSH_HTTP_PROXY_PORT:8080}
-#      username: ${SSH_HTTP_PROXY_USERNAME:}
-#      password: ${SSH_HTTP_PROXY_PASSWORD:}
+#    command:
+#      # 连续没有命令输出时快速判定卡死；持续输出不会触发该限制。
+#      idle-timeout-seconds: ${SSH_COMMAND_IDLE_TIMEOUT_SECONDS:10}
+#      # 即使命令持续输出也不能超过该绝对上限。
+#      max-execution-timeout-seconds: ${SSH_COMMAND_MAX_EXECUTION_TIMEOUT_SECONDS:600}
+#
+##ai:
+##  ssh:
+##    # 后端到 SSH 服务器的全局 HTTP CONNECT 代理；代理必须允许 CONNECT 目标SSH端口。
+##    http-proxy:
+##      enabled: ${SSH_HTTP_PROXY_ENABLED:false}
+##      host: ${SSH_HTTP_PROXY_HOST:}
+##      port: ${SSH_HTTP_PROXY_PORT:8080}
+##      username: ${SSH_HTTP_PROXY_USERNAME:}
+##      password: ${SSH_HTTP_PROXY_PASSWORD:}

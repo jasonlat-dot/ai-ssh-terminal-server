@@ -226,7 +226,6 @@ public class AgentController implements IAgentService {
         try {
             Objects.requireNonNull(request.getAgentId(), "智能体ID不能为空");
             Objects.requireNonNull(request.getUserId(), "用户ID不能为空");
-            ChatRequestContentSupport.validateAndNormalize(request);
             request.setAuthenticatedUserId(principal == null ? null : principal.getName());
             Objects.requireNonNull(request.getSessionId(), "会话ID不能为空");
 
@@ -286,7 +285,6 @@ public class AgentController implements IAgentService {
         try {
             Objects.requireNonNull(request.getAgentId(), "智能体ID不能为空");
             Objects.requireNonNull(request.getUserId(), "用户ID不能为空");
-            ChatRequestContentSupport.validateAndNormalize(request);
             // 在切换到异步线程前提取可信身份，不使用前端传入的 userId 校验附件所有权。
             request.setAuthenticatedUserId(principal == null ? null : principal.getName());
 

@@ -3,7 +3,7 @@ package com.jasonlat.ai.domain.agent.service.multimodal;
 import com.google.genai.types.Part;
 
 /** 附件转换策略；新增可识别格式时注册新实现，不在调用节点中增加类型分支。 */
-public interface ChatAttachmentConverter {
+public interface IChatAttachmentConverter {
     /** 是否处理该扩展名，扩展名已转小写且不含点。 */
     boolean supports(String extension);
 

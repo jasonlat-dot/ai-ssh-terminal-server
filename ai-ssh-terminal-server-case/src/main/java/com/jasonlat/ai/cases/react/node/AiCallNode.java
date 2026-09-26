@@ -10,7 +10,7 @@ import com.google.genai.types.Part;
 import com.jasonlat.ai.cases.react.AbstractAIAgentReActSupport;
 import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
-import com.jasonlat.ai.domain.agent.service.multimodal.ChatAttachmentService;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.ChatAttachmentService;
 import com.jasonlat.ai.cases.react.model.valobj.StopReasonEnum;
 import com.jasonlat.ai.domain.agent.model.valobj.AiAgentRegisterVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;

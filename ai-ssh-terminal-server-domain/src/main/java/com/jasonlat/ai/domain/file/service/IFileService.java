@@ -1,6 +1,6 @@
 package com.jasonlat.ai.domain.file.service;
 
-import com.jasonlat.ai.domain.file.model.valobj.FileUploadCommand;
+import com.jasonlat.ai.domain.file.model.entity.FileUploadCommand;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadResult;
 
 import java.io.InputStream;

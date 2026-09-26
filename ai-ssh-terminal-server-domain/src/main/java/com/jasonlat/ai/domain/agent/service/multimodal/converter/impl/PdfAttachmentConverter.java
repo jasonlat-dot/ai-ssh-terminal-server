@@ -1,6 +1,7 @@
-package com.jasonlat.ai.domain.agent.service.multimodal;
+package com.jasonlat.ai.domain.agent.service.multimodal.converter.impl;
 
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.service.multimodal.IChatAttachmentConverter;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import org.springframework.stereotype.Component;
@@ -8,9 +9,15 @@ import java.nio.charset.StandardCharsets;
 
 /** PDF 以原始字节交给支持 PDF 的模型，避免把下载 URL 当作 file_data。 */
 @Component
-public class PdfAttachmentConverter implements ChatAttachmentConverter {
-    @Override public boolean supports(String extension) { return "pdf".equals(extension); }
-    @Override public String mediaType(String extension) { return "application/pdf"; }
+public class PdfAttachmentConverter implements IChatAttachmentConverter {
+    @Override
+    public boolean supports(String extension) {
+        return "pdf".equals(extension);
+    }
+
+    @Override public String mediaType(String extension) {
+        return "application/pdf";
+    }
 
     @Override
     public Part convert(String extension, byte[] bytes, int maxTextChars) {

@@ -1,5 +1,6 @@
 package com.jasonlat.ai.test.domain.file;
 
+import com.jasonlat.ai.domain.file.model.entity.FileUploadCommand;
 import com.jasonlat.ai.domain.file.service.IObjectStorageService;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;

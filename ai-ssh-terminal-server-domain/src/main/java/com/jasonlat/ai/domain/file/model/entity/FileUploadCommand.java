@@ -1,4 +1,4 @@
-package com.jasonlat.ai.domain.file.model.valobj;
+package com.jasonlat.ai.domain.file.model.entity;
 
 /**
  * 应用层传给文件领域服务的上传参数，文件正文通过独立的 InputStream 传递。

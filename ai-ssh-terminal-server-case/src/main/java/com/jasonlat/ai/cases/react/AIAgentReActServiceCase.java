@@ -7,7 +7,7 @@ import com.jasonlat.ai.cases.react.facotry.DefaultReActFactory;
 import com.jasonlat.ai.cases.react.model.ReActStreamCancellation;
 import com.jasonlat.ai.cases.react.node.RootNode;
 import com.jasonlat.ai.cases.react.multimodal.ChatRequestContentSupport;
-import com.jasonlat.ai.domain.agent.service.multimodal.ChatAttachmentService;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.ChatAttachmentService;
 import com.jasonlat.ai.trigger.api.dto.ReActEventDTO;
 import com.jasonlat.ai.types.exception.AppException;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
@@ -244,10 +244,8 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
         }
     }
 
-    private void executeStream(ChatRequest requestDTO,
-                               DefaultReActFactory.DynamicContext context,
-                               ResponseBodyEmitter emitter,
-                               ActiveStream activeStream) {
+    private void executeStream(ChatRequest requestDTO, DefaultReActFactory.DynamicContext context,
+                               ResponseBodyEmitter emitter, ActiveStream activeStream) {
         String sessionId = requestDTO.getSessionId();
         long executionStartNanos = System.nanoTime();
         // saveExecutionState 采用整份会话状态回写，同一 session 必须串行，避免后完成的旧快照覆盖新历史。

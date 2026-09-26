@@ -1,7 +1,7 @@
 package com.jasonlat.ai.cases.file;
 
 import com.jasonlat.ai.cases.IFileServiceCase;
-import com.jasonlat.ai.domain.file.model.valobj.FileUploadCommand;
+import com.jasonlat.ai.domain.file.model.entity.FileUploadCommand;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadResult;
 import com.jasonlat.ai.domain.file.service.IFileService;
 import com.jasonlat.ai.trigger.api.dto.file.FileUploadResponseDTO;

@@ -1,6 +1,7 @@
-package com.jasonlat.ai.domain.agent.service.multimodal;
+package com.jasonlat.ai.domain.agent.service.multimodal.converter.impl;
 
 import com.google.genai.types.Part;
+import com.jasonlat.ai.domain.agent.service.multimodal.IChatAttachmentConverter;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import org.springframework.stereotype.Component;
@@ -8,7 +9,7 @@ import java.util.Map;
 
 /** 按文件头识别受支持的图片格式；后缀只用于选择策略，发送 MIME 以实际内容为准。 */
 @Component
-public class ImageAttachmentConverter implements ChatAttachmentConverter {
+public class ImageAttachmentConverter implements IChatAttachmentConverter {
     private static final Map<String, String> TYPES = Map.of(
             "png", "image/png", "jpg", "image/jpeg", "jpeg", "image/jpeg", "webp", "image/webp");
 

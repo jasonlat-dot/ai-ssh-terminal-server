@@ -26,6 +26,7 @@ import java.util.Map;
 
 /** MinIO 存储适配器，封装 SDK 的上传、签名和删除操作，对上只暴露领域类型。 */
 @Component
+@SuppressWarnings("resource")
 public class MinioIObjectStorageService implements IObjectStorageService {
     /** 固定分片缓冲，结合上传并发限制控制内存，不随文件总大小分配 byte[]。 */
     private static final long PART_SIZE = 5L * 1024 * 1024;
@@ -58,11 +59,11 @@ public class MinioIObjectStorageService implements IObjectStorageService {
                 || blank(settings.secretKey()) || blank(settings.bucket())
                 || blank(settings.region()) || blank(settings.storageId())
                 || settings.storageId().length() > 64 || settings.region().length() > 128
-                || !validEndpoint(settings.endpoint())
-                || (!blank(settings.publicEndpoint()) && !validEndpoint(settings.publicEndpoint()))
+                || validEndpoint(settings.endpoint())
+                || (!blank(settings.publicEndpoint()) && validEndpoint(settings.publicEndpoint()))
                 || !settings.bucket().matches("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
-                || !validTimeout(settings.connectTimeout()) || !validTimeout(settings.readTimeout())
-                || !validTimeout(settings.writeTimeout()) || !validTimeout(settings.callTimeout())) {
+                || validTimeout(settings.connectTimeout()) || validTimeout(settings.readTimeout())
+                || validTimeout(settings.writeTimeout()) || validTimeout(settings.callTimeout())) {
             throw new AppException(ResponseCode.FILE_STORAGE_CONFIG_INVALID);
         }
         clients();
@@ -185,17 +186,17 @@ public class MinioIObjectStorageService implements IObjectStorageService {
     private boolean validEndpoint(String endpoint) {
         try {
             URI uri = URI.create(endpoint);
-            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    && uri.getHost() != null && uri.getUserInfo() == null
-                    && uri.getQuery() == null && uri.getFragment() == null
-                    && (uri.getPath() == null || uri.getPath().isEmpty() || "/".equals(uri.getPath()));
+            return (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null || uri.getUserInfo() != null
+                    || uri.getQuery() != null || uri.getFragment() != null
+                    || (uri.getPath() != null && !uri.getPath().isEmpty() && !"/".equals(uri.getPath()));
         } catch (IllegalArgumentException e) {
-            return false;
+            return true;
         }
     }
 
     private boolean validTimeout(Duration value) {
-        return value != null && value.toMillis() > 0 && value.toMillis() <= Integer.MAX_VALUE;
+        return value == null || value.toMillis() <= 0 || value.toMillis() > Integer.MAX_VALUE;
     }
 
     private boolean blank(String value) {
@@ -204,10 +205,13 @@ public class MinioIObjectStorageService implements IObjectStorageService {
 
     /** 应用关闭时释放本适配器创建的 HTTP 线程池及空闲连接。 */
     @PreDestroy
+    @SuppressWarnings("resource")
     public void close() {
         Clients current = clients;
         if (current != null) {
+            // 发起线程池有序关闭；已有任务完成后退出，此处不阻塞等待。
             current.http().dispatcher().executorService().shutdown();
+            // 清除连接池中的空闲连接。
             current.http().connectionPool().evictAll();
         }
     }

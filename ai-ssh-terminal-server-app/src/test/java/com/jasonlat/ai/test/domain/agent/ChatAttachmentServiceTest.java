@@ -2,7 +2,10 @@ package com.jasonlat.ai.test.domain.agent;
 
 import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.model.valobj.ChatAttachmentPolicy;
-import com.jasonlat.ai.domain.agent.service.multimodal.*;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.ChatAttachmentService;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.impl.ImageAttachmentConverter;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.impl.PdfAttachmentConverter;
+import com.jasonlat.ai.domain.agent.service.multimodal.converter.impl.TextAttachmentConverter;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.domain.file.service.IFileService;

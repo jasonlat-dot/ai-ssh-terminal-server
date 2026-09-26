@@ -2,6 +2,7 @@ package com.jasonlat.ai.domain.file.service.file;
 
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
+import com.jasonlat.ai.domain.file.model.entity.FileUploadCommand;
 import com.jasonlat.ai.domain.file.model.valobj.*;
 import com.jasonlat.ai.domain.file.service.IFileService;
 import com.jasonlat.ai.domain.file.service.IObjectStorageService;
@@ -71,10 +72,10 @@ public class FileService implements IFileService {
             throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
         }
         FileAssetEntity asset = repository.findById(fileId);
-        if (asset == null) throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
+        if (asset == null)
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_INVALID);
         // 沿用上传时的 Principal 归属，不能拿请求体 userId 冒充文件所有者。
-        if (asset.getOwnerId() == null ? !allowAnonymous
-                : !asset.getOwnerId().equals(authenticatedUserId)) {
+        if (asset.getOwnerId() == null ? !allowAnonymous : !asset.getOwnerId().equals(authenticatedUserId)) {
             throw new AppException(ResponseCode.CHAT_ATTACHMENT_FORBIDDEN);
         }
         if (asset.getStatus() != FileStatus.UPLOADED) {
@@ -85,16 +86,18 @@ public class FileService implements IFileService {
 
     @Override
     public byte[] readContent(FileAssetEntity asset, long maxBytes) {
-        if (asset.getSize() <= 0 || asset.getSize() > maxBytes || asset.getSize() >= Integer.MAX_VALUE) {
+        if (asset.getSize() <= 0  || asset.getSize() >= Integer.MAX_VALUE || asset.getSize() > maxBytes) {
             throw new AppException(ResponseCode.CHAT_ATTACHMENT_LIMIT);
         }
+
         String expectedSha256 = asset.getSha256();
         if (expectedSha256 == null || !expectedSha256.matches("[0-9a-fA-F]{64}")) {
-            // 摘要缺失不能通过跳过校验来兼容，否则无法确认读到的仍是原始文件。
+            // hash指纹缺失不能通过跳过校验来兼容，否则无法确认读到的仍是原始文件。
             log.warn("附件校验失败 stage=metadata fileId={} storageId={} reason=checksum-missing-or-invalid",
                     asset.getFileId(), asset.getLocation().storageId());
             throw new AppException(ResponseCode.CHAT_ATTACHMENT_CHECKSUM_MISSING);
         }
+
         IObjectStorageService storage = storageResolver.resolve(asset.getLocation().storageId());
         try (InputStream input = storage.openRead(asset.getLocation())) {
             // 多读一个字节检测对象被替换或长度失配，绝不使用无限制 readAllBytes。
