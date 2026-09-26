@@ -15,7 +15,7 @@ public class PdfAttachmentConverter implements ChatAttachmentConverter {
     @Override
     public Part convert(String extension, byte[] bytes, int maxTextChars) {
         String header = new String(bytes, 0, Math.min(bytes.length, 1024), StandardCharsets.ISO_8859_1);
-        if (!header.contains("%PDF-")) throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
+        if (!header.contains("%PDF-")) throw new AppException(ResponseCode.CHAT_ATTACHMENT_PDF_INVALID);
         return Part.fromBytes(bytes, mediaType(extension));
     }
 }

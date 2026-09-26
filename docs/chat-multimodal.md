@@ -38,12 +38,15 @@ Content-Type 仍为 application/json，响应仍为原有逐行 JSON 事件流�
 
 | 文件 | 处理方式 | 模型要求 |
 | --- | --- | --- |
-| png、jpg、jpeg、webp | 校验文件头，构造 ADK inlineData → Spring AI Media | 声明支持相应 image MIME，实际模型和网关支持图片 |
+| png、jpg、jpeg、webp | 按文件头识别真实图片 MIME，构造 ADK inlineData → Spring AI Media | 声明支持实际 image MIME，实际模型和网关支持图片 |
 | pdf | 校验 PDF 头，传原始字节，Spring AI 构造带文件名的 PDF input file | 声明 application/pdf，实际模型和网关支持 PDF |
 | txt、log、csv、json、yaml、yml、md | 严格 UTF-8 解码，读取正文作为文字 Part | 普通文本模型即可 |
 | docx、xlsx 等其他格式 | 返回 CHAT_ATTACHMENT_UNSUPPORTED | 后续接入独立转换策略 |
 
 上传允许的格式不等于聊天已具备解析能力。文本不进行静默截断，超限要求前端减少内容。
+图片后缀用于选择图片策略，实际发送 MIME 根据 PNG、JPEG 或 WebP 文件头确定。
+例如 JPEG 误命名为 `.png` 时，仍按 `image/jpeg` 发送，并检查模型是否声明支持 JPEG；
+不会修改对象存储中的原文件和上传元数据。其他无法识别的图片内容仍拒绝。
 文件头校验和 SHA-256 核对不等于完整文件解码或病毒扫描；损坏、加密 PDF 等仍可能由上游拒绝。
 
 ## 模型能力配置
@@ -109,13 +112,34 @@ ai:
 | CHAT_ATTACHMENT_FORBIDDEN | 文件归属不匹配或禁止匿名文件 |
 | CHAT_ATTACHMENT_LIMIT | 数量、总大小或文本正文总长度超限 |
 | CHAT_ATTACHMENT_UNSUPPORTED | 未实现该格式的转换策略 |
-| CHAT_ATTACHMENT_CONTENT_INVALID | 文件头、UTF-8、长度或 SHA-256 校验失败 |
+| CHAT_ATTACHMENT_SIZE_MISMATCH | 对象读取大小与上传记录不一致 |
+| CHAT_ATTACHMENT_CHECKSUM_MISSING | 上传记录缺少有效 SHA-256 摘要 |
+| CHAT_ATTACHMENT_CHECKSUM_MISMATCH | 对象内容 SHA-256 与上传记录不一致 |
+| CHAT_ATTACHMENT_IMAGE_INVALID | 无法识别为 PNG、JPEG 或 WebP 图片 |
+| CHAT_ATTACHMENT_PDF_INVALID | 无法识别 PDF 文件头 |
+| CHAT_ATTACHMENT_TEXT_ENCODING_INVALID | 文本不是有效 UTF-8 编码 |
+| CHAT_ATTACHMENT_TEXT_CONTENT_INVALID | 文本包含不支持的控制字符或二进制内容 |
+| CHAT_ATTACHMENT_CONTENT_INVALID | 兼容旧版通用校验错误；新版使用上面的具体错误码 |
 | CHAT_MODEL_MEDIA_UNSUPPORTED | 主 Agent 未声明相应媒体能力 |
 | CHAT_ATTACHMENT_BUSY | 附件对话并发已满 |
 | FILE_READ_FAILED / FILE_STORAGE_UNAVAILABLE | 读取流或对象存储异常 |
 
 上游实际拒绝模型请求时仍通过原有 ADK 错误事件返回。前端不要把读取流结束当成成功，
 也不要对附件错误自动重复上传，因为对象可能早已保存。
+前端应直接展示错误事件中的 `content`，仅对 `CHAT_ATTACHMENT_TEXT_ENCODING_INVALID`
+补充 UTF-8 转换提示，不能给图片、摘要或大小错误统一展示“文本附件需要 UTF-8”。
+
+## 附件错误定位
+
+上传成功仅表示文件已存储；聊天阶段还会重新读取并检查完整性、内容格式和模型能力。
+根据聊天请求中的 fileId 搜索后端日志：
+
+- FileService：记录大小不一致、摘要缺失或摘要不一致的原因以及预期/实际值。
+- ChatAttachmentService：记录 fileId、storageId、扩展名和失败阶段 `read`、`convert` 或 `model-capability`；图片后缀与真实格式不同时记录纠正后的 MIME。
+- AIAgentReActServiceCase：记录流式业务异常的 sessionId、错误码和完整异常堆栈，再发送前端 error 事件。
+
+上述新增日志不打印附件正文、Base64 或签名下载链接。大小不一致时 actualBytes 最多为声明大小加一，
+它表示本次已读取的字节数，不一定等于存储中整个对象的大小。
 
 ## 代码位置
 

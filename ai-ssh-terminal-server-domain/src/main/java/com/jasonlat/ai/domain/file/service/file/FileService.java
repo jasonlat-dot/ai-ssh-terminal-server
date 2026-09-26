@@ -88,16 +88,35 @@ public class FileService implements IFileService {
         if (asset.getSize() <= 0 || asset.getSize() > maxBytes || asset.getSize() >= Integer.MAX_VALUE) {
             throw new AppException(ResponseCode.CHAT_ATTACHMENT_LIMIT);
         }
+        String expectedSha256 = asset.getSha256();
+        if (expectedSha256 == null || !expectedSha256.matches("[0-9a-fA-F]{64}")) {
+            // 摘要缺失不能通过跳过校验来兼容，否则无法确认读到的仍是原始文件。
+            log.warn("附件校验失败 stage=metadata fileId={} storageId={} reason=checksum-missing-or-invalid",
+                    asset.getFileId(), asset.getLocation().storageId());
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_CHECKSUM_MISSING);
+        }
         IObjectStorageService storage = storageResolver.resolve(asset.getLocation().storageId());
         try (InputStream input = storage.openRead(asset.getLocation())) {
             // 多读一个字节检测对象被替换或长度失配，绝不使用无限制 readAllBytes。
             byte[] bytes = input.readNBytes((int) asset.getSize() + 1);
-            String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-            if (bytes.length != asset.getSize() || !sha256.equalsIgnoreCase(asset.getSha256())) {
-                throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
+            if (bytes.length != asset.getSize()) {
+                // 多读探测最多到声明长度 + 1，因此 actualBytes 是本次已读字节数，不一定是对象完整大小。
+                log.warn("附件校验失败 stage=read fileId={} storageId={} reason=size-mismatch expectedBytes={} actualBytes={}",
+                        asset.getFileId(), asset.getLocation().storageId(), asset.getSize(), bytes.length);
+                throw new AppException(ResponseCode.CHAT_ATTACHMENT_SIZE_MISMATCH);
             }
+            String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            if (!sha256.equalsIgnoreCase(expectedSha256)) {
+                log.warn("附件校验失败 stage=read fileId={} storageId={} reason=checksum-mismatch expectedSha256={} actualSha256={}",
+                        asset.getFileId(), asset.getLocation().storageId(), expectedSha256, sha256);
+                throw new AppException(ResponseCode.CHAT_ATTACHMENT_CHECKSUM_MISMATCH);
+            }
+            log.debug("附件读取校验通过 fileId={} storageId={} size={}",
+                    asset.getFileId(), asset.getLocation().storageId(), bytes.length);
             return bytes;
         } catch (IOException | NoSuchAlgorithmException e) {
+            log.warn("附件读取失败 stage=read fileId={} storageId={}",
+                    asset.getFileId(), asset.getLocation().storageId(), e);
             throw new AppException(ResponseCode.FILE_READ_FAILED.getCode(), ResponseCode.FILE_READ_FAILED.getInfo(), e);
         }
     }

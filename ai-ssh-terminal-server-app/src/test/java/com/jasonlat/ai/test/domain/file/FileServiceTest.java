@@ -151,9 +151,35 @@ class FileServiceTest {
         when(storage.openRead(location)).thenReturn(new ByteArrayInputStream(bytes),
                 new ByteArrayInputStream("other".getBytes(StandardCharsets.UTF_8)));
         assertArrayEquals(bytes, service.readContent(asset, 100));
-        assertEquals("CHAT_ATTACHMENT_CONTENT_INVALID", assertThrows(AppException.class,
+        assertEquals("CHAT_ATTACHMENT_CHECKSUM_MISMATCH", assertThrows(AppException.class,
                 () -> service.readContent(asset, 100)).getCode());
         verify(resolver, never()).defaultStorage();
+    }
+
+    @Test
+    void missingOrMalformedChecksumRejectsBeforeStorageRead() {
+        FileAssetEntity asset = FileAssetEntity.builder().fileId("file")
+                .location(new ObjectLocation("minio-main", "files", "uploads/file", null)).size(5).build();
+        assertEquals("CHAT_ATTACHMENT_CHECKSUM_MISSING", assertThrows(AppException.class,
+                () -> service.readContent(asset, 100)).getCode());
+        asset.setSha256("invalid");
+        assertEquals("CHAT_ATTACHMENT_CHECKSUM_MISSING", assertThrows(AppException.class,
+                () -> service.readContent(asset, 100)).getCode());
+        verify(storage, never()).openRead(any());
+    }
+
+    @Test
+    void shorterAndLongerObjectsReportSizeMismatch() {
+        ObjectLocation location = new ObjectLocation("minio-main", "files", "uploads/file", null);
+        FileAssetEntity asset = FileAssetEntity.builder().fileId("file").location(location).size(5)
+                .sha256("0".repeat(64)).build();
+        when(resolver.resolve("minio-main")).thenReturn(storage);
+        when(storage.openRead(location)).thenReturn(new ByteArrayInputStream(new byte[4]),
+                new ByteArrayInputStream(new byte[6]));
+        for (int i = 0; i < 2; i++) {
+            assertEquals("CHAT_ATTACHMENT_SIZE_MISMATCH", assertThrows(AppException.class,
+                    () -> service.readContent(asset, 100)).getCode());
+        }
     }
 
     private FileUploadResult upload(String name, String content) {

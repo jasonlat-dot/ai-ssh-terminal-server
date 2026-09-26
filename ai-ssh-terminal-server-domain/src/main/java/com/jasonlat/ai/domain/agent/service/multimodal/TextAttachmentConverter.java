@@ -23,12 +23,12 @@ public class TextAttachmentConverter implements ChatAttachmentConverter {
             String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
             if (text.startsWith("\uFEFF")) text = text.substring(1);
             if (text.codePoints().anyMatch(c -> Character.isISOControl(c) && c != '\n' && c != '\r' && c != '\t')) {
-                throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
+                throw new AppException(ResponseCode.CHAT_ATTACHMENT_TEXT_CONTENT_INVALID);
             }
             if (text.length() > maxTextChars) throw new AppException(ResponseCode.CHAT_ATTACHMENT_LIMIT);
             return Part.fromText(text);
         } catch (CharacterCodingException e) {
-            throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_TEXT_ENCODING_INVALID);
         }
     }
 }

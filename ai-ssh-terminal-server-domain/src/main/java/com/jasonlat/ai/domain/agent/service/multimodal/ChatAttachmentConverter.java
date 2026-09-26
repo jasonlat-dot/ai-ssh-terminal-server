@@ -7,7 +7,7 @@ public interface ChatAttachmentConverter {
     /** 是否处理该扩展名，扩展名已转小写且不含点。 */
     boolean supports(String extension);
 
-    /** 模型接收的媒体 MIME；文本策略返回 null，表示转换为普通文字。 */
+    /** 扩展名对应的预期 MIME；文本策略返回 null。发送类型以 convert 返回 Part 中的实际 MIME 为准。 */
     String mediaType(String extension);
 
     /** 校验实际内容并生成 ADK Part，maxTextChars 是本次请求尚可使用的文本额度。 */

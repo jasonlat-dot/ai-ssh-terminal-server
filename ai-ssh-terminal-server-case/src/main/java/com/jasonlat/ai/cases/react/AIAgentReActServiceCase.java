@@ -285,6 +285,9 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
                     result.getStopReason(), safeLength(result.getContent()), elapsedMillis(executionStartNanos));
         } catch (AppException exception) {
             // 异步附件校验错误必须作为协议事件返回，不能只关闭连接让前端看到网络失败。
+            log.warn("流式对话业务处理失败 sessionId={} agentId={} userId={} code={} info={}",
+                    sessionId, requestDTO.getAgentId(), requestDTO.getUserId(),
+                    exception.getCode(), exception.getInfo(), exception);
             try {
                 ReActEventDTO event = new ReActEventDTO();
                 event.setEvent("error");

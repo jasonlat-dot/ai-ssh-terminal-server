@@ -4,6 +4,7 @@ import com.google.genai.types.Part;
 import com.jasonlat.ai.domain.agent.model.valobj.ChatAttachmentPolicy;
 import com.jasonlat.ai.domain.agent.service.multimodal.*;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
+import com.jasonlat.ai.domain.file.model.valobj.ObjectLocation;
 import com.jasonlat.ai.domain.file.service.IFileService;
 import com.jasonlat.ai.types.exception.AppException;
 import org.junit.jupiter.api.Test;
@@ -34,11 +35,20 @@ class ChatAttachmentServiceTest {
     }
 
     @Test
-    void unsupportedModelRejectsBeforeDownloadingAnyBytes() {
-        FileAssetEntity asset = metadata("image", "photo.png", 10);
-        when(files.requireUploadedFile("image", "alice", false)).thenReturn(asset);
+    void unsupportedModelRejectsDetectedMediaType() {
+        addFile("image", "photo.png", new byte[]{(byte) 137, 80, 78, 71, 13, 10, 26, 10});
         assertCode("CHAT_MODEL_MEDIA_UNSUPPORTED", () -> service.prepare(List.of("image"), "alice", Set.of()));
-        verify(files, never()).readContent(any(), anyLong());
+        verify(files).readContent(any(), eq(1024L));
+    }
+
+    @Test
+    void mislabeledImageUsesActualMimeAndCannotBypassModelCapabilities() {
+        // JPEG 内容误命名为 PNG：按真实类型发送，并使用同一类型校验模型能力。
+        addFile("image", "photo.png", new byte[]{(byte) 255, (byte) 216, (byte) 255});
+        var prepared = service.prepare(List.of("image"), "alice", Set.of("image/jpeg"));
+        assertEquals("image/jpeg", prepared.parts().get(1).inlineData().orElseThrow().mimeType().orElseThrow());
+        assertCode("CHAT_MODEL_MEDIA_UNSUPPORTED",
+                () -> service.prepare(List.of("image"), "alice", Set.of("image/png")));
     }
 
     @Test
@@ -59,13 +69,21 @@ class ChatAttachmentServiceTest {
 
     @Test
     void invalidImageAndNonUtf8TextAreRejected() {
-        assertCode("CHAT_ATTACHMENT_CONTENT_INVALID",
+        assertCode("CHAT_ATTACHMENT_IMAGE_INVALID",
                 () -> new ImageAttachmentConverter().convert("png", "not png".getBytes(StandardCharsets.UTF_8), 30));
-        assertCode("CHAT_ATTACHMENT_CONTENT_INVALID",
+        assertCode("CHAT_ATTACHMENT_TEXT_ENCODING_INVALID",
                 () -> new TextAttachmentConverter().convert("txt", new byte[]{(byte) 0xff}, 30));
         Part image = new ImageAttachmentConverter().convert("png",
                 new byte[]{(byte) 137, 80, 78, 71, 13, 10, 26, 10}, 30);
         assertEquals("image/png", image.inlineData().orElseThrow().mimeType().orElseThrow());
+    }
+
+    @Test
+    void invalidPdfAndBinaryTextHaveDistinctErrors() {
+        assertCode("CHAT_ATTACHMENT_PDF_INVALID",
+                () -> new PdfAttachmentConverter().convert("pdf", new byte[]{1, 2, 3}, 30));
+        assertCode("CHAT_ATTACHMENT_TEXT_CONTENT_INVALID",
+                () -> new TextAttachmentConverter().convert("txt", new byte[]{0}, 30));
     }
 
     @Test
@@ -95,7 +113,8 @@ class ChatAttachmentServiceTest {
     }
 
     private FileAssetEntity metadata(String id, String name, long size) {
-        return FileAssetEntity.builder().fileId(id).originalName(name).size(size).build();
+        return FileAssetEntity.builder().fileId(id).originalName(name).size(size)
+                .location(new ObjectLocation("minio-main", "files", "uploads/" + id, null)).build();
     }
 
     private void assertCode(String code, org.junit.jupiter.api.function.Executable action) {

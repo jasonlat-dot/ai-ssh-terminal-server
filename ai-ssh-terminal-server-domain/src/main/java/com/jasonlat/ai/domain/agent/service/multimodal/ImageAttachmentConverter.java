@@ -6,7 +6,7 @@ import com.jasonlat.ai.types.exception.AppException;
 import org.springframework.stereotype.Component;
 import java.util.Map;
 
-/** 图片直接作为媒体传给模型；文件头检查避免将改后缀的任意文件当作图片。 */
+/** 按文件头识别受支持的图片格式；后缀只用于选择策略，发送 MIME 以实际内容为准。 */
 @Component
 public class ImageAttachmentConverter implements ChatAttachmentConverter {
     private static final Map<String, String> TYPES = Map.of(
@@ -17,14 +17,18 @@ public class ImageAttachmentConverter implements ChatAttachmentConverter {
 
     @Override
     public Part convert(String extension, byte[] bytes, int maxTextChars) {
-        boolean valid = switch (extension) {
-            case "png" -> startsWith(bytes, 0, 137, 80, 78, 71, 13, 10, 26, 10);
-            case "jpg", "jpeg" -> startsWith(bytes, 0, 255, 216, 255);
-            case "webp" -> startsWith(bytes, 0, 82, 73, 70, 70) && startsWith(bytes, 8, 87, 69, 66, 80);
-            default -> false;
-        };
-        if (!valid) throw new AppException(ResponseCode.CHAT_ATTACHMENT_CONTENT_INVALID);
-        return Part.fromBytes(bytes, mediaType(extension));
+        // 浏览器复制或另存的图片可能使用错误后缀；只接受这里能识别的三种实际格式。
+        String detectedType;
+        if (startsWith(bytes, 0, 137, 80, 78, 71, 13, 10, 26, 10)) {
+            detectedType = "image/png";
+        } else if (startsWith(bytes, 0, 255, 216, 255)) {
+            detectedType = "image/jpeg";
+        } else if (startsWith(bytes, 0, 82, 73, 70, 70) && startsWith(bytes, 8, 87, 69, 66, 80)) {
+            detectedType = "image/webp";
+        } else {
+            throw new AppException(ResponseCode.CHAT_ATTACHMENT_IMAGE_INVALID);
+        }
+        return Part.fromBytes(bytes, detectedType);
     }
 
     private boolean startsWith(byte[] bytes, int offset, int... prefix) {
