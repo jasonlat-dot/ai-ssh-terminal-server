@@ -1,6 +1,8 @@
-package com.jasonlat.ai.domain.file.adapter.port;
+package com.jasonlat.ai.cases.file.storage;
 
-/** 默认存储用于新上传；已有文件必须根据它自己的 storageId 定位。 */
+import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
+
+/** 应用层的存储选择契约；新上传使用默认实例，已有文件按自身 storageId 定位。 */
 public interface ObjectStorageResolver {
     /** 获取新上传使用的默认实例，并检查配置；不可用时抛出明确业务异常。 */
     ObjectStoragePort defaultStorage();

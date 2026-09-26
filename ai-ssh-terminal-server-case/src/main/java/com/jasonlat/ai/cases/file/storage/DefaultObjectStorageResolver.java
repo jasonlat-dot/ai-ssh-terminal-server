@@ -1,7 +1,6 @@
-package com.jasonlat.ai.infrastructure.adapter.port.storage;
+package com.jasonlat.ai.cases.file.storage;
 
 import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 
@@ -9,7 +8,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 按实例 ID 注册存储策略；新增 OSS 等实现时不需要在此增加厂商分支。 */
+/**
+ * 应用层存储选择器：按实例 ID 注册策略，决定本次用例使用哪个存储。
+ * 仅依赖领域端口；新增 OSS 等实现时无需增加厂商分支，也不依赖具体 SDK。
+ * 由 app 配置类装配，避免组件扫描重复注册。
+ */
 public class DefaultObjectStorageResolver implements ObjectStorageResolver {
     /** 新上传默认使用的实例，由 app 配置装配。 */
     private final String defaultStorageId;
@@ -32,6 +35,7 @@ public class DefaultObjectStorageResolver implements ObjectStorageResolver {
 
     @Override
     public ObjectStoragePort defaultStorage() {
+        // 默认配置只影响新上传，旧文件应调用 resolve 并传入持久化的 storageId。
         return resolve(defaultStorageId);
     }
 
@@ -42,7 +46,7 @@ public class DefaultObjectStorageResolver implements ObjectStorageResolver {
             // 不自动回退到其他存储，避免配置错误时把文件写进非预期位置。
             throw new AppException(ResponseCode.FILE_STORAGE_NOT_CONFIGURED);
         }
-        // 延迟到请求时检查连接参数，让未配置文件存储的应用仍能启动其他功能。
+        // 参数合法性由具体适配器检查；此处只在选中后触发，不在启动时连接外部存储。
         storage.validateConfiguration();
         return storage;
     }

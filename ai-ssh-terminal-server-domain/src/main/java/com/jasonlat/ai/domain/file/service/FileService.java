@@ -1,7 +1,6 @@
 package com.jasonlat.ai.domain.file.service;
 
 import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.*;
@@ -21,15 +20,14 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
-/** 编排同步上传：准入检查、元数据落库、对象写入、签名下载和失败补偿。 */
+/** 在应用层选定的存储上执行上传规则：准入检查、元数据落库、对象写入、签名和失败补偿。 */
 @Slf4j
 @Service
 public class FileService implements IFileService {
-    /** 根据存储实例 ID 选择实现，领域服务不直接依赖 MinIO SDK。 */
-    private final ObjectStorageResolver storageResolver;
     /** 保存文件位置与上传状态，便于后续业务引用和故障排查。 */
     private final IFileAssetRepository repository;
     /** app 装配的不可变上传规则，运行过程中不会被外部配置对象修改。 */
@@ -37,9 +35,7 @@ public class FileService implements IFileService {
     /** 当前实例的上传并发许可，限制向对象存储传输时的缓冲区占用。 */
     private final Semaphore uploadSlots;
 
-    public FileService(ObjectStorageResolver storageResolver, IFileAssetRepository repository,
-                       FileUploadPolicy policy) {
-        this.storageResolver = storageResolver;
+    public FileService(IFileAssetRepository repository, FileUploadPolicy policy) {
         this.repository = repository;
         this.policy = policy;
         this.uploadSlots = new Semaphore(policy.maxConcurrentUploads());
@@ -47,9 +43,9 @@ public class FileService implements IFileService {
 
     /** 同步执行上传；输入流由调用方关闭，方法无论成功或失败都释放并发许可。 */
     @Override
-    public FileUploadResult upload(FileUploadCommand command, InputStream input) {
-        // 先检查存储配置，确保未启用存储时返回业务错误，不访问数据库或存储网络。
-        ObjectStoragePort storage = storageResolver.defaultStorage();
+    public FileUploadResult upload(FileUploadCommand command, InputStream input, ObjectStoragePort storage) {
+        // 使用本次用例传入的策略，不读取默认配置，也不在共享服务上保存可变的当前存储。
+        Objects.requireNonNull(storage, "storage");
         String fileName = validate(command, input);
         // 不排队等待许可，容量已满时立即返回 FILE_UPLOAD_BUSY，避免请求长期堆积。
         if (!uploadSlots.tryAcquire()) {

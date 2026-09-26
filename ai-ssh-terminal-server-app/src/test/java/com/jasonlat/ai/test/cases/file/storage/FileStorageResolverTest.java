@@ -1,6 +1,6 @@
-package com.jasonlat.ai.test.infrastructure;
+package com.jasonlat.ai.test.cases.file.storage;
 
-import com.jasonlat.ai.infrastructure.adapter.port.storage.DefaultObjectStorageResolver;
+import com.jasonlat.ai.cases.file.storage.DefaultObjectStorageResolver;
 import com.jasonlat.ai.infrastructure.adapter.port.storage.minio.MinioObjectStorage;
 import com.jasonlat.ai.config.properties.FileStorageProperties;
 import com.jasonlat.ai.config.FileServiceConfiguration;

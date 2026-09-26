@@ -1,7 +1,6 @@
 package com.jasonlat.ai.test.domain.file;
 
 import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.adapter.repository.IFileAssetRepository;
 import com.jasonlat.ai.domain.file.model.entity.FileAssetEntity;
 import com.jasonlat.ai.domain.file.model.valobj.*;
@@ -26,7 +25,6 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class FileServiceTest {
-    private final ObjectStorageResolver resolver = mock(ObjectStorageResolver.class);
     private final ObjectStoragePort storage = mock(ObjectStoragePort.class);
     private final IFileAssetRepository repository = mock(IFileAssetRepository.class);
     private final FileUploadPolicy policy = new FileUploadPolicy(20L * 1024 * 1024, 4,
@@ -35,8 +33,7 @@ class FileServiceTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        service = new FileService(resolver, repository, policy);
-        when(resolver.defaultStorage()).thenReturn(storage);
+        service = new FileService(repository, policy);
         when(storage.storageId()).thenReturn("minio-main");
         when(storage.newLocation(anyString())).thenAnswer(invocation ->
                 new ObjectLocation("minio-main", "private-files", invocation.getArgument(0), null));
@@ -49,14 +46,6 @@ class FileServiceTest {
         });
         when(storage.createDownloadUrl(any(), anyString(), any()))
                 .thenReturn(URI.create("https://files.example.com/signed"));
-    }
-
-    @Test
-    void missingStorageFailsBeforeAnyDatabaseWrite() {
-        when(resolver.defaultStorage()).thenThrow(new AppException(ResponseCode.FILE_STORAGE_NOT_CONFIGURED));
-        AppException e = assertThrows(AppException.class, () -> upload("test.txt", "hello"));
-        assertEquals("FILE_STORAGE_NOT_CONFIGURED", e.getCode());
-        verifyNoInteractions(repository);
     }
 
     @Test
@@ -81,7 +70,7 @@ class FileServiceTest {
     void rejectsLargeFileBeforeDatabaseOrObjectWrite() {
         AppException e = assertThrows(AppException.class, () -> service.upload(
                 new FileUploadCommand("large.txt", "text/plain", policy.maxFileSizeBytes() + 1, null),
-                new ByteArrayInputStream(new byte[0])));
+                new ByteArrayInputStream(new byte[0]), storage));
         assertEquals("FILE_TOO_LARGE", e.getCode());
         verifyNoInteractions(repository);
         verify(storage, never()).put(any(), any(), anyLong());
@@ -120,7 +109,7 @@ class FileServiceTest {
     void failedUploadReleasesConcurrencyPermit() {
         FileUploadPolicy singleUpload = new FileUploadPolicy(policy.maxFileSizeBytes(), 1,
                 policy.downloadUrlTtl(), policy.allowedExtensions());
-        service = new FileService(resolver, repository, singleUpload);
+        service = new FileService(repository, singleUpload);
         doThrow(new AppException(ResponseCode.FILE_STORAGE_UNAVAILABLE))
                 .when(storage).put(any(), any(), anyLong());
         for (int i = 0; i < 2; i++) {
@@ -133,6 +122,6 @@ class FileServiceTest {
     private FileUploadResult upload(String name, String content) {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         return service.upload(new FileUploadCommand(name, "text/plain", bytes.length, null),
-                new ByteArrayInputStream(bytes));
+                new ByteArrayInputStream(bytes), storage);
     }
 }

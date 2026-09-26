@@ -3,7 +3,7 @@ package com.jasonlat.ai.test.config;
 import com.jasonlat.ai.config.FileServiceConfiguration;
 import com.jasonlat.ai.config.SshInfrastructureConfiguration;
 import com.jasonlat.ai.config.properties.FileUploadProperties;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
+import com.jasonlat.ai.cases.file.storage.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadPolicy;
 import com.jasonlat.ai.infrastructure.adapter.port.storage.minio.MinioObjectStorage;
 import com.jasonlat.ai.infrastructure.model.settings.MinioStorageSettings;

@@ -1,11 +1,11 @@
 package com.jasonlat.ai.config;
 
+import com.jasonlat.ai.cases.file.storage.DefaultObjectStorageResolver;
+import com.jasonlat.ai.cases.file.storage.ObjectStorageResolver;
 import com.jasonlat.ai.config.properties.FileStorageProperties;
 import com.jasonlat.ai.config.properties.FileUploadProperties;
 import com.jasonlat.ai.domain.file.adapter.port.ObjectStoragePort;
-import com.jasonlat.ai.domain.file.adapter.port.ObjectStorageResolver;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadPolicy;
-import com.jasonlat.ai.infrastructure.adapter.port.storage.DefaultObjectStorageResolver;
 import com.jasonlat.ai.infrastructure.model.settings.MinioStorageSettings;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -34,6 +34,7 @@ public class FileServiceConfiguration {
                 minio.getWriteTimeout(), minio.getCallTimeout());
     }
 
+    /** app 提供配置和已注册端口，存储选择规则由 case 层实现。 */
     @Bean
     public ObjectStorageResolver objectStorageResolver(
             FileStorageProperties properties, List<ObjectStoragePort> ports) {

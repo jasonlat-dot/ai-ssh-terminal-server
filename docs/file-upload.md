@@ -106,10 +106,10 @@ console.log(result.data.fileId, result.data.downloadUrl);
 ## 代码入口
 
 - trigger/http/FileController：接收 multipart 和已有认证 Principal。
-- cases/IFileServiceCase、cases/file/FileServiceCase：统一文件门面，负责流的打开和关闭、DTO 转换。
-- domain/file/service/FileService：参数校验、并发准入、随机对象路径、SHA-256、元数据及失败补偿。
+- cases/IFileServiceCase、cases/file/FileServiceCase：统一文件门面，选择存储实例，负责流的打开和关闭、DTO 转换。
+- cases/file/storage/ObjectStorageResolver、DefaultObjectStorageResolver：应用层的选择契约与注册表实现，通过 storageId 选择存储并触发配置检查。
+- domain/file/service/FileService：使用 case 传入的存储端口，负责参数校验、并发准入、随机对象路径、SHA-256、元数据及失败补偿。
 - domain/file/adapter/port/ObjectStoragePort：存储厂商无关的领域端口。
-- infrastructure/adapter/port/storage/DefaultObjectStorageResolver：通过 storageId 选择存储。
 - infrastructure/adapter/port/storage/minio/MinioObjectStorage：懒初始化 SDK、流式分片上传、签名下载和补偿删除。
 - infrastructure/adapter/repository/FileAssetRepository：文件记录持久化。
 - trigger/http/advice/FileExceptionHandler：文件接口范围的统一 HTTP 状态与错误码映射。
@@ -122,9 +122,16 @@ FileUploadProperties，以及 SSH 的 SshCommandProperties、SshHttpProxyPropert
 app 将绑定结果转换成不可变参数再注入下层：
 - domain 使用 FileUploadPolicy，文件大小是普通 long 字节数，不依赖 Spring DataSize。
 - infrastructure 使用 MinioStorageSettings、SshCommandSettings、SshHttpProxySettings、TerminalSessionSettings。
-- 存储选择器由 app 显式装配，只接收默认存储 ID 和存储实现列表。
+- case 的存储选择器由 app 显式装配，只接收默认存储 ID 和存储实现列表。
 
 所有 YAML 配置键和默认值保持不变，下层不引用 app 的 Properties 类。
+
+调用顺序为：Controller → FileServiceCase → ObjectStorageResolver 选定端口 → FileService 执行上传。
+case 和 domain 都只依赖 ObjectStoragePort，不依赖 MinIO SDK 或基础层的实现类。
+领域服务不再依赖选择器，也不读取 default-id；本次上传、签名及失败补偿使用同一个传入实例，
+实例只作为方法参数传递，不修改单例服务的共享状态。并发许可仍由同一个领域服务统一管理。
+未配置存储时，case 在打开输入流和调用领域服务前返回 FILE_STORAGE_NOT_CONFIGURED。
+基础层保留数据库持久化和对象存储 SDK 适配，负责对接外部系统；应用层负责选择使用哪个实例。
 
 接入 OSS 时新增 ObjectStoragePort 实现及其配置，注册不同的 storageId，再更改 default-id。
 无需修改 Controller、case 和上传领域流程。旧记录仍保存原来的 storageId，不能直接覆盖其含义。
@@ -158,7 +165,7 @@ PUT 未返回确认结果（如网络超时），或补偿删除失败，记录 
 
 ## 测试
 
-新增 FileServiceTest、FileStorageResolverTest、FileControllerTest，覆盖未配置存储、配置不完整、
+FileServiceTest、FileServiceCaseTest、FileStorageResolverTest、FileControllerTest 覆盖未配置存储、配置不完整、
 上传摘要与版本、超限、数据库失败补偿、补偿失败、并发许可释放和 HTTP 错误响应。
 测试使用模拟存储，不会连接真实 MinIO。FileAndSshConfigurationTest 额外验证 app 配置绑定、
 参数转换，以及未配置/不完整 MinIO 配置不会阻止启动。
@@ -168,6 +175,6 @@ PUT 未返回确认结果（如网络超时），或补偿删除失败，记录 
 ```bash
 mvn -pl ai-ssh-terminal-server-app -am test \
   -DskipTests=false \
-  -Dtest=FileServiceTest,FileStorageResolverTest,FileControllerTest,FileAndSshConfigurationTest \
+  -Dtest=FileServiceTest,FileServiceCaseTest,FileStorageResolverTest,FileControllerTest,FileAndSshConfigurationTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
