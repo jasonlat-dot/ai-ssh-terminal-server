@@ -12,6 +12,32 @@ spring:
       file-size-threshold: 0B
       # 延迟到Controller参数绑定时解析，使文件接口的异常处理器能返回统一JSON。
       resolve-lazily: true
+
+# SFTP 与终端独立管理连接；SIT/其他环境可在各自配置中覆盖。
+ai:
+  ssh:
+    sftp:
+      max-total-sessions: 50
+      max-sessions-per-user: 5
+      max-concurrent-transfers: 20
+      max-concurrent-transfers-per-user: 4
+      max-concurrent-transfers-per-session: 2
+      max-tasks-per-session: 20
+      # 限制全部任务清单占用的内存，不只限制正在传输的文件数。
+      max-tracked-items: 100000
+      max-files-per-task: 10000
+      max-directory-depth: 64
+      max-file-size: 10GB
+      max-task-size: 100GB
+      session-idle-timeout: 15m
+      transfer-idle-timeout: 2m
+      operation-timeout: 30s
+      completed-task-retention: 30m
+      cleanup-interval: 10s
+      progress-publish-interval: 300ms
+      # 仅用于项目当前的本地单用户模式。需与连接配置的 userId 一致。
+      # 生产设为空字符串并接入 Principal；接口不接受客户端自报 userId。
+      anonymous-user-id: ${SFTP_ANONYMOUS_USER_ID:default}
 #
 ## SIT 会继续加载 application-sit.yml；终端容量配置放在公共配置中，所有环境使用同一组安全默认值。
 ##ai:
