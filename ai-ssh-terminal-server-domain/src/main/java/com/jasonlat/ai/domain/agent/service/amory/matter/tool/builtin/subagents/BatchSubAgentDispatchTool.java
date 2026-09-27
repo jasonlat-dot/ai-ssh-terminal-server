@@ -231,14 +231,14 @@ public class BatchSubAgentDispatchTool extends BaseTool implements AdkToolProvid
 
                 if (!unknownFields.isEmpty()) {
                     // 仅记录字段名称，避免把任务正文和附件内容写入日志。
-                    log.warn("派发参数包含未知字段 taskIndex={} fields={}",
-                            i, unknownFields);
+                    log.warn("派发参数包含未知字段 taskIndex={} fields={}", i, unknownFields);
 
                     Map<String, Object> result = Map.of(
                             "success", false,
                             "error", "tasks[" + i + "] 包含不支持的字段：" + unknownFields
                                     + "。Agent 名称请使用 agentName，任务标识请使用 taskId，"
                                     + "任务指令请使用 request。请修正参数后重新调用。"
+                                    + "支持的参数列表今年包括：" + Arrays.toString(allowedFields.toArray())
                     );
                     eventPublisher.publishResponse(toolContext, name(), result);
                     return Single.just(result);
