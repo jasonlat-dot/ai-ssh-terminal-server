@@ -3,6 +3,7 @@ package com.jasonlat.ai.domain.ssh.service.terminal;
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.adapter.repository.ISshConnectionRepository;
+import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionConfigEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.SshConnectionEntity;
 import com.jasonlat.ai.domain.ssh.model.entity.TerminalSessionEntity;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
@@ -76,10 +77,24 @@ public class SshTerminalService implements ISshTerminalService {
             userId = "defaultUser";
         }
 
+        SshConnectionConfigEntity config = connectionRepository.queryConnectionConfigById(connectionId);
+
         // 2. 每次调用都创建新的 terminalSessionId + ChannelShell；只复用底层 JSch Session。
         String sessionId = terminalSessionService.openTerminal(userId, connectionId, cols, rows);
 
-        // 3. 创建并缓存会话实体；其他窗口的会话继续保留。
+        // 3. Shell 就绪后，把保存的启动命令作为首条交互命令发送。使用 CR 与前端 Enter 行为保持一致。
+        String startupCommand = config == null ? null : config.getStartupCommand();
+        if (startupCommand != null && !startupCommand.isBlank()) {
+            try {
+                terminalSessionService.write(sessionId, startupCommand.strip() + "\r");
+                log.info("终端启动命令已发送 sessionId={} connectionId={}", sessionId, connectionId);
+            } catch (RuntimeException exception) {
+                terminalSessionService.closeSession(sessionId);
+                throw new IllegalStateException("终端启动命令执行失败", exception);
+            }
+        }
+
+        // 4. 创建并缓存会话实体；其他窗口的会话继续保留。
         TerminalSessionEntity entity = TerminalSessionEntity.builder()
                 .sessionId(sessionId)
                 .connectionId(connectionId)

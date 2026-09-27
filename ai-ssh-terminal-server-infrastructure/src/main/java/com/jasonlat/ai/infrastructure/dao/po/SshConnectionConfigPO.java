@@ -32,7 +32,7 @@ public class SshConnectionConfigPO {
     private Integer compression;
     /** 严格主机密钥检查:0-否,1-是 */
     private Integer strictHostKeyCheck;
-    /** 已知主机密钥列表 */
+    /** OpenSSH known_hosts 正文；保存服务器 HostKey，而非用户登录私钥 */
     private String knownHosts;
     /** 更新时间 */
     private LocalDateTime updatedAt;

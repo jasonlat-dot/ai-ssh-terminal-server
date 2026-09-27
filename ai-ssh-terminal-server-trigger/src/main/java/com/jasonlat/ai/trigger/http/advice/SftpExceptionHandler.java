@@ -4,6 +4,7 @@ import com.jasonlat.ai.domain.sftp.model.SftpException;
 import com.jasonlat.ai.trigger.api.response.Response;
 import com.jasonlat.ai.trigger.http.sftp.SftpController;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -13,17 +14,55 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RestControllerAdvice(assignableTypes = SftpController.class)
 public class SftpExceptionHandler {
+
     @ExceptionHandler(Exception.class)
-    public Response<Void> handle(Exception exception, HttpServletResponse response) {
-        SftpException failure = exception instanceof SftpException e ? e
-                : exception instanceof HttpMessageNotReadableException || exception instanceof IllegalArgumentException
-                ? new SftpException("SFTP_INVALID", "请求参数不合法")
-                : new SftpException("SFTP_IO_ERROR", "SFTP 请求失败");
-        log.warn("SFTP 请求失败 code={} errorType={}", failure.getCode(), exception.getClass().getSimpleName());
-        if (response.isCommitted()) return null;
+    public Response<Void> handle(
+            Exception exception,
+            HttpServletRequest request,
+            HttpServletResponse response
+    ) {
+        SftpException failure = translate(exception);
+        String userId = request.getUserPrincipal() == null
+                ? null
+                : request.getUserPrincipal().getName();
+        log.warn(
+                "SFTP 请求失败 userId={} method={} uri={} query={} code={} errorType={} errorMessage={}",
+                userId,
+                request.getMethod(),
+                request.getRequestURI(),
+                request.getQueryString(),
+                failure.getCode(),
+                exception.getClass().getSimpleName(),
+                exception.getMessage(),
+                exception.getCause()
+        );
+
+        // 下载响应一旦开始写入二进制内容，就不能再混入 JSON 错误正文。
+        if (response.isCommitted()) {
+            return null;
+        }
+
         response.reset();
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setStatus(switch (failure.getCode()) {
+        response.setStatus(httpStatus(failure.getCode()));
+        return Response.build(failure.getCode(), failure.getMessage(), null);
+    }
+
+    /** 将框架解析异常与未知异常收敛成前端可识别的 SFTP 错误。 */
+    private static SftpException translate(Exception exception) {
+        if (exception instanceof SftpException sftpException) {
+            return sftpException;
+        }
+        if (exception instanceof HttpMessageNotReadableException
+                || exception instanceof IllegalArgumentException) {
+            return new SftpException("SFTP_INVALID", "请求参数不合法");
+        }
+        return new SftpException("SFTP_IO_ERROR", "SFTP 请求失败", exception);
+    }
+
+    /** 业务错误码到 HTTP 状态码的唯一映射入口。 */
+    private static int httpStatus(String code) {
+        return switch (code) {
             case "SFTP_UNAUTHORIZED" -> 401;
             case "SFTP_FORBIDDEN", "SFTP_PATH_FORBIDDEN" -> 403;
             case "SFTP_NOT_FOUND" -> 404;
@@ -32,7 +71,6 @@ public class SftpExceptionHandler {
             case "SFTP_LIMIT" -> 413;
             case "SFTP_INVALID", "SFTP_SIZE_MISMATCH" -> 400;
             default -> 502;
-        });
-        return Response.build(failure.getCode(), failure.getMessage(), null);
+        };
     }
 }

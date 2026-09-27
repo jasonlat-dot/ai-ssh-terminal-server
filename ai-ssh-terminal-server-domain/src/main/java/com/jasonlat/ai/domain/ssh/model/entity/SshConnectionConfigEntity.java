@@ -25,7 +25,10 @@ public class SshConnectionConfigEntity {
     private Boolean compression;
     /** 严格主机密钥检查:0-否,1-是 */
     private Boolean strictHostKeyCheck;
-    /** 已知主机密钥列表 */
+    /**
+     * OpenSSH known_hosts 文件正文，用于服务器身份校验。
+     * 默认接受 Ed25519、ECDSA nistp256/384/521 和 RSA-SHA2 主机签名。
+     */
     private String knownHosts;
     /** 更新时间 */
     private LocalDateTime updatedAt;

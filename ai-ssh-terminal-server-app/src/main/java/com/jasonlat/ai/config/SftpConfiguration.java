@@ -13,14 +13,36 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(SftpProperties.class)
 public class SftpConfiguration {
-    @Bean public SftpPolicy sftpPolicy(SftpProperties p) {
-        return new SftpPolicy(p.getMaxTotalSessions(), p.getMaxSessionsPerUser(), p.getMaxConcurrentTransfers(),
-                p.getMaxConcurrentTransfersPerUser(), p.getMaxConcurrentTransfersPerSession(), p.getMaxTasksPerSession(),
-                p.getMaxTrackedItems(), p.getMaxFilesPerTask(), p.getMaxDirectoryDepth(), p.getMaxFileSize().toBytes(),
-                p.getMaxTaskSize().toBytes(), p.getSessionIdleTimeout(), p.getTransferIdleTimeout(),
-                p.getCompletedTaskRetention(), p.getOperationTimeout(), p.getProgressPublishInterval());
+
+    /** 将 Spring 配置对象转换为不依赖框架的领域策略。 */
+    @Bean
+    public SftpPolicy sftpPolicy(SftpProperties properties) {
+        return new SftpPolicy(
+                properties.getMaxTotalSessions(),
+                properties.getMaxSessionsPerUser(),
+                properties.getMaxConcurrentTransfers(),
+                properties.getMaxConcurrentTransfersPerUser(),
+                properties.getMaxConcurrentTransfersPerSession(),
+                properties.getMaxTasksPerSession(),
+                properties.getMaxTrackedItems(),
+                properties.getMaxFilesPerTask(),
+                properties.getMaxDirectoryDepth(),
+                properties.getMaxFileSize().toBytes(),
+                properties.getMaxTaskSize().toBytes(),
+                properties.getSessionIdleTimeout(),
+                properties.getTransferIdleTimeout(),
+                properties.getCompletedTaskRetention(),
+                properties.getOperationTimeout(),
+                properties.getProgressPublishInterval()
+        );
     }
-    @Bean public SftpServiceCase sftpServiceCase(ISftpService service, ISshConnectionRepository repository, SftpProperties p) {
-        return new SftpServiceCase(service, repository, p.getAnonymousUserId());
+
+    @Bean
+    public SftpServiceCase sftpServiceCase(
+            ISftpService service,
+            ISshConnectionRepository repository,
+            SftpProperties properties
+    ) {
+        return new SftpServiceCase(service, repository, properties.getAnonymousUserId());
     }
 }

@@ -58,4 +58,11 @@ public class SshConnectionRequestDTO {
     /** 严格主机密钥检查 */
     private Boolean strictHostKeyCheck;
 
+    /**
+     * OpenSSH known_hosts 文件正文，用于校验服务器身份，不是用户登录私钥。
+     * 当前默认支持 ssh-ed25519、ecdsa-sha2-nistp256/384/521，以及使用
+     * rsa-sha2-256/512 签名的 RSA 主机密钥（known_hosts 类型通常为 ssh-rsa）。
+     */
+    private String knownHosts;
+
 }

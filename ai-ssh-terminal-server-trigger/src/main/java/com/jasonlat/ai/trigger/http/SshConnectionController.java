@@ -40,12 +40,15 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             SshConnectionEntity entity = toEntity(requestDTO);
             SshConnectionConfigEntity configEntity = toConfigEntity(requestDTO);
 
+            configEntity.withDefaults();
+            validateHostKeyConfig(configEntity, null);
+
             sshConnectionDomainService.createConnection(entity, configEntity);
 
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
-                    .data(toResponseDTO(entity))
+                    .data(toResponseDTO(entity, configEntity))
                     .build();
         } catch (IllegalArgumentException e) {
             log.warn("创建SSH连接参数错误: {}", e.getMessage());
@@ -71,6 +74,11 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             SshConnectionEntity entity = toEntity(requestDTO);
             SshConnectionConfigEntity configEntity = toConfigEntity(requestDTO);
 
+            validateHostKeyConfig(
+                    configEntity,
+                    sshConnectionDomainService.getConnectionConfig(entity.getConnectionId())
+            );
+
             sshConnectionDomainService.updateConnection(entity, configEntity);
 
             // 查询更新后的完整数据返回
@@ -79,7 +87,7 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
-                    .data(toResponseDTO(updated))
+                    .data(toResponseDTO(updated, sshConnectionDomainService.getConnectionConfig(updated.getConnectionId())))
                     .build();
         } catch (IllegalArgumentException e) {
             log.warn("更新SSH连接参数错误: {}", e.getMessage());
@@ -139,7 +147,7 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             return Response.<SshConnectionResponseDTO>builder()
                     .code(ResponseCode.SUCCESS.getCode())
                     .info(ResponseCode.SUCCESS.getInfo())
-                    .data(toResponseDTO(entity))
+                    .data(toResponseDTO(entity, sshConnectionDomainService.getConnectionConfig(entity.getConnectionId())))
                     .build();
         } catch (Exception e) {
             log.error("查询SSH连接失败 connectionId={}", connectionId, e);
@@ -158,7 +166,7 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
             List<SshConnectionEntity> entities = sshConnectionDomainService.getConnectionList(userId);
 
             List<SshConnectionResponseDTO> dtoList = entities.stream()
-                    .map(this::toResponseDTO)
+                    .map(entity -> toResponseDTO(entity, null))
                     .collect(Collectors.toList());
 
             return Response.<List<SshConnectionResponseDTO>>builder()
@@ -231,11 +239,28 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
                 .startupCommand(dto.getStartupCommand())
                 .compression(dto.getCompression())
                 .strictHostKeyCheck(dto.getStrictHostKeyCheck())
+                .knownHosts(dto.getKnownHosts())
                 .build();
     }
 
-    private SshConnectionResponseDTO toResponseDTO(SshConnectionEntity entity) {
-        return SshConnectionResponseDTO.builder()
+    private void validateHostKeyConfig(SshConnectionConfigEntity config, SshConnectionConfigEntity existing) {
+        if (config == null) return;
+        if (config.getKnownHosts() != null) {
+            config.setKnownHosts(config.getKnownHosts().trim());
+        }
+        boolean strict = config.getStrictHostKeyCheck() != null
+                ? config.getStrictHostKeyCheck()
+                : existing != null && Boolean.TRUE.equals(existing.getStrictHostKeyCheck());
+        String knownHosts = config.getKnownHosts() != null
+                ? config.getKnownHosts()
+                : existing != null ? existing.getKnownHosts() : null;
+        if (strict && (knownHosts == null || knownHosts.isBlank())) {
+            throw new IllegalArgumentException("开启严格主机密钥检查时，必须填写 known_hosts 主机密钥");
+        }
+    }
+
+    private SshConnectionResponseDTO toResponseDTO(SshConnectionEntity entity, SshConnectionConfigEntity config) {
+        SshConnectionResponseDTO.SshConnectionResponseDTOBuilder builder = SshConnectionResponseDTO.builder()
                 .connectionId(entity.getConnectionId())
                 .connectionName(entity.getConnectionName())
                 .host(entity.getHost())
@@ -245,8 +270,16 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
                 .encrypted(entity.getEncrypted())
                 .userId(entity.getUserId())
                 .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)
-                .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null)
-                .build();
+                .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null);
+        if (config != null) {
+            builder.connectTimeout(config.getConnectTimeout())
+                    .keepaliveInterval(config.getKeepaliveInterval())
+                    .startupCommand(config.getStartupCommand())
+                    .compression(config.getCompression())
+                    .strictHostKeyCheck(config.getStrictHostKeyCheck())
+                    .knownHosts(config.getKnownHosts());
+        }
+        return builder.build();
     }
 
 }

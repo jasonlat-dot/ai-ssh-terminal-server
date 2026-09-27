@@ -22,6 +22,8 @@
 
 SFTP 使用保存的 SSH 用户、密码/私钥以及全局 HTTP CONNECT 代理。存在高级配置时遵守 `strictHostKeyCheck`，`knownHosts` 是 known_hosts 文件正文；启用严格检查但未提供匹配主机密钥会建连失败。没有高级配置时沿用当前项目的非严格检查行为。SFTP 只能使用 SSH 账号本身的文件权限，不通过 sudo 提权。
 
+`knownHosts` 保存的是服务器身份密钥，不是用户登录私钥。当前 JSch 默认支持 `ssh-ed25519`、`ecdsa-sha2-nistp256`、`ecdsa-sha2-nistp384`、`ecdsa-sha2-nistp521`，以及采用 `rsa-sha2-256`/`rsa-sha2-512` 签名的 RSA 主机密钥；RSA 的 known_hosts 类型通常仍显示为 `ssh-rsa`。旧的 RSA/SHA-1 `ssh-rsa` 签名和 `ssh-dss` 默认不启用。项目使用 Java 25，可直接使用 Ed25519，无需额外密码学 Provider。
+
 ## 接口清单
 
 统一前缀 `/api/v1/sftp`。JSON 成功格式沿用项目：`{"code":"SUCCESS_0000","info":"...","data":...}`。
@@ -33,6 +35,8 @@ SFTP 使用保存的 SSH 用户、密码/私钥以及全局 HTTP CONNECT 代理�
 | DELETE /sessions/{id} | 关闭会话并取消传输，移除任务 |
 | GET /sessions/{id}/entries?path=... | 浏览目录，省略 path 使用根目录 |
 | POST /sessions/{id}/directories | 创建一个目录，父目录必须存在 |
+| POST /sessions/{id}/files | 创建一个空文件；目标已存在时拒绝覆盖 |
+| DELETE /sessions/{id}/entries?path=... | 删除普通文件或空目录，不支持递归删除 |
 | GET /sessions/{id}/transfers | 当前窗口任务完整快照 |
 | GET /sessions/{id}/events | SSE 进度与心跳 |
 | POST /transfers | 创建上传/下载清单 |
@@ -132,7 +136,7 @@ SSE 断线不取消文件任务；文件 HTTP 断线则该条目失败。查询�
 - 超过 completed-task-retention 无更新且无活动操作的任务会被移除，包括放弃的 PENDING/SENT/FAILED 任务，避免永久占用容量。
 - 路径按远程 POSIX 规则处理。首版拒绝跟随符号链接和特殊文件；目录下载遇到它们明确失败。JSch 0.1.x 路径接口会解释通配符，首版拒绝含 `*`、`?`、反斜杠或控制字符的路径。
 - 应用层 realpath 检查不替代服务器端权限隔离；若要求目录隔离，应使用受限 SSH 账号和服务端 SFTP chroot，避免远端并发修改路径带来的竞态。
-- 首版不提供覆盖、断点续传、ZIP 打包、权限修改或通用删除接口。Tauri 可以按清单直接下载整个目录，无需 ZIP。
+- 首版不提供覆盖、断点续传、ZIP 打包、权限修改或递归删除。文件管理仅允许删除普通文件和已经为空的目录，并禁止删除会话根目录；Tauri 可以按清单直接下载整个目录，无需 ZIP。
 - 取消或失败会尽力删除本次上传的临时文件；网络断开或服务器故障时删除无法保证，日志记录残留临时路径。不要自动重试可能已经成功的 rename，先查询任务并检查远端文件。
 - 不使用固定的“传输 10 秒超时”；只限制持续无进展的时间。扫描和普通目录操作另有 operation-timeout。
 
