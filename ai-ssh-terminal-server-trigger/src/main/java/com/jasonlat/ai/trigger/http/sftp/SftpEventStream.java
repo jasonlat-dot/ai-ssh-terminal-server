@@ -25,10 +25,16 @@ public class SftpEventStream {
     private final SftpServiceCase service;
     private final long intervalMillis;
     private final ConcurrentHashMap<String, Subscription> subscriptions = new ConcurrentHashMap<>();
+    /** 注入进度查询门面，并读取 SSE 快照发布间隔。 */
     public SftpEventStream(SftpServiceCase service, SftpPolicy policy) {
         this.service = service;
         this.intervalMillis = policy.progressPublishInterval().toMillis();
     }
+    /**
+     * 为文件管理会话创建唯一 SSE 订阅。
+     *
+     * <p>同一 sessionId 再次订阅时关闭旧连接，避免页面重连后残留多个发布线程。</p>
+     */
     public SseEmitter open(String owner, String sessionId) {
         service.session(owner, sessionId);
         log.info("SFTP SSE 订阅开始 userId={} sessionId={}", owner, sessionId);
@@ -46,6 +52,7 @@ public class SftpEventStream {
         final SseEmitter emitter = new SseEmitter(Duration.ofMinutes(30).toMillis());
         final AtomicBoolean closed = new AtomicBoolean();
         final Thread thread;
+        /** 创建尚未启动的虚拟线程，并注册所有 SSE 结束回调。 */
         Subscription(String owner, String sessionId) {
             this.owner = owner;
             this.sessionId = sessionId;
@@ -54,6 +61,7 @@ public class SftpEventStream {
             emitter.onTimeout(this::close);
             emitter.onError(error -> close());
         }
+        /** 按策略间隔发布变化后的进度；无变化时仍定期发送注释心跳。 */
         void run() {
             List<Progress> previous = null;
             long heartbeatAt = 0;
@@ -109,6 +117,7 @@ public class SftpEventStream {
             }
         }
 
+        /** 幂等结束订阅、移除注册表记录并停止发布线程。 */
         void close() {
             if (!closed.compareAndSet(false, true)) {
                 return;
@@ -122,6 +131,7 @@ public class SftpEventStream {
         }
     }
 
+    /** 应用关闭时终止全部 SSE 发布线程。 */
     @PreDestroy
     public void close() {
         List.copyOf(subscriptions.values()).forEach(Subscription::close);

@@ -65,7 +65,7 @@ public final class SftpRequests {
      * @param sftpSessionId 文件管理会话 ID
      * @param direction     传输方向：{@code UPLOAD} 或 {@code DOWNLOAD}
      * @param remotePath    上传时表示目标目录，下载时表示选中的远程文件或目录
-     * @param conflict      同名文件策略：{@code FAIL} 或 {@code SKIP}
+     * @param conflict      同名文件策略：{@code FAIL}、{@code SKIP} 或 {@code REPLACE}
      * @param items         上传清单；下载清单由服务端扫描生成
      */
     public record CreateTransfer(

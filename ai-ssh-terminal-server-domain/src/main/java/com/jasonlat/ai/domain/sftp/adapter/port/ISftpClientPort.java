@@ -43,6 +43,7 @@ public interface ISftpClientPort {
         /** 列出目录内容；超过 {@code limit} 时必须终止并报告容量错误。 */
         List<Entry> list(String path, int limit);
 
+        /** 创建一个单级远程目录。 */
         void mkdir(String path);
 
         /** 删除一个普通文件。 */
@@ -51,6 +52,7 @@ public interface ISftpClientPort {
         /** 删除一个空目录；实现不得递归删除目录内容。 */
         void rmdir(String path);
 
+        /** 在服务器内重命名或移动条目，主要用于临时文件的提交与回滚。 */
         void rename(String source, String target);
 
         /**
@@ -69,6 +71,7 @@ public interface ISftpClientPort {
          */
         void download(String path, OutputStream output, LongConsumer progress, BooleanSupplier cancelled);
 
+        /** 关闭本次操作独占的 SFTP Channel。 */
         @Override
         void close();
     }

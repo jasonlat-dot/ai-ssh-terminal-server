@@ -15,6 +15,12 @@ import lombok.extern.slf4j.Slf4j;
 @RestControllerAdvice(assignableTypes = SftpController.class)
 public class SftpExceptionHandler {
 
+    /**
+     * 统一处理 SFTP Controller 抛出的异常。
+     *
+     * <p>普通 JSON 请求返回业务错误结构；下载响应若已开始写二进制流，则只记录日志并结束，
+     * 不能再追加 JSON，否则客户端下载文件会被错误正文污染。</p>
+     */
     @ExceptionHandler(Exception.class)
     public Response<Void> handle(
             Exception exception,

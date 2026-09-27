@@ -48,6 +48,12 @@ public class JschSftpClientPort implements ISftpClientPort {
     private final SshHttpProxySettings proxy;
     private final int connectTimeout;
 
+    /**
+     * 创建 JSch 适配器。
+     *
+     * <p>复用应用的 HTTP 代理配置；连接超时使用 SFTP operationTimeout，避免 SDK 默认值
+     * 导致请求无限等待。</p>
+     */
     public JschSftpClientPort(SshHttpProxySettings proxy, SftpPolicy policy) {
         this.proxy = proxy;
         this.connectTimeout = (int) Math.min(
@@ -77,22 +83,28 @@ public class JschSftpClientPort implements ISftpClientPort {
         );
 
         try {
+            // 每次文件管理会话创建独立 JSch 实例，known_hosts 和私钥配置不会在用户之间共享。
             JSch jsch = new JSch();
             boolean strictHostKeyCheck = isStrictHostKeyCheckEnabled(config);
 
+            // known_hosts 必须在 Session.connect 之前配置，JSch 才能在 SSH 握手时校验服务器身份。
             configureKnownHosts(jsch, config, strictHostKeyCheck);
 
+            // getSession 只创建配置对象，真正的 TCP/SSH 握手发生在后面的 session.connect。
             session = jsch.getSession(
                     credentials.getUsername(),
                     credentials.getHost(),
                     credentials.getPort()
             );
+            // 严格模式拒绝未知或发生变化的主机密钥；关闭时由 JSch 接受当前服务器密钥。
             session.setConfig("StrictHostKeyChecking", strictHostKeyCheck ? "yes" : "no");
 
+            // 认证、代理和心跳都必须在连接前装入 Session。
             configureAuthentication(jsch, session, credentials);
             configureProxy(session);
             configureKeepAlive(session);
 
+            // connectTimeout 同时限制 TCP 建连与 SSH 握手等待时间。
             session.connect(connectTimeout);
             log.info(
                     "SFTP JSch 连接成功 connectionId={} sshUser={} host={} port={} serverVersion={}",
@@ -102,6 +114,7 @@ public class JschSftpClientPort implements ISftpClientPort {
                     credentials.getPort(),
                     session.getServerVersion()
             );
+            // 此时只有 SSH Session；具体 SFTP Channel 在每次文件操作开始时按需创建。
             return new JschConnection(session, connectTimeout);
         } catch (Exception exception) {
             log.warn(
@@ -120,6 +133,7 @@ public class JschSftpClientPort implements ISftpClientPort {
         }
     }
 
+    /** 读取连接级严格主机密钥开关；历史连接没有配置时按关闭处理。 */
     private static boolean isStrictHostKeyCheckEnabled(SshConnectionConfigEntity config) {
         return config != null && Boolean.TRUE.equals(config.getStrictHostKeyCheck());
     }
@@ -146,11 +160,18 @@ public class JschSftpClientPort implements ISftpClientPort {
         }
 
         if (knownHosts != null && !knownHosts.isBlank()) {
+            // JSch 原生解析 OpenSSH known_hosts 文本，保留 hashed host 和 [host]:port 等语义。
             byte[] content = knownHosts.getBytes(StandardCharsets.UTF_8);
             jsch.setKnownHosts(new ByteArrayInputStream(content));
         }
     }
 
+    /**
+     * 将服务端保存的认证信息装入 JSch。
+     *
+     * <p>私钥直接来自数据库中的 OpenSSH/PEM 文本；mwiede JSch 会根据密钥头识别
+     * RSA、ECDSA、Ed25519 等类型。当前数据模型没有私钥口令字段，因此这里只处理无口令私钥。</p>
+     */
     private static void configureAuthentication(
             JSch jsch,
             Session session,
@@ -160,6 +181,7 @@ public class JschSftpClientPort implements ISftpClientPort {
         String password = credentials.getPassword();
 
         if (privateKey != null && !privateKey.isBlank()) {
+            // addIdentity 接收的是私钥正文，不是服务器主机密钥；二者用途完全不同。
             jsch.addIdentity(
                     "sftp",
                     privateKey.getBytes(StandardCharsets.UTF_8),
@@ -170,6 +192,7 @@ public class JschSftpClientPort implements ISftpClientPort {
         }
 
         if (password != null && !password.isBlank()) {
+            // 未配置私钥时才回退密码认证，避免同一连接出现不明确的认证优先级。
             session.setPassword(password);
             return;
         }
@@ -177,6 +200,7 @@ public class JschSftpClientPort implements ISftpClientPort {
         throw new SftpException("SFTP_INVALID", "SSH 连接未配置认证信息");
     }
 
+    /** 按应用配置为 SSH Session 安装 HTTP CONNECT 代理；未启用时保持直连。 */
     private void configureProxy(Session session) {
         if (!proxy.enabled()) {
             return;
@@ -184,17 +208,20 @@ public class JschSftpClientPort implements ISftpClientPort {
 
         ProxyHTTP tunnel = new ProxyHTTP(proxy.host(), proxy.port());
         if (proxy.username() != null && !proxy.username().isBlank()) {
+            // 这里只是 HTTP CONNECT 代理认证，不会替代目标 SSH 服务器的账号认证。
             tunnel.setUserPasswd(proxy.username(), proxy.password());
         }
         session.setProxy(tunnel);
     }
 
+    /** 配置 SSH 层心跳，用于发现已失效但 TCP 尚未及时报错的连接。 */
     private static void configureKeepAlive(Session session) throws JSchException {
         // 心跳用于尽早识别网络断开；超过最大连续失败次数后由 JSch 终止连接。
         session.setServerAliveInterval(SERVER_ALIVE_INTERVAL_MILLIS);
         session.setServerAliveCountMax(SERVER_ALIVE_COUNT_MAX);
     }
 
+    /** 把建连阶段的 SDK 异常翻译成稳定业务错误，Controller 不直接依赖 JSch 异常类型。 */
     private static SftpException translateConnectionException(Exception exception) {
         if (exception instanceof SftpException businessException) {
             return businessException;
@@ -223,16 +250,20 @@ public class JschSftpClientPort implements ISftpClientPort {
         private final Session session;
         private final int connectTimeout;
 
+        /** 保存一条已认证的 SSH Session；这里还没有打开 SFTP Channel。 */
         private JschConnection(Session session, int connectTimeout) {
             this.session = session;
             this.connectTimeout = connectTimeout;
         }
 
+        /** 为单次目录操作或传输创建并连接一个全新的 SFTP Channel。 */
         @Override
         public ISftpClientPort.Channel channel() {
             ChannelSftp channel = null;
             try {
+                // 一个 SSH Session 可以承载多个 Channel；每个操作独占 Channel，避免并发调用 ChannelSftp。
                 channel = (ChannelSftp) session.openChannel("sftp");
+                // openChannel 只创建本地对象，connect 才会向服务器申请 SFTP 子系统。
                 channel.connect(connectTimeout);
                 return new JschSftpChannel(channel);
             } catch (JSchException exception) {
@@ -247,11 +278,13 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 只检查 JSch SSH Session 状态，不会额外发送网络请求。 */
         @Override
         public boolean connected() {
             return session.isConnected();
         }
 
+        /** 断开底层 SSH Session；其上创建的全部 SFTP Channel 会随之失效。 */
         @Override
         public void close() {
             session.disconnect();
@@ -263,10 +296,12 @@ public class JschSftpClientPort implements ISftpClientPort {
 
         private final ChannelSftp client;
 
+        /** 包装一个已经连接的 JSch ChannelSftp。 */
         private JschSftpChannel(ChannelSftp client) {
             this.client = client;
         }
 
+        /** 调用 SFTP REALPATH，让服务器解析账号默认目录、相对路径和规范绝对路径。 */
         @Override
         public String realpath(String path) {
             try {
@@ -276,9 +311,11 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 使用 lstat 查询条目本身，避免自动跟随最后一级符号链接。 */
         @Override
         public Entry stat(String path) {
             try {
+                // 使用 lstat 而不是 stat，确保最后一级符号链接仍以 SYMLINK 返回。
                 return toEntry(RemotePath.name(path), path, client.lstat(path));
             } catch (com.jcraft.jsch.SftpException exception) {
                 // stat 的领域契约约定“不存在”返回 null，其他错误仍然向上抛出。
@@ -289,6 +326,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 使用 JSch selector 流式枚举目录，并在达到配置上限后主动停止。 */
         @Override
         public List<Entry> list(String path, int limit) {
             List<Entry> entries = new ArrayList<>();
@@ -327,6 +365,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 调用 SFTP MKDIR 创建单级目录；父目录必须已经存在。 */
         @Override
         public void mkdir(String path) {
             try {
@@ -339,6 +378,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 调用 SFTP REMOVE 删除普通文件；目录不能走这个方法。 */
         @Override
         public void remove(String path) {
             try {
@@ -351,6 +391,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 调用 SFTP RMDIR 删除空目录；协议本身不会递归删除。 */
         @Override
         public void rmdir(String path) {
             try {
@@ -363,6 +404,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 在同一服务器内重命名，用于把校验完成的临时文件提交到最终路径。 */
         @Override
         public void rename(String source, String target) {
             try {
@@ -381,6 +423,12 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /**
+         * 使用 JSch put 流式上传。
+         *
+         * <p>这里的 OVERWRITE 只允许覆盖领域层生成的临时文件；最终目标是否替换由
+         * Conflict 策略和领域层提交步骤决定。</p>
+         */
         @Override
         public void upload(
                 String path,
@@ -390,10 +438,12 @@ public class JschSftpClientPort implements ISftpClientPort {
         ) {
             try {
                 log.info("SFTP JSch put 开始 path={}", path);
+                // JSch 直接从 InputStream 分块读取；不会把整个文件加载到 JVM 堆内存。
                 client.put(
                         input,
                         path,
                         createProgressMonitor(progress, cancelled),
+                        // 该 path 是领域层生成的 .part 临时文件，允许覆盖的是临时目标而非最终用户文件。
                         ChannelSftp.OVERWRITE
                 );
                 log.info("SFTP JSch put 完成 path={}", path);
@@ -403,6 +453,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 使用 JSch get 把远程文件流式写入调用方输出流，不在内存中缓存完整文件。 */
         @Override
         public void download(
                 String path,
@@ -412,6 +463,7 @@ public class JschSftpClientPort implements ISftpClientPort {
         ) {
             try {
                 log.info("SFTP JSch get 开始 path={}", path);
+                // JSch 读取到的字节直接写入 Servlet OutputStream，并通过 monitor 累加进度。
                 client.get(path, output, createProgressMonitor(progress, cancelled));
                 log.info("SFTP JSch get 完成 path={}", path);
             } catch (com.jcraft.jsch.SftpException exception) {
@@ -420,6 +472,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             }
         }
 
+        /** 断开本次操作独占的 SFTP Channel，不影响同一 SSH Session 上的其他操作。 */
         @Override
         public void close() {
             client.disconnect();
@@ -446,7 +499,9 @@ public class JschSftpClientPort implements ISftpClientPort {
 
                 @Override
                 public boolean count(long transferredBytes) {
+                    // JSch 传入的是本批增量而不是累计值，领域任务负责把每批增量累加。
                     progress.accept(transferredBytes);
+                    // 返回 false 是 JSch SftpProgressMonitor 约定的协作式取消方式。
                     return !cancelled.getAsBoolean();
                 }
 
@@ -457,6 +512,7 @@ public class JschSftpClientPort implements ISftpClientPort {
             };
         }
 
+        /** 将 JSch 的 SftpATTRS 转换为不依赖 SDK 的领域 Entry。 */
         private static Entry toEntry(String name, String path, SftpATTRS attributes) {
             Kind kind;
             if (attributes.isLink()) {
