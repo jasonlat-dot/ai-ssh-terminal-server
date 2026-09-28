@@ -127,8 +127,10 @@ public class FileService implements IFileService {
     /** 执行存储与数据库操作；两者不在同一事务中，因此失败后需要显式补偿。 */
     private FileUploadResult doUpload(IObjectStorageService storage, FileUploadCommand command, String fileName, InputStream input) {
         String fileId = UUID.randomUUID().toString();
-        // 按 UTC 日期组织对象，随机 ID 避免同名覆盖，客户端文件名不参与路径拼接。
-        String key = "uploads/" + LocalDate.now(ZoneOffset.UTC) + "/" + fileId;
+        // 按 UTC 日期组织对象，UUID 避免同名覆盖；只保留已通过白名单校验的小写后缀，
+        // 便于本地磁盘识别文件类型，客户端目录和主体文件名都不会进入对象路径。
+        String key = "uploads/" + LocalDate.now(ZoneOffset.UTC) + "/"
+                + fileId + objectSuffix(fileName);
         FileAssetEntity asset = FileAssetEntity.builder()
                 .fileId(fileId)
                 .ownerId(command.ownerId())
@@ -215,7 +217,7 @@ public class FileService implements IFileService {
         if (command.size() > policy.maxFileSizeBytes()) {
             throw new AppException(ResponseCode.FILE_TOO_LARGE);
         }
-        // 兼容浏览器传来的 C:\\fakepath，文件名仅作展示，不参与 objectKey 拼接。
+        // 兼容浏览器传来的 C:\\fakepath；主体文件名仅作展示，校验后的后缀可用于 objectKey。
         String name = command.originalName().replace('\\', '/');
         name = name.substring(name.lastIndexOf('/') + 1).strip();
         if (name.isBlank() || name.length() > 255 || name.codePoints().anyMatch(Character::isISOControl)) {
@@ -230,6 +232,18 @@ public class FileService implements IFileService {
             throw new AppException(ResponseCode.FILE_INVALID);
         }
         return name;
+    }
+
+    /**
+     * 提取已经通过上传白名单检查的文件后缀，并统一转成小写。
+     * 不根据 MIME 推断类型，避免客户端声明和真实文件名不一致时生成误导性后缀。
+     */
+    private String objectSuffix(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        if (dot < 0 || dot == fileName.length() - 1) {
+            return "";
+        }
+        return "." + fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
     /** 将缺失或格式不合法的客户端 MIME 声明归一为二进制类型，仅用于元数据记录。 */

@@ -11,33 +11,29 @@ ai:
             agent-desc: SSH 智能运维助手，可执行远程命令并智能分析结果
           module:
             ai-api:
-              # 添加 VM options参数：-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890 -Dhttp.nonProxyHosts=localhost|127.0.0.1|192.168.*
-              base-url: http://127.0.0.1:8777/
-              api-key: sk-waliapi-96cbfe096bdc4c08afa7667e9f8838b9
-              completions-path: v1/chat/completions
-              embeddings-path: v1/embeddings
+              base-url: ${openai.ai-api.base-url}
+              api-key: ${openai.ai-api.api-key}
+              completions-path: ${openai.ai-api.completions-path}
+              embeddings-path: ${openai.ai-api.embeddings-path}
               proxy:
-                enabled: true
-                host: 127.0.0.1
-                port: 7890
+                enabled: ${openai.ai-api.proxy.enabled}
+                host: ${openai.ai-api.proxy.host}
+                port: ${openai.ai-api.proxy.port}
                 non-proxy-hosts:
-                  - localhost
-                  - 127.0.0.1
-                  - "192.168.*"
+                  - ${openai.ai-api.proxy.non-proxy-hosts[0]}
+                  - ${openai.ai-api.proxy.non-proxy-hosts[1]}
+                  - ${openai.ai-api.proxy.non-proxy-hosts[2]}
             chat-model:
-              model: gpt-5.5
-              reasoning-effort: medium
-              # 按实际模型和中转服务能力声明；不支持 PDF 的服务请移除 application/pdf。
-              supported-media-types: [image/png, image/jpeg, image/webp, application/pdf]
+              model: ${openai.chat-model.model-name}
+              reasoning-effort: ${openai.chat-model.reasoning-effort}
+              supported-media-types:
+                - ${openai.chat-model.supported-media-types[0]}
+                - ${openai.chat-model.supported-media-types[1]}
+                - ${openai.chat-model.supported-media-types[2]}
+                - ${openai.chat-model.supported-media-types[3]}
               tool-skills-list:
                 - type: resource
                   root-path: agent/skills
-              tool-mcp-list:
-                - sse:
-                    name: baidu-search
-                    base-uri: http://appbuilder.baidu.com
-                    sse-endpoint: /v2/ai_search/mcp/sse?api_key=${baidu.api-key}
-                    request-timeout: 300000
             llm-agents:
               - name: sshOperator
                 description: 综合运维助手，可直接问答、使用 Skills 和 MCP、执行简单 SSH 查询，并派发复杂任务

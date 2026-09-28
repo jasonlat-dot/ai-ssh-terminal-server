@@ -11,7 +11,7 @@ import java.time.Instant;
  * @param size 文件大小，单位为字节，前端可转换成 KB 或 MB 展示
  * @param sha256 文件内容的 SHA-256 十六进制摘要
  * @param status 上传状态，当前成功返回 UPLOADED，不表示完成内容解析
- * @param downloadUrl 临时签名下载地址；应直接使用，不能自行替换域名、路径或参数
+ * @param downloadUrl 临时下载地址，可能来自 MinIO 或本机后端；应直接使用，不能自行替换域名、路径或参数
  * @param urlExpiresAt 下载链接预计到期时间，序列化为 UTC 时间字符串
  */
 public record FileUploadResponseDTO(String fileId, String fileName, String contentType,

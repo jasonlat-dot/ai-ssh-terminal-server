@@ -17,7 +17,7 @@ public class FileAssetPO {
     private long size;
     /** 后端计算的 SHA-256 摘要，完成计算前为空。 */
     private String sha256;
-    /** 存储实例 ID，例如 minio-main；切换默认存储不应覆盖已有记录的实例 ID。 */
+    /** 存储实例 ID，例如 local-main 或 minio-main；切换默认存储不应覆盖已有记录。 */
     private String storageId;
     /** 对象所在的桶名称。 */
     private String bucket;

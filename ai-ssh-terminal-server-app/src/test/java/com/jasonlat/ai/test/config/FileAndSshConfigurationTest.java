@@ -5,7 +5,9 @@ import com.jasonlat.ai.config.SshInfrastructureConfiguration;
 import com.jasonlat.ai.config.properties.FileUploadProperties;
 import com.jasonlat.ai.domain.file.service.storage.resolver.IObjectStorageResolver;
 import com.jasonlat.ai.domain.file.model.valobj.FileUploadPolicy;
+import com.jasonlat.ai.domain.file.model.valobj.LocalFileStorageSettings;
 import com.jasonlat.ai.domain.file.model.valobj.MinioStorageSettings;
+import com.jasonlat.ai.domain.file.service.storage.LocalFileIObjectStorageService;
 import com.jasonlat.ai.domain.file.service.storage.MinioIObjectStorageService;
 import com.jasonlat.ai.infrastructure.model.settings.SshCommandSettings;
 import com.jasonlat.ai.infrastructure.model.settings.SshHttpProxySettings;
@@ -23,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class FileAndSshConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(FileServiceConfiguration.class, SshInfrastructureConfiguration.class)
-            .withBean(MinioIObjectStorageService.class);
+            .withBean(MinioIObjectStorageService.class)
+            .withBean(LocalFileIObjectStorageService.class);
 
     @Test
     void missingStorageStillStartsAndUploadResolutionReturnsBusinessError() {
@@ -54,7 +57,10 @@ class FileAndSshConfigurationTest {
                 "ai.file.upload.allowed-extensions[0]=txt",
                 "ai.file.upload.allowed-extensions[1]=log",
                 "ai.file.storage.minio.storage-id=archive",
-                "ai.file.storage.minio.read-timeout=12s"
+                "ai.file.storage.minio.read-timeout=12s",
+                "ai.file.storage.local.storage-id=desktop-local",
+                "ai.file.storage.local.root-directory=build/test-files",
+                "ai.file.storage.local.public-base-url=http://127.0.0.1:9999/api/v1/files/local"
         ).run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context.getBean(SshCommandSettings.class).idleTimeoutSeconds()).isEqualTo(23);
@@ -72,6 +78,10 @@ class FileAndSshConfigurationTest {
             MinioStorageSettings minio = context.getBean(MinioStorageSettings.class);
             assertThat(minio.storageId()).isEqualTo("archive");
             assertThat(minio.readTimeout()).isEqualTo(Duration.ofSeconds(12));
+            LocalFileStorageSettings local = context.getBean(LocalFileStorageSettings.class);
+            assertThat(local.storageId()).isEqualTo("desktop-local");
+            assertThat(local.rootDirectory()).isEqualTo("build/test-files");
+            assertThat(local.publicBaseUrl()).isEqualTo("http://127.0.0.1:9999/api/v1/files/local");
         });
     }
 

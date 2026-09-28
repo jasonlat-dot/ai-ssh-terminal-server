@@ -8,9 +8,21 @@
 
 1. 在应用实际使用的 MySQL 数据库执行 `docs/dev-ops/mysql/2-14-file-upload.sql`。
    脚本仅新增 file_asset 表，不会删除现有数据；应用不会自动执行该 SQL。
-2. 在 MinIO 预先创建私有桶。上传账号需要该桶的 PutObject、GetObject、DeleteObject 权限；
-   如果启用版本控制，补偿删除还需要相应版本删除权限。应用不会自动建桶或开放公共读写。
-3. 在公共 `application.yml` 的 `ai.file` 下填写配置，或者设置环境变量：
+2. 选择本地目录或 MinIO 作为默认存储。本地目录适合后端随桌面客户端安装；MinIO 适合多实例部署。
+3. 在公共 `application.yml` 的 `ai.file` 下填写配置，或者设置环境变量。本地存储示例：
+
+```bash
+export FILE_STORAGE_DEFAULT_ID=local-main
+export LOCAL_FILE_STORAGE_ENABLED=true
+export LOCAL_FILE_STORAGE_ROOT="$HOME/.ai-ssh-terminal/files"
+# 通常不需要设置，下载地址会根据当前上传请求动态生成。
+# 仅在反向代理不能正确传递外部地址时使用：
+# export LOCAL_FILE_STORAGE_PUBLIC_BASE_URL=https://example.com/api/v1/files/local
+# 可选；至少 32 个字符。为空时每次启动随机生成，重启会使旧临时链接提前失效。
+export LOCAL_FILE_STORAGE_SIGNING_SECRET='<随机下载签名密钥>'
+```
+
+MinIO 示例：
 
 ```bash
 export MINIO_ENABLED=true
@@ -27,7 +39,10 @@ endpoint 是对象 API 地址，不能填写控制台地址。public-endpoint �
 不能在返回给前端后直接替换 URL 的域名或路径，否则签名会失效。
 region 默认 us-east-1，应与桶所在区域一致。
 
-MinIO 默认未启用，空配置不会初始化客户端或连接存储。请求上传时才返回明确错误。
+本地存储和 MinIO 默认都可以关闭，空配置不会创建目录或初始化 MinIO 客户端。
+请求上传时才根据 `default-id` 选择并检查对应实例。
+本地存储的 `public-base-url` 默认留空，上传响应会自动使用当前请求的协议、主机、端口和部署前缀。
+反向代理部署应正确转发 `Forwarded` 或 `X-Forwarded-*`；无法正确识别外部地址时再固定配置该值。
 没有启用文件功能时不要求执行新增表 SQL，上传会在访问数据库前因未配置存储而失败。
 
 ## 请求与响应
@@ -76,7 +91,11 @@ console.log(result.data.fileId, result.data.downloadUrl);
 }
 ```
 
-下载地址默认 15 分钟有效。数据库不保存该地址。
+下载地址默认 15 分钟有效。数据库不保存该地址。MinIO 返回对象服务预签名地址；本地存储返回
+后端 `/api/v1/files/local` 的 HMAC 签名地址，实际磁盘根目录不会暴露给客户端。
+实际对象名由服务端 UUID 和通过白名单校验的小写后缀组成，例如
+`466271a0-1548-4485-99d9-b522c4a7ecb2.png`。原始主体文件名不会进入磁盘路径；
+后缀来自清理后的原始文件名，不根据不可信的 MIME 声明猜测。
 这一阶段不提供历史文件查询、重新签名或删除接口；对应接口将在接入权限与引用管理时扩展。
 当前所有文件强制以 application/octet-stream 附件下载，不进行浏览器内联预览。
 响应中的 contentType 仅为规范化后的客户端声明类型，不代表实际内容检测结果。
@@ -86,20 +105,23 @@ console.log(result.data.fileId, result.data.downloadUrl);
 | HTTP | code | 含义 |
 | --- | --- | --- |
 | 503 | FILE_STORAGE_NOT_CONFIGURED | 没有启用存储或默认存储 ID 未注册 |
-| 503 | FILE_STORAGE_CONFIG_INVALID | 已启用，但端点、密钥、桶等配置不完整或不合法 |
-| 503 | FILE_STORAGE_UNAVAILABLE | 存储网络、凭证、桶权限等异常 |
+| 503 | FILE_STORAGE_CONFIG_INVALID | 已启用，但本地目录、下载地址或 MinIO 参数不合法 |
+| 503 | FILE_STORAGE_UNAVAILABLE | 本地磁盘读写、存储网络、凭证或桶权限等异常 |
 | 400 | FILE_INVALID | 缺少 file、空文件、非法文件名或无效 multipart |
 | 400 | FILE_TYPE_NOT_ALLOWED | 扩展名未在允许列表中 |
 | 413 | FILE_TOO_LARGE | 超过文件或 multipart 请求大小上限 |
 | 429 | FILE_UPLOAD_BUSY | 当前实例正在向存储传输的上传数量超过限制 |
 | 500 | FILE_UPLOAD_FAILED | 读取流、元数据写入等其他失败 |
+| 400 | FILE_DOWNLOAD_LINK_INVALID | 本地下载链接参数或签名无效 |
+| 404 | FILE_DOWNLOAD_NOT_FOUND | 本地存储中的目标文件不存在 |
+| 410 | FILE_DOWNLOAD_LINK_EXPIRED | 本地下载链接已过期 |
 
-例如没有配置 MinIO 时：
+例如没有配置任何默认存储时：
 
 ```json
 {
   "code": "FILE_STORAGE_NOT_CONFIGURED",
-  "info": "未配置或启用文件存储服务，请联系管理员配置 MinIO 等存储服务",
+  "info": "未配置或启用文件存储服务，请配置本地目录、MinIO 等存储实例",
   "data": null
 }
 ```
@@ -111,7 +133,9 @@ console.log(result.data.fileId, result.data.downloadUrl);
 - domain/file/service/storage/resolver：IObjectStorageResolver、DefaultIObjectStorageResolver 按 storageId 选择存储并触发配置检查。
 - domain/file/service/file/FileService：选择存储、参数校验、并发准入、随机对象路径、SHA-256、元数据及失败补偿，并提供聊天附件读取。
 - domain/file/service/IObjectStorageService：存储厂商无关的接口。
+- domain/file/service/storage/LocalFileIObjectStorageService：本地临时文件、原子提交、安全路径解析和签名下载。
 - domain/file/service/storage/MinioIObjectStorageService：懒初始化 SDK、流式读写、签名下载和补偿删除。
+- trigger/http/LocalFileDownloadController：校验本地临时链接后流式输出文件。
 - infrastructure/adapter/repository/FileAssetRepository：文件记录持久化。
 - trigger/http/advice/FileExceptionHandler：文件接口范围的统一 HTTP 状态与错误码映射。
 
@@ -122,7 +146,7 @@ FileUploadProperties，以及 SSH 的 SshCommandProperties、SshHttpProxyPropert
 
 app 将绑定结果转换成不可变参数再注入下层：
 - domain 使用 FileUploadPolicy，文件大小是普通 long 字节数，不依赖 Spring DataSize。
-- domain/file/model/valobj 使用 MinioStorageSettings；infrastructure 使用 SshCommandSettings、SshHttpProxySettings、TerminalSessionSettings。
+- domain/file/model/valobj 使用 LocalFileStorageSettings、MinioStorageSettings；infrastructure 使用 SshCommandSettings、SshHttpProxySettings、TerminalSessionSettings。
 - 存储选择器由 app 显式装配，只接收默认存储 ID 和存储实现列表。
 
 所有 YAML 配置键和默认值保持不变，下层不引用 app 的 Properties 类。
@@ -142,10 +166,11 @@ app 将绑定结果转换成不可变参数再注入下层：
   部署若要求登录上传，应由统一认证入口保护该路径。未接入前不要将接口作为匿名公共上传入口。
 - 默认每个文件 20 MB，请求总大小 21 MB；可通过 FILE_MAX_SIZE、FILE_MAX_REQUEST_SIZE 调整。
 - 扩展名白名单只是上传准入，不是实际内容验证。当前无解析器、杀毒或异步处理任务。
-- multipart 使用临时磁盘，应用上传流程不调用 getBytes()；MinIO 每个上传使用固定 5 MiB 分片缓冲，
+- multipart 使用临时磁盘，应用上传流程不调用 getBytes()；本地存储使用固定 64 KiB 复制缓冲并先写临时文件，
+  MinIO 每个上传使用固定 5 MiB 分片缓冲，
   实际内存还有 SDK/HTTP 开销。FILE_MAX_CONCURRENT_UPLOADS 默认 4，仅限制每个实例到存储的传输，
   不限制容器已接收的 multipart 临时文件数量。网关和容器仍需按部署容量设置连接、速率与临时盘限制。
-- 配置中的 timeout 为存储 HTTP 请求超时，上传过程不持有数据库长事务。
+- MinIO 配置中的 timeout 为存储 HTTP 请求超时，上传过程不持有数据库长事务。
 - 没有新增 CORS 通配授权。跨域前端应沿用网关或项目统一 CORS 配置。
 - 不实现跨用户文件去重、配额、幂等键、分片续传和上传后自动清理，这些不属于本次独立上传闭环。
 

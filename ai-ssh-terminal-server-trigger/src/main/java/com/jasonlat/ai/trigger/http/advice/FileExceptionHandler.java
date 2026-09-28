@@ -2,6 +2,7 @@ package com.jasonlat.ai.trigger.http.advice;
 
 import com.jasonlat.ai.trigger.api.response.Response;
 import com.jasonlat.ai.trigger.http.FileController;
+import com.jasonlat.ai.trigger.http.LocalFileDownloadController;
 import com.jasonlat.ai.types.enums.ResponseCode;
 import com.jasonlat.ai.types.exception.AppException;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +15,7 @@ import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @Slf4j
-@RestControllerAdvice(assignableTypes = FileController.class)
+@RestControllerAdvice(assignableTypes = {FileController.class, LocalFileDownloadController.class})
 public class FileExceptionHandler {
     @ExceptionHandler(AppException.class)
     public ResponseEntity<Response<Void>> handleBusiness(AppException e) {
@@ -23,10 +24,13 @@ public class FileExceptionHandler {
                  "FILE_STORAGE_UNAVAILABLE" -> HttpStatus.SERVICE_UNAVAILABLE;
             case "FILE_TOO_LARGE" -> HttpStatus.PAYLOAD_TOO_LARGE;
             case "FILE_UPLOAD_BUSY" -> HttpStatus.TOO_MANY_REQUESTS;
-            case "FILE_INVALID", "FILE_TYPE_NOT_ALLOWED" -> HttpStatus.BAD_REQUEST;
+            case "FILE_DOWNLOAD_LINK_EXPIRED" -> HttpStatus.GONE;
+            case "FILE_DOWNLOAD_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            case "FILE_INVALID", "FILE_TYPE_NOT_ALLOWED",
+                 "FILE_DOWNLOAD_LINK_INVALID" -> HttpStatus.BAD_REQUEST;
             default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
-        log.warn("文件上传请求失败 code={}", e.getCode());
+        log.warn("文件请求失败 code={} message:{}", e.getCode(), e.getMessage());
         return ResponseEntity.status(status).body(Response.build(e.getCode(), e.getInfo(), null));
     }
 
@@ -42,7 +46,7 @@ public class FileExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Response<Void>> handleUnexpected(Exception e) {
-        log.error("文件上传异常 errorType={}", e.getClass().getSimpleName());
+        log.error("文件请求异常 errorType={}", e.getClass().getSimpleName());
         return error(HttpStatus.INTERNAL_SERVER_ERROR, ResponseCode.FILE_UPLOAD_FAILED);
     }
 

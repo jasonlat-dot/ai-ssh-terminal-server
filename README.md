@@ -28,7 +28,7 @@ git pull origin 2.14-jsch-sftp
 | JDK | JDK 25，以根目录 `pom.xml` 为准 | 是 |
 | Maven | 建议 Maven 3.9 或更高版本 | 是 |
 | MySQL | MySQL 8.x | 是 |
-| MinIO | 用于聊天附件，与 SFTP 无关 | 否 |
+| 文件存储 | 聊天附件可保存到本机目录或 MinIO，与 SFTP 无关 | 否 |
 | SSH 服务器 | 用于终端和 SFTP 联调 | 按功能需要 |
 | AI 模型服务 | OpenAI 兼容的 Chat Completions 接口 | 使用 Agent 时需要 |
 
@@ -118,7 +118,9 @@ ai-ssh-terminal-server-app/src/main/resources/application-sit.yml
 | `ai.agent.config...ai-api.api-key` | 模型服务密钥 | 不要提交到 Git |
 | `ai.agent.config...chat-model.model` | 模型名称 | 使用模型服务实际支持的名称 |
 | `ai.ssh.http-proxy.enabled` | SSH 是否经过 HTTP CONNECT 代理 | 不使用代理时设为 `false` |
-| `ai.file.storage.minio.enabled` | 是否启用聊天附件存储 | 不使用附件时设为 `false` |
+| `ai.file.storage.default-id` | 新上传附件使用哪个存储实例 | 桌面一体化部署建议使用 `local-main` |
+| `ai.file.storage.local.enabled` | 是否启用本机目录存储 | 不依赖外部文件服务器时设为 `true` |
+| `ai.file.storage.minio.enabled` | 是否启用 MinIO 附件存储 | 使用本地存储时可设为 `false` |
 
 ### 推荐的 `application-sit.yml`
 
@@ -163,6 +165,15 @@ ai:
 
   file:
     storage:
+      # 默认使用本机磁盘，适合后端随客户端安装的部署方式。
+      default-id: ${FILE_STORAGE_DEFAULT_ID:local-main}
+      local:
+        enabled: ${LOCAL_FILE_STORAGE_ENABLED:true}
+        storage-id: local-main
+        root-directory: ${LOCAL_FILE_STORAGE_ROOT:${user.home}/.ai-ssh-terminal/files}
+        # 默认留空，按当前上传请求动态生成协议、主机、端口和部署前缀。
+        public-base-url: ${LOCAL_FILE_STORAGE_PUBLIC_BASE_URL:}
+        signing-secret: ${LOCAL_FILE_STORAGE_SIGNING_SECRET:}
       minio:
         enabled: ${MINIO_ENABLED:false}
 
@@ -348,19 +359,47 @@ ssh-keyscan -t ed25519 192.168.3.16
 
 保存输出的完整一行，主机/IP、算法和公钥三部分都不能省略。项目使用 `com.github.mwiede:jsch`，支持现代 OpenSSH 常用算法；最终能否连接还取决于服务器算法、JDK 安全策略和连接配置。
 
-### MinIO 和聊天附件
+### 本机存储、MinIO 和聊天附件
 
-MinIO 只负责聊天附件，不参与 SFTP 文件传输。不使用附件时：
+聊天附件存储不参与 SFTP 文件传输。后端随桌面客户端一起安装时，可以直接保存到本机：
 
 ```yaml
 ai:
   file:
     storage:
+      default-id: local-main
+      local:
+        enabled: true
+        storage-id: local-main
+        root-directory: ${LOCAL_FILE_STORAGE_ROOT:${user.home}/.ai-ssh-terminal/files}
+        # 默认留空；只有反向代理不能正确传递外部地址时才需要固定配置。
+        public-base-url: ${LOCAL_FILE_STORAGE_PUBLIC_BASE_URL:}
+        signing-secret: ${LOCAL_FILE_STORAGE_SIGNING_SECRET:}
       minio:
         enabled: false
 ```
 
-启用时需要配置 `endpoint`、`access-key`、`secret-key` 和 `bucket`，并提前创建私有 Bucket。应用不会自动创建 Bucket 或修改 Bucket 策略。`public-endpoint` 应填写浏览器能够访问的对象 API 地址，不能填写管理控制台地址。
+- `root-directory` 是后端机器上的真实存储目录。默认使用用户目录，不建议写入安装目录。
+- `public-base-url` 默认留空，下载地址会根据上传请求动态使用当前协议、主机、端口和部署前缀，直接修改后端端口不需要同步修改这里。
+- 经过 Nginx 等反向代理时，应正确传递 `Forwarded` 或 `X-Forwarded-*` 请求头并配置 Spring 转发头策略；无法做到时再用 `public-base-url` 固定外部下载地址。
+- `signing-secret` 为空时会在每次启动时随机生成，旧的临时下载链接会在重启后失效；需要保留链接时配置固定的随机密钥。
+- 文件先写入同目录临时文件，写完后再移动到正式位置；接口不会把绝对磁盘路径返回前端。
+- 磁盘文件名使用“后端 UUID + 已校验的小写后缀”，便于本机查看类型，同时不会暴露原始文件名。
+- 数据库中的 `storage_id` 会记录实际使用的实例，因此切换默认存储不会影响已经上传的旧附件。迁移旧文件时不能只修改 `default-id`。
+
+如果仍然使用 MinIO，需要配置 `endpoint`、`access-key`、`secret-key` 和 `bucket`，并提前创建私有 Bucket。应用不会自动创建 Bucket 或修改 Bucket 策略。`public-endpoint` 应填写浏览器能够访问的对象 API 地址，不能填写管理控制台地址。
+
+完全不使用聊天附件时，可以同时关闭两个存储实例：
+
+```yaml
+ai:
+  file:
+    storage:
+      local:
+        enabled: false
+      minio:
+        enabled: false
+```
 
 ## 八、生产部署
 
@@ -376,7 +415,7 @@ java -jar ai-ssh-terminal-server-app.jar --spring.profiles.active=prod
 - CORS 允许来源
 - SSH 和模型代理开关
 - SFTP 会话、文件大小和并发限制
-- MinIO 地址、账号、Bucket 和公网访问地址
+- 附件默认存储实例，以及本地目录或 MinIO 参数
 - `SFTP_ANONYMOUS_USER_ID`，或接入真实 Spring Security Principal
 
 生产环境不要使用 `cross-origin: "*"`，不要使用数据库 root 用户，也不要保留示例密钥和示例 SSH 连接。

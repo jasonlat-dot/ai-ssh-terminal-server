@@ -7,7 +7,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.time.Duration;
 
-/** 对象存储策略，MinIO、OSS 等实现遵循相同读写与签名契约。 */
+/** 文件内容存储策略，本机目录、MinIO、OSS 等实现遵循相同读写与下载契约。 */
 public interface IObjectStorageService {
     /** 当前存储实例的唯一 ID，与文件元数据中的 storageId 对应。 */
     String storageId();
@@ -30,7 +30,10 @@ public interface IObjectStorageService {
     /** 按持久化位置读取对象；启用版本控制时读取原版本，返回流由调用方关闭。 */
     InputStream openRead(ObjectLocation location);
 
-    /** 生成有效时长为 ttl 的签名下载地址；fileName 用于下载命名，不改变对象路径。 */
+    /**
+     * 生成有效时长为 ttl 的下载地址；fileName 用于下载命名，不改变对象路径。
+     * 对象服务可以返回预签名地址，本地存储返回后端自身的临时签名接口。
+     */
     URI createDownloadUrl(ObjectLocation location, String fileName, Duration ttl);
 
     /** 删除不存在的对象视为成功，便于补偿重试。 */

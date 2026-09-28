@@ -24,7 +24,7 @@ public enum ResponseCode {
     TERMINAL_SESSION_NOT_FOUNT("S0003", "终端会话不存在或已关闭"),
     AGENT_ID_NOT_FOUNT("S0004", "智能体ID不存在"),
 
-    FILE_STORAGE_NOT_CONFIGURED("FILE_STORAGE_NOT_CONFIGURED", "未配置或启用文件存储服务，请联系管理员配置 MinIO 等存储服务"),
+    FILE_STORAGE_NOT_CONFIGURED("FILE_STORAGE_NOT_CONFIGURED", "未配置或启用文件存储服务，请配置本地目录、MinIO 等存储实例"),
     FILE_STORAGE_CONFIG_INVALID("FILE_STORAGE_CONFIG_INVALID", "文件存储配置不完整或不合法，请联系管理员检查配置"),
     FILE_STORAGE_UNAVAILABLE("FILE_STORAGE_UNAVAILABLE", "文件存储服务不可用，请稍后重试"),
     FILE_INVALID("FILE_INVALID", "文件为空或文件名不合法"),
@@ -32,6 +32,9 @@ public enum ResponseCode {
     FILE_TYPE_NOT_ALLOWED("FILE_TYPE_NOT_ALLOWED", "不支持上传此文件类型"),
     FILE_UPLOAD_BUSY("FILE_UPLOAD_BUSY", "当前上传请求过多，请稍后重试"),
     FILE_UPLOAD_FAILED("FILE_UPLOAD_FAILED", "文件上传失败，请稍后重试"),
+    FILE_DOWNLOAD_LINK_INVALID("FILE_DOWNLOAD_LINK_INVALID", "文件下载链接无效或已被修改"),
+    FILE_DOWNLOAD_LINK_EXPIRED("FILE_DOWNLOAD_LINK_EXPIRED", "文件下载链接已过期，请重新上传或获取新链接"),
+    FILE_DOWNLOAD_NOT_FOUND("FILE_DOWNLOAD_NOT_FOUND", "下载文件不存在或已经被清理"),
     CHAT_CONTENT_REQUIRED("CHAT_CONTENT_REQUIRED", "消息文字和附件不能同时为空"),
     CHAT_ATTACHMENT_INVALID("CHAT_ATTACHMENT_INVALID", "附件引用无效、重复或文件尚未上传成功"),
     CHAT_ATTACHMENT_FORBIDDEN("CHAT_ATTACHMENT_FORBIDDEN", "无权使用该附件"),

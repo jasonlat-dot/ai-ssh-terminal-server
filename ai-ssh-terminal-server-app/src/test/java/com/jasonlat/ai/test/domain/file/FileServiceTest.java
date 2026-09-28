@@ -54,7 +54,7 @@ class FileServiceTest {
     }
 
     @Test
-    void savesChecksumAndVersionWithoutUsingUserFileNameAsObjectKey() throws Exception {
+    void savesChecksumAndVersionUsingOnlyValidatedSuffixInObjectKey() throws Exception {
         AtomicReference<FileAssetEntity> saved = new AtomicReference<>();
         doAnswer(invocation -> {
             saved.set(invocation.getArgument(0));
@@ -67,7 +67,7 @@ class FileServiceTest {
                 .digest("hello".getBytes(StandardCharsets.UTF_8))), result.sha256());
         assertEquals("version-1", saved.get().getLocation().versionId());
         assertFalse(saved.get().getLocation().objectKey().contains("hello"));
-        assertTrue(saved.get().getLocation().objectKey().endsWith(result.fileId()));
+        assertTrue(saved.get().getLocation().objectKey().endsWith(result.fileId() + ".txt"));
         verify(storage, never()).delete(any());
     }
 
