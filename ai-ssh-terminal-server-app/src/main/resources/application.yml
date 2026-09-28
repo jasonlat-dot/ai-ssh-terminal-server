@@ -17,12 +17,15 @@ app:
     cross-origin: '*'
     # 默认密钥（生产环境务必通过环境变量 SSH_DEFAULT_SECRET_KEY 覆盖）
     ssh-default-secret-key: ${SSH_DEFAULT_SECRET_KEY:R2F0Q1pYaUd2bFhUcU5VdE5ZbHdUc3NqQlJIRlR0Zz0}
+    # 桌面版后端的统一数据根目录；修改为绝对路径后，重启客户端即可整体切换。
+    # application*.yml、SQLite、上传文件和日志都放在这个目录下。
+    data-directory: ${AI_SSH_TERMINAL_HOME:${user.home}/.ai-ssh-terminal}
   database:
     # 桌面客户端默认使用本机 SQLite；设置 DATABASE_TYPE=mysql 可切回外部 MySQL。
     type: ${DATABASE_TYPE:sqlite}
     sqlite:
       # 默认值与 DatabaseProperties 中的 Java 默认路径保持一致。
-      file: ${SQLITE_DATABASE_FILE:${user.home}/.ai-ssh-terminal/data/ai-ssh-terminal.db}
+      file: ${SQLITE_DATABASE_FILE:${app.config.data-directory}/data/ai-ssh-terminal.db}
       driver-class-name: org.sqlite.JDBC
       pool-name: AiSshTerminal-SQLite
       # SQLite 是单文件数据库，单写连接可避免不必要的 database is locked 冲突。
