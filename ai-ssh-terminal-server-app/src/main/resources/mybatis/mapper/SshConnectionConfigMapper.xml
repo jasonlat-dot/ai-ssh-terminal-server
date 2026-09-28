@@ -52,7 +52,7 @@
                    #{compression,jdbcType=INTEGER},
                    #{strictHostKeyCheck,jdbcType=INTEGER},
                    #{knownHosts,jdbcType=LONGVARCHAR},
-                   CURRENT_TIMESTAMP(6)
+                   CURRENT_TIMESTAMP
                )
         ON DUPLICATE KEY UPDATE
         <trim suffixOverrides=",">
@@ -74,7 +74,58 @@
             <if test="knownHosts != null">
                 known_hosts = #{knownHosts,jdbcType=LONGVARCHAR},
             </if>
-            updated_at = CURRENT_TIMESTAMP(6)
+            updated_at = CURRENT_TIMESTAMP
+        </trim>
+    </insert>
+
+    <!--
+        SQLite 使用 ON CONFLICT 处理同一个 connection_id 的重复保存。
+        databaseId 由 DatabaseConfiguration 根据 JDBC 元数据自动识别，DAO 方法无需感知方言。
+    -->
+    <insert id="insertOrUpdate"
+            databaseId="sqlite"
+            parameterType="com.jasonlat.ai.infrastructure.dao.po.SshConnectionConfigPO">
+        INSERT INTO ssh_connection_config (
+            connection_id,
+            connect_timeout,
+            keepalive_interval,
+            startup_command,
+            compression,
+            strict_host_key_check,
+            known_hosts,
+            updated_at
+        )
+        VALUES (
+                   #{connectionId,jdbcType=VARCHAR},
+                   #{connectTimeout,jdbcType=INTEGER},
+                   #{keepaliveInterval,jdbcType=INTEGER},
+                   #{startupCommand,jdbcType=VARCHAR},
+                   #{compression,jdbcType=INTEGER},
+                   #{strictHostKeyCheck,jdbcType=INTEGER},
+                   #{knownHosts,jdbcType=LONGVARCHAR},
+                   CURRENT_TIMESTAMP
+               )
+        ON CONFLICT(connection_id) DO UPDATE SET
+        <trim suffixOverrides=",">
+            <if test="connectTimeout != null">
+                connect_timeout = excluded.connect_timeout,
+            </if>
+            <if test="keepaliveInterval != null">
+                keepalive_interval = excluded.keepalive_interval,
+            </if>
+            <if test="startupCommand != null">
+                startup_command = excluded.startup_command,
+            </if>
+            <if test="compression != null">
+                compression = excluded.compression,
+            </if>
+            <if test="strictHostKeyCheck != null">
+                strict_host_key_check = excluded.strict_host_key_check,
+            </if>
+            <if test="knownHosts != null">
+                known_hosts = excluded.known_hosts,
+            </if>
+            updated_at = CURRENT_TIMESTAMP
         </trim>
     </insert>
 

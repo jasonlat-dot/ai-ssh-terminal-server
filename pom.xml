@@ -20,6 +20,7 @@
     <postgresql.version>42.7.5</postgresql.version>
     <google.sdk.version>1.2.0</google.sdk.version>
     <minio.version>8.5.17</minio.version>
+    <sqlite.jdbc.version>3.47.2.0</sqlite.jdbc.version>
   </properties>
   <developers>
     <developer>
@@ -138,6 +139,12 @@
         <groupId>mysql</groupId>
         <artifactId>mysql-connector-java</artifactId>
         <version>8.0.22</version>
+      </dependency>
+      <!-- SQLite JDBC 驱动；桌面端使用本地数据库时不再依赖外部 MySQL 服务。 -->
+      <dependency>
+        <groupId>org.xerial</groupId>
+        <artifactId>sqlite-jdbc</artifactId>
+        <version>${sqlite.jdbc.version}</version>
       </dependency>
       <dependency>
         <groupId>org.postgresql</groupId>

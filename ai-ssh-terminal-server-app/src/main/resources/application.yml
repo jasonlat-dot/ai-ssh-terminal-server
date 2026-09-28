@@ -1,10 +1,12 @@
 #file: noinspection SpringBootApplicationYaml
 server:
+  port: 8888
   tomcat:
     threads:
       max: 200        # 设定处理客户请求的线程的最大数目，决定了服务器可以同时响应客户请求的数,默认200
       min-spare: 50   # 初始化线程数,最小空闲线程数,默认是10
     accept-count: 10  # 等待队列长度
+    max-http-post-size: -1
 
 # 应用配置 app.config.api-version
 app:
@@ -13,6 +15,31 @@ app:
     api-version: v1
     # 跨域，开发阶段可以设置为 * 不限制
     cross-origin: '*'
+    # 默认密钥（生产环境务必通过环境变量 SSH_DEFAULT_SECRET_KEY 覆盖）
+    ssh-default-secret-key: ${SSH_DEFAULT_SECRET_KEY:R2F0Q1pYaUd2bFhUcU5VdE5ZbHdUc3NqQlJIRlR0Zz0}
+  database:
+    # 桌面客户端默认使用本机 SQLite；设置 DATABASE_TYPE=mysql 可切回外部 MySQL。
+    type: ${DATABASE_TYPE:sqlite}
+    sqlite:
+      # 默认值与 DatabaseProperties 中的 Java 默认路径保持一致。
+      file: ${SQLITE_DATABASE_FILE:${user.home}/.ai-ssh-terminal/data/ai-ssh-terminal.db}
+      driver-class-name: org.sqlite.JDBC
+      pool-name: AiSshTerminal-SQLite
+      # SQLite 是单文件数据库，单写连接可避免不必要的 database is locked 冲突。
+      maximum-pool-size: ${SQLITE_MAXIMUM_POOL_SIZE:1}
+      busy-timeout: ${SQLITE_BUSY_TIMEOUT:10000}
+    mysql:
+      # MySQL 配置只保留在 prod 中；设置 DATABASE_TYPE=mysql 后才会创建该数据源。
+      url: ${MYSQL_DATABASE_URL:jdbc:mysql://192.168.3.16:3306/ssh_terminal?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true}
+      username: ${MYSQL_DATABASE_USERNAME:root}
+      password: ${MYSQL_DATABASE_PASSWORD:123456}
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      pool-name: Retail_HikariCP
+      minimum-idle: ${MYSQL_MINIMUM_IDLE:15}
+      maximum-pool-size: ${MYSQL_MAXIMUM_POOL_SIZE:25}
+      connection-timeout: ${MYSQL_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${MYSQL_IDLE_TIMEOUT:180000}
+      max-lifetime: ${MYSQL_MAX_LIFETIME:1800000}
 
 spring:
   servlet:
@@ -30,22 +57,6 @@ spring:
     # 配置自定义的 agent yml配置文件
     import:
       - classpath:agent/ssh-agent.yml
-  # 数据库配置
-  datasource:
-    username: root
-    password: lijiaqiang12@
-    url: jdbc:mysql://192.168.3.16:13306/ssh_terminal?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=true
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    type: com.zaxxer.hikari.HikariDataSource
-    hikari:
-      pool-name: Retail_HikariCP
-      minimum-idle: 15 #最小空闲连接数量
-      idle-timeout: 180000 #空闲连接存活最大时间，默认600000（10分钟）
-      maximum-pool-size: 25 #连接池最大连接数，默认是10
-      auto-commit: true  #此属性控制从池返回的连接的默认自动提交行为,默认值：true
-      max-lifetime: 1800000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
-      connection-timeout: 30000 #数据库连接超时时间,默认30秒，即30000
-      connection-test-query: SELECT 1
 
 # mybatis plus 配置
 mybatis-plus:

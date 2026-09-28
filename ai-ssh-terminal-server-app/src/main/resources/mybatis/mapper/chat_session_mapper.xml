@@ -19,13 +19,15 @@
 
     <update id="updateMessageCount">
         UPDATE chat_session
-        SET message_count = message_count + 1
+        SET message_count = message_count + 1,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = #{sessionId}
     </update>
 
     <update id="updateTitleIfDefault">
         UPDATE chat_session
-        SET title = #{title}
+        SET title = #{title},
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = #{sessionId} AND (title IS NULL OR title = '新会话')
     </update>
 

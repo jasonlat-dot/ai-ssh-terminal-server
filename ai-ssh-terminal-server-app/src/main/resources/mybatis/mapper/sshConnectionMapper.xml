@@ -73,8 +73,8 @@
                    #{privateKey,jdbcType=LONGVARCHAR},
                    #{encrypted,jdbcType=INTEGER},
                    #{userId,jdbcType=VARCHAR},
-                   CURRENT_TIMESTAMP(6),
-                   CURRENT_TIMESTAMP(6),
+                   CURRENT_TIMESTAMP,
+                   CURRENT_TIMESTAMP,
                    0
                )
     </insert>
@@ -107,7 +107,7 @@
             <if test="encrypted != null">
                 encrypted = #{encrypted, jdbcType=INTEGER},
             </if>
-            updated_at = CURRENT_TIMESTAMP(6)
+            updated_at = CURRENT_TIMESTAMP
         </set>
         WHERE connection_id = #{connectionId,jdbcType=VARCHAR} AND deleted = 0
     </update>
@@ -117,7 +117,7 @@
     <update id="delete">
         UPDATE ssh_connection
         SET deleted = 1,
-            updated_at = CURRENT_TIMESTAMP(6)
+            updated_at = CURRENT_TIMESTAMP
         WHERE connection_id = #{connectionId,jdbcType=VARCHAR} AND deleted = 0
     </update>
 

@@ -27,7 +27,7 @@ git pull origin 2.14-jsch-sftp
 | --- | --- | --- |
 | JDK | JDK 25，以根目录 `pom.xml` 为准 | 是 |
 | Maven | 建议 Maven 3.9 或更高版本 | 是 |
-| MySQL | MySQL 8.x | 是 |
+| 数据库 | 默认内置 SQLite；也可切换 MySQL 8.x | 是 |
 | 文件存储 | 聊天附件可保存到本机目录或 MinIO，与 SFTP 无关 | 否 |
 | SSH 服务器 | 用于终端和 SFTP 联调 | 按功能需要 |
 | AI 模型服务 | OpenAI 兼容的 Chat Completions 接口 | 使用 Agent 时需要 |
@@ -41,7 +41,33 @@ mvn -version
 
 项目当前使用 Spring Boot 3.5.16、Spring AI 1.1.5、Google ADK 1.2.0 和 `com.github.mwiede:jsch:2.28.0`。
 
-## 三、初始化 MySQL
+## 三、选择数据库
+
+生产配置同时保留 SQLite 和 MySQL，使用 `DATABASE_TYPE` 选择本次启动使用哪一个：
+
+```powershell
+# 桌面客户端推荐：本地 SQLite，不依赖外部数据库服务
+$env:DATABASE_TYPE = "sqlite"
+
+# 服务端部署：继续使用外部 MySQL
+$env:DATABASE_TYPE = "mysql"
+```
+
+不设置时，`application-prod.yml` 默认选择 SQLite。SQLite 数据库首次启动会自动建表，默认文件为：
+
+```text
+当前用户目录/.ai-ssh-terminal/data/ai-ssh-terminal.db
+```
+
+需要放到客户端指定的数据目录时设置 `SQLITE_DATABASE_FILE`，父目录不存在会自动创建：
+
+```powershell
+$env:SQLITE_DATABASE_FILE = "$env:LOCALAPPDATA\AI SSH Terminal\data\ai-ssh-terminal.db"
+```
+
+SQLite 与 MySQL 是两套独立数据，不会自动互相迁移。切换数据库前如需保留连接和对话记录，应先完成数据迁移。
+
+### 使用 MySQL
 
 已有 MySQL 8 可以跳过创建步骤。下面的命令会启动一个监听 `13306` 端口的测试实例：
 
@@ -72,6 +98,15 @@ SOURCE /你的项目路径/docs/dev-ops/mysql/2-14-file-upload.sql;
 - SFTP 会话和任务保存在进程内存中，不需要额外创建 SFTP 表。
 - 核心脚本包含示例连接数据。正式使用前应删除示例记录，并从客户端重新创建自己的连接。
 - 不要在已有生产数据库上直接执行带 `DROP TABLE` 的初始化脚本。
+
+MySQL 连接可通过下面的环境变量覆盖生产配置：
+
+```powershell
+$env:DATABASE_TYPE = "mysql"
+$env:MYSQL_DATABASE_URL = "jdbc:mysql://127.0.0.1:13306/ssh_terminal?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false"
+$env:MYSQL_DATABASE_USERNAME = "root"
+$env:MYSQL_DATABASE_PASSWORD = "change_me"
+```
 
 ## 四、创建本地配置
 
@@ -110,9 +145,11 @@ ai-ssh-terminal-server-app/src/main/resources/application-sit.yml
 
 | 配置 | 用途 | 建议 |
 | --- | --- | --- |
-| `spring.datasource.url` | MySQL 地址和数据库名 | 改成自己的 MySQL 地址 |
-| `spring.datasource.username` | MySQL 用户名 | 生产环境不要使用 root |
-| `spring.datasource.password` | MySQL 密码 | 使用环境变量或本地忽略文件 |
+| `app.database.type` | 选择 `sqlite` 或 `mysql` | 随客户端打包建议使用 `sqlite` |
+| `app.database.sqlite.file` | SQLite 数据文件 | 默认留空；安装器可通过环境变量指定可写目录 |
+| `app.database.mysql.url` | MySQL 地址和数据库名 | 仅选择 MySQL 时需要配置 |
+| `app.database.mysql.username` | MySQL 用户名 | 生产环境不要使用 root |
+| `app.database.mysql.password` | MySQL 密码 | 使用环境变量或本地忽略文件 |
 | `app.config.ssh-default-secret-key` | 加密 SSH 密码和私钥口令 | 首次启动前生成并固定保存 |
 | `ai.agent.config...ai-api.base-url` | 模型服务地址 | 填写实际 OpenAI 兼容接口 |
 | `ai.agent.config...ai-api.api-key` | 模型服务密钥 | 不要提交到 Git |
