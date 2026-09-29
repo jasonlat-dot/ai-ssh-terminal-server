@@ -62,6 +62,7 @@ public class ChatModelNode extends AbstractAmorySupport {
         OpenAiChatModel defaultChatModel = buildChatModel(chatModelConfig, defaultOpenAiApi);
 
         Set<String> defaultMediaTypes = resolveSupportedMediaTypes(chatModelConfig);
+        log.info("defaultMediaTypes: {}", defaultMediaTypes);
         // 同一个键同时登记实际模型与其媒体能力。
         dynamicContext.getChatModelMap().put(defaultModelKey, defaultChatModel);
         dynamicContext.getChatModelMediaTypesMap().put(defaultModelKey, defaultMediaTypes);

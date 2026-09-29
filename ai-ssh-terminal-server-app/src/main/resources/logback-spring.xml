@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  日志目录：
+    默认写入 ./logs（开发模式兼容）。
+    生产模式由 Tauri 启动器注入 -DLOG_DIR=<dataDirectory>/logs，
+    使日志跟随用户在设置页配置的"统一数据目录"。
+-->
 <configuration scan="true" scanPeriod="10 seconds">
 
     <!-- 关闭 logback 自身启动日志 -->
@@ -6,7 +12,10 @@
 
     <contextName>logback</contextName>
     <property name="spring.output.ansi.enabled" value="ALWAYS"/>
-    <springProperty scope="context" name="log.path" source="logging.path"/>
+
+    <!-- 兼容旧版 springProperty 名称 logging.path，但优先读取 LOG_DIR 系统属性。
+         默认值由 application.yml 的 logging.path 提供（即 data-directory/logs）。 -->
+    <springProperty scope="context" name="LOG_DIR" source="logging.path" defaultValue="./logs"/>
 
     <conversionRule conversionWord="clr" class="org.springframework.boot.logging.logback.ColorConverter"/>
     <conversionRule conversionWord="wex" class="org.springframework.boot.logging.logback.WhitespaceThrowableProxyConverter"/>
@@ -14,9 +23,6 @@
 
     <!-- 全彩色：无重复、无黄、无灰、无白 -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <!--        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">-->
-        <!--            <level>info</level>-->
-        <!--        </filter>-->
         <encoder>
             <pattern>%clr(%d{yy-MM-dd.HH:mm:ss.SSS}){blue} %clr(%-5p) %clr([%-16t]){cyan} %clr(%-22c{0}){magenta} %clr(%X{ServiceId}){green} %clr(-%X{trace-id}){bright_pink} %clr(%m){purple}%n</pattern>
             <charset>UTF-8</charset>
@@ -24,13 +30,13 @@
     </appender>
 
     <appender name="INFO_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>./logs/log_info.log</file>
+        <file>${LOG_DIR}/log_info.log</file>
         <encoder>
             <pattern>%d{yy-MM-dd.HH:mm:ss.SSS} [%-16t] %-5p %-22c{0}%X{ServiceId} -%X{trace-id} %m%n</pattern>
             <charset>UTF-8</charset>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>./logs/log-info-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <fileNamePattern>${LOG_DIR}/log-info-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
             <maxHistory>15</maxHistory>
             <totalSizeCap>10GB</totalSizeCap>
@@ -38,20 +44,17 @@
     </appender>
 
     <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>./logs/log_error.log</file>
+        <file>${LOG_DIR}/log_error.log</file>
         <encoder>
             <pattern>%d{yy-MM-dd.HH:mm:ss.SSS} [%-16t] %-5p %-22c{0}%X{ServiceId} -%X{trace-id} %m%n</pattern>
             <charset>UTF-8</charset>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>./logs/log-error-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <fileNamePattern>${LOG_DIR}/log-error-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>100MB</maxFileSize>
             <maxHistory>7</maxHistory>
             <totalSizeCap>5GB</totalSizeCap>
         </rollingPolicy>
-        <!--        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">-->
-        <!--            <level>WARN</level>-->
-        <!--        </filter>-->
     </appender>
 
     <appender name="ASYNC_FILE_INFO" class="ch.qos.logback.classic.AsyncAppender">
@@ -81,3 +84,5 @@
     </root>
 
 </configuration>
+</contents>
+</invoke>

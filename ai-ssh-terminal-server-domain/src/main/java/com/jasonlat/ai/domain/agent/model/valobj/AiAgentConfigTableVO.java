@@ -1,10 +1,10 @@
 package com.jasonlat.ai.domain.agent.model.valobj;
 
 import lombok.Data;
-import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -75,6 +75,11 @@ public class AiAgentConfigTableVO {
                 private String host;
                 private int port;
                 private List<String> nonProxyHosts = new ArrayList<>();
+
+                public List<String> getNonProxyHosts() {
+                    return Module.getListConfigs(nonProxyHosts);
+                }
+
             }
         }
 
@@ -115,6 +120,25 @@ public class AiAgentConfigTableVO {
 
         }
 
+        /**
+         * 防御性解析：兼容 YAML 中直接传入逗号分隔字符串（如 "localhost,127.0.0.1"）
+         * 以及标准 List&lt;String&gt; 两种格式。
+         */
+        @SuppressWarnings("unchecked")
+        private static List<String> getListConfigs(List<String> configs) {
+            if (configs == null) return List.of();
+            if (configs.size() == 1 && configs.get(0) instanceof String s) {
+                if (s.contains(",")) {
+                    return Arrays.stream(s.split(","))
+                            .map(String::trim)
+                            .filter(t -> !t.isBlank())
+                            .toList();
+                }
+                if (s.isBlank()) return List.of();
+            }
+            return configs;
+        }
+
         @Data
         public static class ChatModel {
             /** 模型名称 */
@@ -131,6 +155,14 @@ public class AiAgentConfigTableVO {
             private String reasoningEffort = "medium";
             /** 模型及实际接入网关支持的媒体 MIME；默认空列表，仅接收文字及转换后的文本文件。 */
             private List<String> supportedMediaTypes = new ArrayList<>();
+
+            /**
+             * 防御性解析：兼容 YAML 中直接传入逗号分隔字符串（如 "image/png,image/jpeg"）
+             * 以及标准 List&lt;String&gt; 两种格式。
+             */
+            public List<String> getSupportedMediaTypes() {
+                return Module.getListConfigs(supportedMediaTypes);
+            }
             /** mcp列表 */
             private List<ToolMcp> toolMcpList = new ArrayList<>(4);
             /** Skills */

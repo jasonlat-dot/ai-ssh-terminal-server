@@ -9,18 +9,11 @@ openai:
       enabled: ${AI_MODEL_PROXY_ENABLED:true}
       host: ${AI_MODEL_PROXY_HOST:127.0.0.1}
       port: ${AI_MODEL_PROXY_PORT:7890}
-      non-proxy-hosts:
-        - ${AI_MODEL_NON_PROXY_HOST_1:localhost}
-        - ${AI_MODEL_NON_PROXY_HOST_2:127.0.0.1}
-        - ${AI_MODEL_NON_PROXY_HOST_3:192.168.*}
+      non-proxy-hosts: ${AI_MODEL_NON_PROXY_HOSTS:localhost,127.0.0.1,192.168.*}
   chat-model:
     model-name: ${AI_MODEL_NAME:gpt-5.5}
     reasoning-effort: ${AI_MODEL_REASONING_EFFORT:medium}
-    supported-media-types:
-      - image/png
-      - image/jpeg
-      - image/webp
-      - application/pdf
+    supported-media-types: ${AI_MODEL_SUPPORTED_MEDIA_TYPES:image/png,image/jpeg,image/webp,application/pdf}
 
 # agent 配置
 ai:

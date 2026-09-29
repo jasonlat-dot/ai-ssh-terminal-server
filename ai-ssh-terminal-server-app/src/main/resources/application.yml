@@ -85,6 +85,10 @@ thread:
 
   # 日志
 logging:
+  # 默认与统一数据目录一致；可通过启动参数 -Dlogging.path=... 覆盖。
+  # 桌面版启动器会自动注入 -Dlogging.path=<dataDirectory>/logs，
+  # 让日志跟随用户在设置页配置的"统一数据目录"。
+  path: ${app.config.data-directory}/logs
   level:
     root: info
     com.jasonlat.ai.infrastructure.dao: OFF # OFF: 禁止打印数据库日志, DEBUG：打印 SQL 和参数， TRACE：打印 SQL、参数和结果集

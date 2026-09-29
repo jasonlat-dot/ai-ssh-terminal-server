@@ -19,18 +19,13 @@ ai:
                 enabled: ${openai.ai-api.proxy.enabled}
                 host: ${openai.ai-api.proxy.host}
                 port: ${openai.ai-api.proxy.port}
-                non-proxy-hosts:
-                  - ${openai.ai-api.proxy.non-proxy-hosts[0]}
-                  - ${openai.ai-api.proxy.non-proxy-hosts[1]}
-                  - ${openai.ai-api.proxy.non-proxy-hosts[2]}
+                # 整体引用 prod 中的白名单(逗号分隔),运行时 Spring 自动按逗号拆为 List<String>
+                non-proxy-hosts: ${openai.ai-api.proxy.non-proxy-hosts}
             chat-model:
               model: ${openai.chat-model.model-name}
               reasoning-effort: ${openai.chat-model.reasoning-effort}
-              supported-media-types:
-                - ${openai.chat-model.supported-media-types[0]}
-                - ${openai.chat-model.supported-media-types[1]}
-                - ${openai.chat-model.supported-media-types[2]}
-                - ${openai.chat-model.supported-media-types[3]}
+              # 整体引用 prod 中的媒体类型(逗号分隔),运行时 Spring 自动按逗号拆为 List<String>
+              supported-media-types: ${openai.chat-model.supported-media-types}
               tool-skills-list:
                 - type: resource
                   root-path: agent/skills
