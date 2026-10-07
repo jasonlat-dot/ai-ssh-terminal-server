@@ -24,7 +24,7 @@ ai:
         # 后端随桌面客户端安装时可启用本地存储，并把 FILE_STORAGE_DEFAULT_ID 设为 local-main。
         enabled: ${LOCAL_FILE_STORAGE_ENABLED:true}
         storage-id: local-main
-        # 上传文件位于统一数据根目录的 uploads 子目录；修改 data-directory 后会一起迁移。
+        # 上传文件位于统一数据根目录的 files 子目录；修改 data-directory 不会迁移旧文件。
         root-directory: ${LOCAL_FILE_STORAGE_ROOT:${app.config.data-directory}/files}
         # 可选固定下载地址；默认根据上传请求动态获取协议、主机、端口和部署前缀。
         # 只有反向代理未正确传递外部地址时才需要设置 LOCAL_FILE_STORAGE_PUBLIC_BASE_URL。

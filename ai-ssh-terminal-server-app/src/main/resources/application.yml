@@ -1,6 +1,6 @@
 #file: noinspection SpringBootApplicationYaml
 server:
-  port: 8888
+  port: 8889
   tomcat:
     threads:
       max: 200        # 设定处理客户请求的线程的最大数目，决定了服务器可以同时响应客户请求的数,默认200
@@ -43,6 +43,56 @@ app:
       connection-timeout: ${MYSQL_CONNECTION_TIMEOUT:30000}
       idle-timeout: ${MYSQL_IDLE_TIMEOUT:180000}
       max-lifetime: ${MYSQL_MAX_LIFETIME:1800000}
+
+# Jev/Laya System One 快速结构化决策配置。
+ai:
+  decision:
+    # 是否调用 System One。
+    # 默认关闭，确保没有部署 Jev/Laya 时保持原有行为。
+    enabled: ${AI_DECISION_ENABLED:true}
+
+    # 影子模式下会调用并记录结果，但不会接管意图分类。
+    # 建议首次上线保持 true，观察结果后再切换为 false。
+    shadow-mode: ${AI_DECISION_SHADOW_MODE:false}
+
+    # 当前使用的供应商，可选值为 jev 或 laya。
+    provider: ${AI_DECISION_PROVIDER:jev}
+
+    # TypeSafe AI Jev 托管服务配置。 https://console.typesafe.ai/
+    jev:
+      # 必须是完整的 System One 地址。
+      url: ${JEV_URL:https://api.typesafe.ai/v1/systemone}
+
+      # Jev Bearer API Key。
+      # 不要把真实密钥直接提交到 Git。
+      api-key: ${JEV_API_KEY:apikey_22715d7531aeb8945a981fc31915cd003e1_57aba907206d9413b6768b0fdf38d65cbc000b66e5bd6df4cd68b4b0aa7e60d6}
+
+      # Jev 官方推荐的滚动模型别名。
+      model: ${JEV_MODEL:jev-latest}
+
+      # Jev HTTP 连接和完整请求超时。
+      timeout: ${JEV_TIMEOUT:3s}
+
+      # 使用 probabilities[choice] 判断是否接受结果。
+      min-answer-probability: ${JEV_MIN_ANSWER_PROBABILITY:0.72}
+
+    # Laya 本地或私有服务配置。
+    laya:
+      # Laya 默认 HTTP 服务地址。
+      url: ${LAYA_URL:http://127.0.0.1:8000/v1/systemone}
+
+      # Laya 只有设置 LAYA_API_KEY 后才要求该值。
+      api-key: ${LAYA_API_KEY:}
+
+      # 中文输入默认使用 multilingual。
+      # 设置为空字符串时由 Laya 自动选择模型。
+      model: ${LAYA_MODEL:multilingual}
+
+      # CPU 本地推理可能需要更长时间。
+      timeout: ${LAYA_TIMEOUT:8s}
+
+      # 使用 probabilities[choice] 判断是否接受结果。
+      min-answer-probability: ${LAYA_MIN_ANSWER_PROBABILITY:0.72}
 
 spring:
   servlet:

@@ -27,6 +27,13 @@
             <artifactId>lombok</artifactId>
         </dependency>
 
+        <!-- SystemOneIntentDecisionAdapter 直接使用 Jackson 构建和解析
+        Jev/Laya 的 System One JSON 请求，因此在当前模块声明直接依赖。-->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
