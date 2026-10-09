@@ -13,6 +13,7 @@ import com.jasonlat.ai.domain.agent.model.valobj.dynamic.*;
 import com.jasonlat.ai.domain.agent.service.amory.createlog.LlmSubAgentCatalog;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.factory.CustomRunnerFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentAttachmentSupport;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentToolOutcomeObserver;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentResultText;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.SubAgentDispatchTool;
@@ -50,12 +51,20 @@ public class SubAgentDispatchService {
     private final AgentEventPublisher agentEventPublisher;
 
     /**
+     * 子 Runner 工具结果观察器。
+     *
+     * <p>它只复用主 Agent 意图快照判断每个内部工具是否偏离子任务，
+     * 不会再次执行用户意图识别，也不会改写主 Agent 意图。</p>
+     */
+    private final SubAgentToolOutcomeObserver toolOutcomeObserver;
+
+    /**
      * 兼容旧调用方式；使用独立发布器兜底，但不会连接任何 SSE 监听器。
      */
     public SubAgentDispatchService(LlmSubAgentCatalog agentCatalog,
                                    CustomRunnerFactory runnerFactory,
                                    Executor executor) {
-        this(agentCatalog, runnerFactory, executor, new AgentEventPublisher());
+        this(agentCatalog, runnerFactory, executor, new AgentEventPublisher(), null);
     }
 
     /**
@@ -65,11 +74,13 @@ public class SubAgentDispatchService {
     public SubAgentDispatchService(LlmSubAgentCatalog agentCatalog,
                                    CustomRunnerFactory runnerFactory,
                                    @Qualifier("threadPoolExecutor") Executor executor,
-                                   AgentEventPublisher agentEventPublisher) {
+                                   AgentEventPublisher agentEventPublisher,
+                                   SubAgentToolOutcomeObserver toolOutcomeObserver) {
         this.agentCatalog = agentCatalog;
         this.runnerFactory = runnerFactory;
         this.executor = executor;
         this.agentEventPublisher = agentEventPublisher;
+        this.toolOutcomeObserver = toolOutcomeObserver;
     }
 
     /**
@@ -166,6 +177,18 @@ public class SubAgentDispatchService {
                 // SSH 终端绑定是可选的：存在时传递；实际执行 SSH 命令时再校验。
                 AgentInvocationContext childInvocation = getInvocationContext(context, agent, agentCallId);
 
+                /*
+                 * 每次执行尝试创建独立观察会话。
+                 * 重试和并发任务不能共享 FunctionCall/FunctionResponse 配对状态。
+                 */
+                SubAgentToolOutcomeObserver.ObservationSession outcomeObservation =
+                        toolOutcomeObserver == null
+                                ? null
+                                : toolOutcomeObserver.openSession(
+                                        agent.name(),
+                                        task.getRequest(),
+                                        childInvocation);
+
                 ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
                 initialState.put(AgentInvocationContext.STATE_KEY, childInvocation);
 
@@ -194,6 +217,14 @@ public class SubAgentDispatchService {
                             }
 
                             events.add(event);
+
+                            /*
+                             * 在事件仍处于子 Runner 执行链时观察工具结果。
+                             * 该入口不依赖 SSE 监听器，因此流式、同步和后台执行都能调用 Jev/Laya。
+                             */
+                            if (outcomeObservation != null) {
+                                outcomeObservation.observe(event);
+                            }
 
                             agentEventPublisher.publishToSession(
                                     context.getParentSessionKey(),

@@ -16,6 +16,7 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvoc
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentAttachmentSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentResultText;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentToolOutcomeObserver;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import io.reactivex.rxjava3.core.Single;
 import lombok.extern.slf4j.Slf4j;
@@ -50,11 +51,14 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
      */
     private final AgentEventPublisher agentEventPublisher;
 
+    /** 子 Runner 内部工具结果的 Jev/Laya 观察器；为空时保持兼容旧构造方式。 */
+    private final SubAgentToolOutcomeObserver toolOutcomeObserver;
+
     /**
      * 兼容旧调用方式；不注入事件发布器时派发仍可正常执行，只是不产生嵌套事件。
      */
     public SubAgentDispatchTool(BaseAgent subAgent, CustomRunnerFactory runnerFactory) {
-        this(subAgent, runnerFactory, null);
+        this(subAgent, runnerFactory, null, null);
     }
 
     /**
@@ -67,10 +71,26 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
     public SubAgentDispatchTool(BaseAgent subAgent,
                                 CustomRunnerFactory runnerFactory,
                                 AgentEventPublisher agentEventPublisher) {
+        this(subAgent, runnerFactory, agentEventPublisher, null);
+    }
+
+    /**
+     * 创建具备子 Agent 工具结果判断能力的派发工具。
+     *
+     * @param subAgent            被包装的子 Agent
+     * @param runnerFactory       子 Agent Runner 工厂
+     * @param agentEventPublisher 可选事件发布器，用于把嵌套事件发送给前端
+     * @param toolOutcomeObserver 可选工具结果观察器，用于让子 Agent 内部工具调用 Jev/Laya
+     */
+    public SubAgentDispatchTool(BaseAgent subAgent,
+                                CustomRunnerFactory runnerFactory,
+                                AgentEventPublisher agentEventPublisher,
+                                SubAgentToolOutcomeObserver toolOutcomeObserver) {
         super(subAgent.name(), subAgent.description());
         this.subAgent = subAgent;
         this.runnerFactory = runnerFactory;
         this.agentEventPublisher = agentEventPublisher;
+        this.toolOutcomeObserver = toolOutcomeObserver;
     }
 
 
@@ -132,6 +152,18 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
                             functionCallId
                     );
 
+                    /*
+                     * 观察会话只属于当前子 Runner。
+                     * 它复用主 Agent 意图快照和本次 request，不会重新执行意图分类。
+                     */
+                    SubAgentToolOutcomeObserver.ObservationSession outcomeObservation =
+                            toolOutcomeObserver == null
+                                    ? null
+                                    : toolOutcomeObserver.openSession(
+                                            subAgent.name(),
+                                            request,
+                                            childInvocation);
+
                     ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
                     initialState.put(AgentInvocationContext.STATE_KEY, childInvocation);
 
@@ -153,6 +185,9 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
                             .doOnNext(event -> {
                                 if (cancellation != null) {
                                     cancellation.throwIfCancelled();
+                                }
+                                if (outcomeObservation != null) {
+                                    outcomeObservation.observe(event);
                                 }
                                 if (agentEventPublisher != null) {
                                     publishEvent(parentSessionId, event, functionCallId);

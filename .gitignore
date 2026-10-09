@@ -43,3 +43,4 @@ build/
 /ai-ssh-terminal-server-app/src/test/resources/ssh-config.local_bak
 /.codex-tmp/
 /logs/
+/LOG_DIR_IS_UNDEFINED/

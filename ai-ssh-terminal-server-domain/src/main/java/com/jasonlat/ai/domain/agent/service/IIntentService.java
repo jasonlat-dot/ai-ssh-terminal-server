@@ -43,6 +43,31 @@ public interface IIntentService {
     IntentResultVO reportFeedback(String sessionId, IntentResultVO lastIntent, boolean success, String toolResult);
 
     /**
+     * 反馈回路：使用完整工具执行上下文判断是否发生意图偏差。
+     *
+     * <p>与旧签名相比，本方法额外接收用户原始消息、工具名和命令，
+     * 使 Jev/Laya 能够区分“当前意图识别错误”与“意图正确但工具执行失败”。</p>
+     *
+     * @param sessionId       当前会话 ID，用于更新会话反馈状态
+     * @param lastIntent      工具执行前的意图识别结果
+     * @param userMessage     用户本轮原始消息，用于判断真实目标
+     * @param toolName        实际执行的工具名称
+     * @param command         工具执行的命令或关键输入；非命令类工具允许为空
+     * @param reportedSuccess 工具协议返回的原始 success 字段
+     * @param toolResult      工具返回的文本结果
+     * @return 需要重分类时返回新的意图结果，否则返回 null
+     */
+    IntentResultVO reportFeedback(
+            String sessionId,
+            IntentResultVO lastIntent,
+            String userMessage,
+            String toolName,
+            String command,
+            boolean reportedSuccess,
+            String toolResult
+    );
+
+    /**
      * 获取当前会话的任务态
      */
     TaskStateVO getTaskState(String sessionId);

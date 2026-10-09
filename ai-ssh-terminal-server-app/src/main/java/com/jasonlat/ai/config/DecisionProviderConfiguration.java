@@ -2,6 +2,7 @@ package com.jasonlat.ai.config;
 
 import com.jasonlat.ai.config.properties.DecisionProviderProperties;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
+import com.jasonlat.ai.infrastructure.model.settings.ToolOutcomeDecisionSettings;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,31 +21,39 @@ public class DecisionProviderConfiguration {
      * 创建 System One 适配器使用的运行参数。
      *
      * @param properties Spring Boot 从 ai.decision 读取的外部配置
-     * @return 已选择并完成类型转换的基础设施运行参数
+     * @return 已完成类型转换的基础设施运行参数
      */
     @Bean
     public SystemOneDecisionSettings systemOneDecisionSettings(DecisionProviderProperties properties) {
-        /*
-         * 根据 ai.decision.provider 选择 Jev 或 Laya 配置。
-         * 未选中的供应商配置不会参与当前 Bean 的创建。
-         */
-        DecisionProviderProperties.EndpointProperties selected = properties.selected();
-
-        /*
-         * app 层与 infrastructure 层各自维护供应商枚举，
-         * 通过相同枚举名称进行转换，避免模块反向依赖。
-         */
-        SystemOneDecisionSettings.Provider provider = SystemOneDecisionSettings.Provider.valueOf(properties.getProvider().name());
-
         return new SystemOneDecisionSettings(
                 properties.isEnabled(),
                 properties.isShadowMode(),
-                provider,
-                selected.getUrl(),
-                selected.getApiKey(),
-                selected.getModel(),
-                selected.getTimeout(),
-                selected.getMinAnswerProbability()
+                properties.getUrl(),
+                properties.getApiKey(),
+                properties.getModel(),
+                properties.getTimeout(),
+                properties.getMinAnswerProbability()
+        );
+    }
+
+    /**
+     * 创建工具结果与意图偏差判断能力的独立运行参数。
+     *
+     * <p>供应商连接信息由 {@link #systemOneDecisionSettings} 统一提供；
+     * 这里仅装配该子能力自己的开关、影子模式、概率门槛和结果长度限制。</p>
+     *
+     * @param properties Spring Boot 从 {@code ai.decision.tool-outcome} 读取的配置
+     * @return 工具结果判断适配器使用的运行参数
+     */
+    @Bean
+    public ToolOutcomeDecisionSettings toolOutcomeDecisionSettings(DecisionProviderProperties properties) {
+        DecisionProviderProperties.ToolOutcomeProperties toolOutcome = properties.getToolOutcome();
+
+        return new ToolOutcomeDecisionSettings(
+                toolOutcome.isEnabled(),
+                toolOutcome.isShadowMode(),
+                toolOutcome.getMinAnswerProbability(),
+                toolOutcome.getMaxResultCharacters()
         );
     }
 }

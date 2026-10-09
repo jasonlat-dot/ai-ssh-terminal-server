@@ -8,210 +8,144 @@ import java.net.URI;
 import java.time.Duration;
 
 /**
- * Jev/Laya System One 外部配置。
+ * System One 统一外部配置。
  *
- * <p>配置前缀为 {@code ai.decision}。</p>
- *
- * <p>应用可以同时保存 Jev 和 Laya 两套参数，
- * 运行时通过 provider 选择其中一套，不需要修改 Java 代码。</p>
+ * <p>配置前缀为 {@code ai.decision}。Jev 与 Laya 使用相同的 System One HTTP 协议，
+ * 因此只维护一组连接参数。部署时填写哪个服务的 URL、API Key 和模型，
+ * 应用就直接调用哪个服务，不再通过 provider 在两套重复配置之间切换。</p>
  */
 @Data
 @ConfigurationProperties(prefix = "ai.decision")
 public class DecisionProviderProperties implements InitializingBean {
 
     /**
-     * 是否启用 System One 快速意图分类。
+     * 是否启用 System One 结构化决策能力。
      *
-     * <p>默认为 false，保证未配置 Jev/Laya 时保持原有行为。</p>
+     * <p>false 时意图识别和工具结果判断均不会发送外部请求。</p>
      */
     private boolean enabled = false;
 
     /**
-     * 是否启用影子模式。
+     * 意图识别是否启用影子模式。
      *
-     * <p>true 时仍会调用 Jev/Laya 并记录结果，
-     * 但最终继续使用原有 LLM 分类器。</p>
+     * <p>true 时仍会调用 System One 并记录结果，但不会替代原有 LLM 意图分类流程。</p>
      */
     private boolean shadowMode = true;
 
     /**
-     * 当前选中的供应商。
+     * 完整的 System One HTTP 接口地址。
+     *
+     * <p>Jev 可填写托管服务地址，Laya 可填写本地或私有部署地址。</p>
      */
-    private Provider provider = Provider.LAYA;
+    private URI url = URI.create("https://api.typesafe.ai/v1/systemone");
 
     /**
-     * Jev 托管服务配置。
+     * 可选的 Bearer API Key。
+     *
+     * <p>Jev 需要有效密钥；未启用鉴权的 Laya 可以保持为空。
+     * 应通过环境变量注入真实密钥，不能把密钥提交到版本库。</p>
      */
-    private EndpointProperties jev = EndpointProperties.jevDefaults();
+    private String apiKey = "";
 
     /**
-     * Laya 本地或私有服务配置。
+     * 请求发送的模型名称。
+     *
+     * <p>Jev 通常使用 {@code jev-latest}；Laya 可使用 {@code multilingual}。
+     * 配置为空字符串时，适配器不会发送 model 字段，由服务端自行选择。</p>
      */
-    private EndpointProperties laya = EndpointProperties.layaDefaults();
+    private String model = "jev-latest";
 
     /**
-     * 配置文件允许选择的供应商。
+     * HTTP 建连和完整请求的最大等待时间。
      */
-    public enum Provider {
-
-        /**
-         * TypeSafe AI Jev 托管服务。
-         */
-        JEV,
-
-        /**
-         * Laya 开源自部署服务。
-         */
-        LAYA
-    }
+    private Duration timeout = Duration.ofSeconds(3);
 
     /**
-     * 单个供应商的连接参数。
+     * 意图识别被选中答案的最低概率。
+     *
+     * <p>该值对应 {@code probabilities[choice]}，不是供应商原生 confidence。</p>
+     */
+    private double minAnswerProbability = 0.72;
+
+    /**
+     * 工具结果与当前意图偏差判断的独立配置。
+     *
+     * <p>该能力复用上面的统一 URL、API Key、模型和超时，
+     * 只单独控制业务开关、影子模式、概率门槛和结果长度。</p>
+     */
+    private ToolOutcomeProperties toolOutcome = new ToolOutcomeProperties();
+
+    /**
+     * 工具结果与意图偏差判断配置。
      */
     @Data
-    public static class EndpointProperties {
+    public static class ToolOutcomeProperties {
 
         /**
-         * 完整的 System One 接口地址。
-         *
-         * <p>地址应直接包含 /v1/systemone。</p>
+         * 是否调用 System One 执行工具结果结构化判断。
          */
-        private URI url;
+        private boolean enabled = true;
 
         /**
-         * Bearer API Key。
-         *
-         * <p>Jev 必填。Laya 只有在服务端设置 LAYA_API_KEY 时才需要。</p>
+         * 是否只观测工具结果判断而不影响反馈回路。
          */
-        private String apiKey = "";
+        private boolean shadowMode = false;
 
         /**
-         * 请求使用的模型名。
-         *
-         * <p>Jev 推荐 jev-latest；中文 Laya 推荐 multilingual。</p>
+         * 被选中工具结果结论的最低使用概率。
          */
-        private String model = "";
+        private double minAnswerProbability = 0.78;
 
         /**
-         * HTTP 连接和请求超时时间。
+         * 单次发送给 System One 的工具结果最大字符数。
          */
-        private Duration timeout = Duration.ofSeconds(3);
-
-        /**
-         * 被选中答案的最低概率。
-         *
-         * <p>该值对应 probabilities[choice]，
-         * 不是供应商原生 confidence。</p>
-         */
-        private double minAnswerProbability = 0.72;
-
-        /**
-         * 创建 Jev 默认配置。
-         *
-         * @return Jev 默认参数
-         */
-        private static EndpointProperties jevDefaults() {
-            EndpointProperties properties = new EndpointProperties();
-
-            properties.setUrl(URI.create("https://api.typesafe.ai/v1/systemone"));
-
-            properties.setModel("jev-latest");
-
-            properties.setTimeout(Duration.ofSeconds(3));
-
-            properties.setMinAnswerProbability(0.72);
-
-            return properties;
-        }
-
-        /**
-         * 创建 Laya 默认配置。
-         *
-         * @return Laya 默认参数
-         */
-        private static EndpointProperties layaDefaults() {
-            EndpointProperties properties = new EndpointProperties();
-
-            properties.setUrl(URI.create("http://127.0.0.1:8000/v1/systemone"));
-
-            /*
-             * 当前业务以中文消息为主，因此默认使用 multilingual。
-             * 配置为空字符串时，适配器会省略 model，让 Laya 自动路由。
-             */
-            properties.setModel("multilingual");
-
-            /*
-             * 本地 CPU 推理可能比 Jev 托管服务慢，
-             * 因此给 Laya 更宽松的默认超时。
-             */
-            properties.setTimeout(Duration.ofSeconds(8));
-
-            properties.setMinAnswerProbability(0.72);
-
-            return properties;
-        }
+        private int maxResultCharacters = 4_000;
     }
 
     /**
-     * 获取当前 provider 对应的配置。
+     * Spring 完成属性绑定后校验统一连接参数和各业务能力参数。
      *
-     * @return 当前选中的 Jev 或 Laya 参数
-     */
-    public EndpointProperties selected() {
-        return switch (provider) {
-            case JEV -> jev;
-            case LAYA -> laya;
-        };
-    }
-
-    /**
-     * Spring 完成属性绑定后执行配置校验。
-     *
-     * <p>配置错误会让应用启动失败并给出明确错误，
-     * 而不是等用户发送第一条消息时才失败。</p>
+     * <p>API Key 和模型允许为空，因为未启用鉴权的 Laya 不需要 API Key，
+     * 且部分 Laya 部署允许省略模型并自动路由。供应商侧的必填要求由对应服务响应。</p>
      */
     @Override
     public void afterPropertiesSet() {
-        if (provider == null) {
-            throw new IllegalArgumentException("ai.decision.provider 不能为空");
+        if (url == null) {
+            throw new IllegalArgumentException("ai.decision.url 不能为空");
         }
 
-        EndpointProperties selected = selected();
+        String scheme = url.getScheme();
 
-        if (selected == null) {
-            throw new IllegalArgumentException("ai.decision 当前供应商配置不能为空");
+        if (!url.isAbsolute()
+                || scheme == null
+                || (!scheme.equalsIgnoreCase("http")
+                && !scheme.equalsIgnoreCase("https"))) {
+            throw new IllegalArgumentException("ai.decision.url 必须是绝对 HTTP/HTTPS 地址");
         }
-
-        if (selected.getUrl() == null) {
-            throw new IllegalArgumentException("ai.decision 当前供应商 url 不能为空");
-        }
-
-        Duration timeout = selected.getTimeout();
 
         if (timeout == null || timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("ai.decision 当前供应商 timeout 必须大于 0");
+            throw new IllegalArgumentException("ai.decision.timeout 必须大于 0");
         }
 
-        double threshold = selected.getMinAnswerProbability();
-
-        if (!Double.isFinite(threshold) || threshold < 0.0 || threshold > 1.0) {
-            throw new IllegalArgumentException("ai.decision 当前供应商 min-answer-probability 必须位于 0 到 1 之间");
+        if (!Double.isFinite(minAnswerProbability)
+                || minAnswerProbability < 0.0
+                || minAnswerProbability > 1.0) {
+            throw new IllegalArgumentException("ai.decision.min-answer-probability 必须位于 0 到 1 之间");
         }
 
-        /*
-         * 只有功能真正启用并选中 Jev 时才强制检查密钥。
-         * 默认 enabled=false 时不会因为空密钥阻止应用启动。
-         */
-        if (enabled && provider == Provider.JEV && (selected.getApiKey() == null || selected.getApiKey().isBlank())) {
-            throw new IllegalArgumentException("启用 Jev 时必须配置 ai.decision.jev.api-key");
+        if (toolOutcome == null) {throw new IllegalArgumentException("ai.decision.tool-outcome 配置不能为空");
         }
 
-        /*
-         * Jev 请求要求 model，因此启用时必须配置。
-         * Laya 可以省略 model 并使用自己的自动路由。
-         */
-        if (enabled && provider == Provider.JEV && (selected.getModel() == null || selected.getModel().isBlank())) {
-            throw new IllegalArgumentException("启用 Jev 时必须配置 ai.decision.jev.model");
+        double toolOutcomeThreshold = toolOutcome.getMinAnswerProbability();
+
+        if (!Double.isFinite(toolOutcomeThreshold)
+                || toolOutcomeThreshold < 0.0
+                || toolOutcomeThreshold > 1.0) {
+            throw new IllegalArgumentException("ai.decision.tool-outcome.min-answer-probability 必须位于 0 到 1 之间");
+        }
+
+        if (toolOutcome.getMaxResultCharacters() < 256) {
+            throw new IllegalArgumentException("ai.decision.tool-outcome.max-result-characters 不能小于 256");
         }
     }
 }

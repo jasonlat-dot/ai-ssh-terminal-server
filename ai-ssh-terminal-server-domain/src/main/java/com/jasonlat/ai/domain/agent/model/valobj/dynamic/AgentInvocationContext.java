@@ -1,5 +1,6 @@
 package com.jasonlat.ai.domain.agent.model.valobj.dynamic;
 
+import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.jasonlat.ai.domain.agent.service.multimodal.context.InvocationAttachmentScope;
 import lombok.Builder;
 
@@ -16,6 +17,12 @@ public record AgentInvocationContext(
 
         /* 最外层业务会话 ID，用于将子 Agent 事件发送到正确的前端对话。 */
         String rootSessionId,
+
+        /* 主 Agent 已识别的用户意图快照；子 Agent 只引用，不重新分类或修改。 */
+        IntentTypeEnumVO rootIntent,
+
+        /* 主 Agent 意图置信度快照，供子 Agent 工具结果判断使用。 */
+        double rootIntentConfidence,
 
         /* 当前 Runner 对应的运行时 Agent 名称。 */
         String runnerAgentName,
@@ -45,6 +52,8 @@ public record AgentInvocationContext(
         return new AgentInvocationContext(
                 terminalSessionId,
                 rootSessionId,
+                rootIntent,
+                rootIntentConfidence,
                 childAgentName,
                 childAgentCallId,
                 dispatchToolCallId,

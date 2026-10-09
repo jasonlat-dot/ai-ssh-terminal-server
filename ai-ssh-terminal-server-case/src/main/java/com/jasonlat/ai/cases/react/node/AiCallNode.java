@@ -26,7 +26,6 @@ import com.jasonlat.ai.domain.agent.service.IPromptService;
 import com.jasonlat.ai.domain.agent.service.amory.factory.DefaultArmoryFactory;
 import com.jasonlat.ai.domain.agent.service.amory.matter.session.CustomAdkSessionService;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
-import com.jasonlat.ai.domain.agent.service.intent.IntentService;
 import com.jasonlat.ai.domain.agent.service.util.AgentUtils;
 import com.jasonlat.ai.trigger.api.dto.ChatRequest;
 import com.jasonlat.ai.trigger.api.dto.ReActResultDTO;
@@ -272,7 +271,7 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     if (!event.functionResponses().isEmpty()) {
                         // FunctionResponse 是 ADK 内部真实工具执行结果，以 toolCallId 与调用关联。
                         flushAssistantSegment(context, assistantSegment);
-                        handleFunctionResponses(event.functionResponses(), context, emitter);
+                        handleFunctionResponses(event.functionResponses(), context, emitter, userMessage);
                     }
                 }
             } catch (InterruptedException interrupted) {
@@ -367,6 +366,16 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         AgentInvocationContext invocation = AgentInvocationContext.builder()
                 .terminalSessionId(context.getTerminalSessionId())
                 .rootSessionId(context.getChatSessionId())
+                /*
+                 * 子 Agent 不重复执行用户意图分类，只继承主 Agent 当前结果。
+                 * 子 Runner 内部每个工具响应会使用该快照调用 Jev/Laya 工具结果判断。
+                 */
+                .rootIntent(context.getCurrentIntentResult() == null
+                        ? null
+                        : context.getCurrentIntentResult().getIntent())
+                .rootIntentConfidence(context.getCurrentIntentResult() == null
+                        ? 0.0
+                        : context.getCurrentIntentResult().getConfidence())
                 .runnerAgentName(runner.agent().name())
                 .cancellation(context.getRunCancellation())
                 .attachmentScope(attachmentScope)
@@ -426,9 +435,24 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         return historyCalls;
     }
 
+    /**
+     * 消费 ADK 返回的 FunctionResponse，并同步业务历史、前端事件和意图反馈回路。
+     *
+     * <p>工具协议中的 {@code output/command/success} 会分别保留，不能再根据输出文本
+     * 反向猜测执行是否成功。完整结构随后交给 IntentService，供 Jev/Laya 判断
+     * “普通执行失败”和“当前意图偏差”的区别。</p>
+     *
+     * @param responses   ADK 本次事件携带的工具执行结果列表
+     * @param context     当前 ReAct 动态上下文，用于写入工具结果和当前意图
+     * @param emitter     SSE 输出通道，用于把工具结果实时发送给前端
+     * @param userMessage 用户本轮原始消息，用于偏差判断时还原真实目标
+     */
     private void handleFunctionResponses(
-            List<FunctionResponse> responses, DefaultReActFactory.DynamicContext context,
-            ResponseBodyEmitter emitter) {
+            List<FunctionResponse> responses,
+            DefaultReActFactory.DynamicContext context,
+            ResponseBodyEmitter emitter,
+            String userMessage
+    ) {
         log.info("ReAct链路-开始处理 FunctionResponse | sessionId:{} | received:{} | existing:{}",
                 context.getChatSessionId(), sizeOf(responses), context.getCurrentToolResults().size());
         int accepted = 0;
@@ -444,13 +468,26 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                 continue;
             }
 
-            // SshExecuteAdkTool 的稳定协议为 output/command/success；缺少 success 时按失败处理。
+            /*
+             * SSH 工具使用 output/command/success；MCP、Skills 和子 Agent 工具可能使用
+             * result 或 error。这里统一提取为工具文本和执行状态，再交给后续业务链路。
+             */
             Map<String, Object> result = response.response().orElse(Map.of());
 
-            String output = String.valueOf(result.getOrDefault("output", ""));
-            String command = String.valueOf(result.getOrDefault("command", ""));
+            Object outputValue = result.containsKey("error")
+                    ? result.get("error")
+                    : result.containsKey("output")
+                    ? result.get("output")
+                    : result.getOrDefault("result", result);
 
-            boolean success = Boolean.TRUE.equals(result.get("success"));
+            String output = stringifyToolValue(outputValue);
+            String command = stringifyToolValue(result.get("command"));
+
+            /*
+             * 显式 success=false 或存在 error 才判为失败。
+             * 没有 success 字段的通用 MCP/Skills 工具，只要没有 error 就视为执行成功。
+             */
+            boolean success = !Boolean.FALSE.equals(result.get("success")) && result.get("error") == null;
             ToolStatusEnum status = success ? ToolStatusEnum.SUCCESS : ToolStatusEnum.ERROR;
 
             context.getCurrentToolResults().add(new ToolResultDTO(id, name, output, command, status.getCode()));
@@ -466,11 +503,50 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     context.getChatSessionId(), id, name, status.getCode(), command.length(), output.length(),
                     context.getMessageHistory().size(), toolResultSent);
 
-            // 反馈回路：根据工具结果判定当前意图是否走偏，必要时重分类
-            handleIntentFeedback(context, output);
+            /*
+             * 反馈回路必须传递结构化 success，而不是通过 output 是否为空猜测成功状态。
+             * 工具名和命令用于识别“执行失败”与“行动方向错误”的差异。
+             */
+            handleIntentFeedback(
+                    context,
+                    userMessage,
+                    name,
+                    command,
+                    success,
+                    output);
         }
         log.info("ReAct链路-FunctionResponse 处理完成 | sessionId:{} | accepted:{} | currentTotal:{}",
                 context.getChatSessionId(), accepted, context.getCurrentToolResults().size());
+    }
+
+    /**
+     * 将工具返回值转换为稳定文本。
+     *
+     * <p>字符串保持原样；Map、List 和其他结构化对象优先序列化为 JSON，
+     * 使前端展示、消息历史和 Jev/Laya 判断使用同一份完整结果。</p>
+     *
+     * @param value 工具返回的任意值，允许为 null
+     * @return 可安全写入历史和偏差判断请求的文本；null 返回空字符串
+     */
+    private String stringifyToolValue(Object value) {
+        if (value == null) {
+            return "";
+        }
+
+        if (value instanceof String text) {
+            return text;
+        }
+
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception exception) {
+            /*
+             * 个别第三方工具可能返回 ObjectMapper 无法序列化的对象。
+             * 此处回退到 String.valueOf，不能因为展示转换失败中断工具执行链。
+             */
+            log.debug("工具结果 JSON 序列化失败，回退字符串转换 type={}", value.getClass().getName(), exception);
+            return String.valueOf(value);
+        }
     }
 
     /**
@@ -504,25 +580,47 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
      * <pre>
      *   工具执行完(result)
      *     ├─ 无本轮意图结果 → 直接返回
-     *     ├─ 判定 success（非空 && 不像意图走偏）
+     *     ├─ 传入协议中的真实 success、工具名、命令和 output
      *     └─ intentService.reportFeedback(...)
      *          ├─ 返回 null  → 维持原意图
      *          └─ 返回新结果 → 更新 currentIntent / currentIntentResult
      * </pre>
-     * 案例：意图 CONFIGURE，工具结果 "No such file" → success=false →
-     *       reportFeedback 用候选 MONITOR 递补 → 后续 Prompt 注入 [用户意图] 监控查看。
+     *
+     * @param dynamicContext 当前 ReAct 动态上下文
+     * @param userMessage    用户本轮原始消息
+     * @param toolName       实际执行的工具名称
+     * @param command        工具执行的命令或关键输入
+     * @param success        工具协议返回的原始 success 字段
+     * @param toolResult     工具返回的文本结果
      */
-    private void handleIntentFeedback(DefaultReActFactory.DynamicContext dynamicContext, String toolResult) {
+    private void handleIntentFeedback(
+            DefaultReActFactory.DynamicContext dynamicContext,
+            String userMessage,
+            String toolName,
+            String command,
+            boolean success,
+            String toolResult
+    ) {
         IntentResultVO lastIntent = dynamicContext.getCurrentIntentResult();
+
+        // 没有完成本轮意图识别时，不具备“结果是否偏离当前意图”的比较基准。
         if (lastIntent == null) {
             return;
         }
-        // 复用 IntentService 的失败特征判定，保持两处逻辑一致
-        boolean success = toolResult != null && !toolResult.isBlank()
-                && !IntentService.looksLikeIntentMismatch(toolResult);
 
+        /*
+         * Case 层只负责收集并传递事实，不在这里解释工具输出语义。
+         * 结构化判断、降级规则以及最多重分类一次的约束都由领域服务统一处理。
+         */
         IntentResultVO reclassified = intentService.reportFeedback(
-                dynamicContext.getChatSessionId(), lastIntent, success, toolResult);
+                dynamicContext.getChatSessionId(),
+                lastIntent,
+                userMessage,
+                toolName,
+                command,
+                success,
+                toolResult);
+
         if (reclassified != null) {
             log.info("反馈回路触发重分类: {} -> {} (conf={})",
                     lastIntent.getIntent(), reclassified.getIntent(), reclassified.getConfidence());
@@ -530,7 +628,11 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             dynamicContext.setCurrentIntent(reclassified.getIntent().name());
             dynamicContext.setCurrentIntentResult(reclassified);
 
-            updateTaskStateAfterFeedback(dynamicContext, success, reclassified);
+            /*
+             * 只要发生重分类，就说明原行动方向没有满足当前用户目标。
+             * 即使底层命令执行成功，任务语义上仍应记为失败，不能推进或完成原任务步骤。
+             */
+            updateTaskStateAfterFeedback(dynamicContext, false, reclassified);
         }
     }
 

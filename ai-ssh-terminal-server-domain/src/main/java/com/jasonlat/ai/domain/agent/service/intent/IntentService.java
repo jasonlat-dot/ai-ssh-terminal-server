@@ -1,16 +1,22 @@
 package com.jasonlat.ai.domain.agent.service.intent;
 
 
+import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort;
+import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcome;
+import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecision;
+import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecisionRequest;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.*;
 import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.intent.classifier.factory.DefaultClassifyFactory;
 import com.jasonlat.ai.domain.agent.service.intent.classifier.node.RootNode;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.Resource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 意图识别服务（调度入口）
@@ -19,7 +25,7 @@ import java.util.List;
  * <ol>
  *   <li>规则分类（< 1ms）：置信度 ≥ 0.8 直接返回</li>
  *   <li>LLM 分类（100~500ms）：置信度 ≥ 0.5 采用，否则回退规则结果</li>
- *   <li>反馈回路：下游执行失败时触发重分类（最多重试一次，避免循环）</li>
+ *   <li>反馈回路：结构化区分工具执行失败与意图偏差，确认偏差后最多重分类一次</li>
  * </ol>
  * 带 LRU 缓存（200 条目，5 分钟过期），避免重复分类。
  * <p>
@@ -44,9 +50,9 @@ import java.util.List;
  *      └─ recordAndCache    → 写 ContextTracker + LRU 缓存
  *      ▼
  *   AiCallNode: 注入意图标签到 Prompt；执行工具后调用
- *      │  reportFeedback(sessionId, lastIntent, success, toolResult)
+ *      │  reportFeedback(sessionId, lastIntent, userMessage, toolName, command, success, toolResult)
  *      ▼
- *   反馈回路：失败 && conf<0.7 && 结果像意图走偏 → 用候选意图重分类（仅一次）
+ *   反馈回路：Jev/Laya 判断工具结果语义 → 只有 INTENT_MISMATCH 才重分类（仅一次）
  * </pre>
  *
  * <p>案例（端到端）：
@@ -63,6 +69,7 @@ import java.util.List;
  * </pre>
  */
 @Service
+@Slf4j
 public class IntentService implements IIntentService {
 
     @Resource(name = "intentClassifierRootNode")
@@ -75,6 +82,14 @@ public class IntentService implements IIntentService {
 
     @Resource
     private ContextTracker contextTracker;
+
+    /**
+     * Jev/Laya 工具结果结构化判断端口。
+     *
+     * <p>领域服务只依赖端口，不依赖任何 HTTP、JSON 或供应商实现细节。</p>
+     */
+    @Resource
+    private IToolOutcomeDecisionPort toolOutcomeDecisionPort;
 
     /**
      * 意图分类主入口：三层级联策略 + LRU 缓存。
@@ -98,86 +113,294 @@ public class IntentService implements IIntentService {
     }
 
     /**
-     * 反馈回路：下游执行工具后回报结果。
+     * 兼容旧调用方的简化反馈入口。
      * <p>
-     * 策略：
-     * <ul>
-     *   <li>成功：记录成功，返回 null（维持原意图）</li>
-     *   <li>失败且原意图置信度 < 阈值：用候选意图递补；无候选则返回 UNKNOWN（全交主模型）</li>
-     *   <li>失败但原意图置信度高：记录失败但不重分类，避免误判</li>
-     * </ul>
-     * <p>判定流程：
-     * <pre>
-     *   reportFeedback(lastIntent, success, toolResult)
-     *     ├─ lastIntent==null 或已 reclassified  → 返回 null（不连锁重分类）
-     *     ├─ success=true                       → 记录成功，返回 null
-     *     ├─ success=false && conf ≥ 0.7        → 仅记录失败，不重分类
-     *     ├─ success=false && 结果不像意图走偏   → 返回 null
-     *     └─ 满足重分类条件：
-     *          ├─ 有候选 → 候选[0] 递补，conf*0.8，reclassified=true
-     *          └─ 无候选 → UNKNOWN(conf=0)，全交主模型
-     * </pre>
+     * 旧签名没有用户消息、工具名称和命令，因此会使用空字符串补齐这些字段，
+     * 然后委托给完整反馈入口。新业务代码应优先调用七参数重载方法。
+     *
+     * @param sessionId 当前会话 ID
+     * @param lastIntent 工具执行前的意图结果
+     * @param success 工具协议报告的执行状态
+     * @param toolResult 工具返回文本
+     * @return 重分类后的意图结果；无需修改时返回 null
      */
     @Override
     public IntentResultVO reportFeedback(String sessionId, IntentResultVO lastIntent, boolean success, String toolResult) {
-        // 已重分类过的结果不再二次重分类，避免连锁递补
-        if (lastIntent == null || lastIntent.isReclassified()) {
+        /*
+         * 保留旧入口，避免其他调用方被迫一次性修改。
+         * 缺少用户消息、工具名和命令时，外部判断仍能参考当前意图、success 和结果文本。
+         */
+        return reportFeedback(
+                sessionId,
+                lastIntent,
+                "",
+                "",
+                "",
+                success,
+                toolResult);
+    }
+
+    /**
+     * 使用完整工具上下文执行反馈判断，并在确认意图偏差时触发一次重分类。
+     *
+     * <p>处理过程分为三个阶段：</p>
+     * <ol>
+     *     <li>记录工具协议报告的真实执行状态；</li>
+     *     <li>优先请求 Jev/Laya 区分成功、执行失败、意图偏差和证据不足；</li>
+     *     <li>快速决策不可用时，回退到原有关键词规则。</li>
+     * </ol>
+     *
+     * <p>只有 {@link ToolOutcome#INTENT_MISMATCH} 才允许改变当前意图。
+     * 普通执行失败不会触发重分类，避免把权限、网络、命令错误误认为意图错误。</p>
+     *
+     * @param sessionId       当前会话 ID
+     * @param lastIntent      工具执行前的意图识别结果
+     * @param userMessage     用户本轮原始消息
+     * @param toolName        实际执行的工具名称
+     * @param command         工具执行的命令或关键输入
+     * @param reportedSuccess 工具协议返回的原始 success 字段
+     * @param toolResult      工具返回的文本结果
+     * @return 重分类后的意图结果；无需修改当前意图时返回 null
+     */
+    @Override
+    public IntentResultVO reportFeedback(
+            String sessionId,
+            IntentResultVO lastIntent,
+            String userMessage,
+            String toolName,
+            String command,
+            boolean reportedSuccess,
+            String toolResult
+    ) {
+        // 没有当前意图时缺少比较基准，无法执行工具结果与意图偏差判断。
+        if (lastIntent == null) {
             return null;
         }
-        contextTracker.recordFeedback(sessionId, success);
 
-        // 仅在确认为失败时记录，避免一轮多工具结果重复累计
-        if (success) return null;
+        /*
+         * 失败计数必须记录工具协议的真实执行状态，而不是记录模型的语义结论。
+         * 例如命令成功但目标方向错误时，执行层仍然属于成功。
+         */
+        contextTracker.recordFeedback(sessionId, reportedSuccess);
 
-        // 高置信度意图不轻易重分类（可能只是工具偶发失败）
-        if (lastIntent.getConfidence() >= FEEDBACK_RECLASSIFY_THRESHOLD) {
+        FeedbackAssessment assessment = assessToolOutcome(
+                lastIntent,
+                userMessage,
+                toolName,
+                command,
+                reportedSuccess,
+                toolResult);
+
+        /*
+         * 已重分类的结果仍然需要让每个主 Agent 工具经过 Jev/Laya 判断，
+         * 但不能再次改变意图，避免候选意图连续递补或形成重分类循环。
+         */
+        if (lastIntent.isReclassified()) {
             return null;
         }
 
-        // 工具结果明确提示"找不到/不存在" → 当前意图大概率走偏
-        if (!looksLikeIntentMismatch(toolResult)) {
+        /*
+         * SUCCESS、EXECUTION_FAILED 和 INCONCLUSIVE 都不能证明意图分类错误。
+         * 只有明确的 INTENT_MISMATCH 才进入后续重分类流程。
+         */
+        if (assessment.outcome() != ToolOutcome.INTENT_MISMATCH) {
             return null;
         }
 
-        // 获取候选意图
+        /*
+         * 本地关键词只是低精度兜底，因此继续保留原有“高置信度不自动改写”保护。
+         * Jev/Laya 已结合完整上下文做出且通过概率门槛的结构化结论，不受该旧门槛限制。
+         */
+        if (!assessment.externalDecision()
+                && lastIntent.getConfidence() >= FEEDBACK_RECLASSIFY_THRESHOLD) {
+            return null;
+        }
+
+        /*
+         * 当前意图本身置信度很高，而外部判断又明确认为存在偏差时，
+         * 两个强信号发生冲突。此时不盲目采用旧分类的第二候选，
+         * 而是切换为 UNKNOWN，让主模型结合完整上下文重新规划。
+         */
+        if (assessment.externalDecision()
+                && lastIntent.getConfidence() >= FEEDBACK_RECLASSIFY_THRESHOLD) {
+            return reclassifyAsUnknown(sessionId, lastIntent, assessment);
+        }
+
+        // 原意图置信度较低时，优先使用现有分类结果中的第一候选意图递补。
         List<IntentTypeEnumVO> candidates = lastIntent.getCandidateIntents();
         if (candidates == null || candidates.isEmpty()) {
-            // 无候选 → UNKNOWN，全交主模型
-            IntentResultVO unknown = IntentResultVO.builder()
-                    .intent(IntentTypeEnumVO.UNKNOWN)
-                    .confidence(0.0)
-                    .entities(lastIntent.getEntities())
-                    .candidateIntents(List.of())
-                    .reclassified(true)
-                    .build();
-            contextTracker.updateContext(sessionId, unknown);
-            return unknown;
+            return reclassifyAsUnknown(sessionId, lastIntent, assessment);
         }
 
-        // 用候选意图递补
+        /*
+         * 使用候选列表第一项递补，并降低置信度，明确表达这是反馈后的次级判断。
+         * 剩余候选继续保留，供后续主模型和诊断日志参考。
+         */
         IntentResultVO reclassified = IntentResultVO.builder()
-                .intent(candidates.get(0))
+                .intent(candidates.getFirst())
                 .confidence(lastIntent.getConfidence() * 0.8)
                 .entities(lastIntent.getEntities())
-                // 剔除当前候选意图
                 .candidateIntents(candidates.size() > 1
                         ? new ArrayList<>(candidates.subList(1, candidates.size()))
                         : List.of())
                 .rawResponse(lastIntent.getRawResponse())
                 .reclassified(true)
                 .build();
+
         contextTracker.updateContext(sessionId, reclassified);
+
+        log.info(
+                "工具反馈触发候选意图递补 sessionId={} originalIntent={} reclassifiedIntent={} "
+                        + "source={} outcomeProbability={}",
+                sessionId,
+                lastIntent.getIntent(),
+                reclassified.getIntent(),
+                assessment.source(),
+                assessment.answerProbability());
+
         return reclassified;
-
-
     }
 
     /**
-     * 工具结果是否暗示当前意图走偏（服务/文件/命令不存在类错误）。
-     * 与 AiCallNode 的失败判定保持一致的特征词集合。
+     * 获取工具结果的语义结论。
+     *
+     * <p>优先使用 Jev/Laya 的结构化结果。端口返回空时，说明功能关闭、处于影子模式、
+     * 调用失败、响应非法或概率不足，此时严格回退到兼容旧行为的本地规则。</p>
+     *
+     * @param lastIntent      当前意图识别结果
+     * @param userMessage     用户本轮原始消息
+     * @param toolName        实际工具名称
+     * @param command         工具命令或关键输入
+     * @param reportedSuccess 工具协议报告的真实执行状态
+     * @param toolResult      工具结果文本
+     * @return 包含结论、来源和答案概率的内部判断结果
+     */
+    private FeedbackAssessment assessToolOutcome(
+            IntentResultVO lastIntent,
+            String userMessage,
+            String toolName,
+            String command,
+            boolean reportedSuccess,
+            String toolResult
+    ) {
+        Optional<ToolOutcomeDecision> externalDecision;
+
+        try {
+            ToolOutcomeDecisionRequest request = new ToolOutcomeDecisionRequest(
+                    userMessage,
+                    lastIntent.getIntent(),
+                    lastIntent.getConfidence(),
+                    toolName,
+                    command,
+                    reportedSuccess,
+                    toolResult);
+
+            externalDecision = toolOutcomeDecisionPort.assess(request);
+        } catch (RuntimeException exception) {
+            /*
+             * 端口契约本身采用 fail-open。即使未来替换了适配器实现，
+             * 也不能让辅助判断异常中断正在进行的 ReAct 工具链。
+             */
+            log.warn(
+                    "工具结果结构化判断异常，回退本地规则 toolName={} intent={} exception={} message={}",
+                    toolName,
+                    lastIntent.getIntent(),
+                    exception.getClass().getSimpleName(),
+                    exception.getMessage());
+
+            log.debug("工具结果结构化判断异常详情", exception);
+
+            externalDecision = Optional.empty();
+        }
+
+        if (externalDecision.isPresent()) {
+            ToolOutcomeDecision decision = externalDecision.get();
+
+            return new FeedbackAssessment(
+                    decision.outcome(),
+                    true,
+                    decision.answerProbability(),
+                    decision.provider());
+        }
+
+        /*
+         * 稳定工具协议中的 reportedSuccess 优先于文本猜测。
+         * 工具明确报告成功时，本地兜底直接认定 SUCCESS。
+         */
+        if (reportedSuccess) {
+            return new FeedbackAssessment(ToolOutcome.SUCCESS, false, 1.0, "local");
+        }
+
+        /*
+         * 旧版规则无法可靠区分执行失败与意图偏差。
+         * 为保持升级前行为，仅在命中特征词时继续返回 INTENT_MISMATCH；
+         * 其他失败统一视为 EXECUTION_FAILED，不触发意图重分类。
+         */
+        ToolOutcome fallbackOutcome = looksLikeIntentMismatch(toolResult)
+                ? ToolOutcome.INTENT_MISMATCH
+                : ToolOutcome.EXECUTION_FAILED;
+
+        return new FeedbackAssessment(fallbackOutcome, false, 0.0, "local");
+    }
+
+    /**
+     * 将当前意图重分类为 UNKNOWN，并交还主模型重新规划。
+     *
+     * <p>适用于没有候选意图，或高置信度原意图与高概率偏差结论发生冲突的场景。</p>
+     *
+     * @param sessionId  当前会话 ID
+     * @param lastIntent 原意图结果，用于保留已提取实体
+     * @param assessment 触发本次重分类的工具结果判断
+     * @return 已标记 reclassified 的 UNKNOWN 结果
+     */
+    private IntentResultVO reclassifyAsUnknown(
+            String sessionId,
+            IntentResultVO lastIntent,
+            FeedbackAssessment assessment
+    ) {
+        IntentResultVO unknown = IntentResultVO.builder()
+                .intent(IntentTypeEnumVO.UNKNOWN)
+                .confidence(0.0)
+                .entities(lastIntent.getEntities())
+                .candidateIntents(List.of())
+                .rawResponse(lastIntent.getRawResponse())
+                .reclassified(true)
+                .build();
+
+        contextTracker.updateContext(sessionId, unknown);
+
+        log.info(
+                "工具反馈将意图重分类为 UNKNOWN sessionId={} originalIntent={} source={} outcomeProbability={}",
+                sessionId,
+                lastIntent.getIntent(),
+                assessment.source(),
+                assessment.answerProbability());
+
+        return unknown;
+    }
+
+    /**
+     * 领域服务内部使用的工具结果判断摘要。
+     *
+     * @param outcome           成功、执行失败、意图偏差或证据不足
+     * @param externalDecision  是否来自已通过概率门槛的 Jev/Laya 正式结果
+     * @param answerProbability 外部选中答案概率；本地结果使用 0 或 1
+     * @param source            结果来源，例如 jev、laya 或 local
+     */
+    private record FeedbackAssessment(
+            ToolOutcome outcome,
+            boolean externalDecision,
+            double answerProbability,
+            String source
+    ) {
+    }
+
+    /**
+     * 本地兜底规则：工具结果是否包含历史版本使用的意图偏差特征词。
      * <p>
-     * 特征词同时覆盖中英文，命中即认为当前意图大概率选错（如 CONFIGURE 找不到配置文件）。
-     * 该判定在两处复用：反馈回路重分类门控、AiCallNode.handleIntentFeedback 成功判定。
+     * 该方法仅在 Jev/Laya 未提供可用结果时使用。关键词无法真正区分
+     * “意图错误”和“意图正确但工具执行失败”，所以它只能作为兼容旧行为的低精度兜底，
+     * 且仍受低置信度重分类门槛保护。
      * <p>
      * 案例：
      * <pre>

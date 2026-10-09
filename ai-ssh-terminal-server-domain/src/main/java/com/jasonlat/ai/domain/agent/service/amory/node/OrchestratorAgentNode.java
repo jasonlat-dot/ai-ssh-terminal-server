@@ -13,6 +13,7 @@ import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.DynamicPlanDispatchTool;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.SubAgentDispatchTool;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.excution.DynamicAgentOrchestrator;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.support.SubAgentToolOutcomeObserver;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanParser;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlanValidator;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.subagents.plan.PlannerAgentBuilder;
@@ -59,6 +60,12 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
      */
     @Resource
     private AgentEventPublisher agentEventPublisher;
+
+    /**
+     * 注入到每个单子 Agent 派发工具中，使其内部 FunctionResponse 也走 Jev/Laya 判断。
+     */
+    @Resource
+    private SubAgentToolOutcomeObserver subAgentToolOutcomeObserver;
 
     /** 智能体名称分隔符 */
     private static final String NAME_SEPARATOR = "_";
@@ -115,7 +122,11 @@ public class OrchestratorAgentNode extends AbstractAmorySupport {
                 if (subAgent == null) {
                     throw new IllegalArgumentException("sub agent not found: " + subAgentName);
                 }
-                adkTools.add(new SubAgentDispatchTool(subAgent, customRunnerFactory, agentEventPublisher));
+                adkTools.add(new SubAgentDispatchTool(
+                        subAgent,
+                        customRunnerFactory,
+                        agentEventPublisher,
+                        subAgentToolOutcomeObserver));
             }
 
             List<String> allowedSubAgentNames = subAgentNames.stream()
