@@ -3,9 +3,12 @@ package com.jasonlat.ai.config;
 import com.jasonlat.ai.config.properties.DecisionProviderProperties;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
 import com.jasonlat.ai.infrastructure.model.settings.ToolOutcomeDecisionSettings;
+import com.jasonlat.ai.infrastructure.model.settings.ToolSelectionDecisionSettings;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.LinkedHashSet;
 
 /**
  * Jev/Laya System One 配置装配类。
@@ -54,6 +57,31 @@ public class DecisionProviderConfiguration {
                 toolOutcome.isShadowMode(),
                 toolOutcome.getMinAnswerProbability(),
                 toolOutcome.getMaxResultCharacters()
+        );
+    }
+
+    /**
+     * 创建每轮工具筛选能力的独立运行参数。
+     *
+     * @param properties Spring Boot 从 {@code ai.decision.tool-selection} 读取的配置
+     * @return 工具筛选适配器使用的不可变参数
+     */
+    @Bean
+    public ToolSelectionDecisionSettings toolSelectionDecisionSettings(
+            DecisionProviderProperties properties
+    ) {
+        DecisionProviderProperties.ToolSelectionProperties toolSelection =
+                properties.getToolSelection();
+
+        return new ToolSelectionDecisionSettings(
+                toolSelection.isEnabled(),
+                toolSelection.isShadowMode(),
+                toolSelection.getMinAnswerProbability(),
+                toolSelection.getMinRetainedTools(),
+                toolSelection.getMaxToolsPerRequest(),
+                toolSelection.getMaxDescriptionCharacters(),
+                toolSelection.getMaxContextCharacters(),
+                new LinkedHashSet<>(toolSelection.getAlwaysKeepTools())
         );
     }
 }

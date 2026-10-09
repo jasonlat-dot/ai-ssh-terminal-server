@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -12,10 +14,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * System One 适配器公共协议支持。
@@ -110,7 +116,19 @@ public abstract class SystemOneAdapterSupport {
             String instructions,
             Map<E, String> criteria
     ) {
-        ObjectNode question = root.putObject("questions").putObject(questionId);
+        /*
+         * 一个 System One 请求可以同时包含多个 Choice 问题。不能每次都直接
+         * root.putObject("questions")，否则后添加的问题会覆盖前面的所有问题。
+         */
+        ObjectNode questions;
+
+        if (root.path("questions").isObject()) {
+            questions = (ObjectNode) root.path("questions");
+        } else {
+            questions = root.putObject("questions");
+        }
+
+        ObjectNode question = questions.putObject(questionId);
         question.put("type", "choice");
         question.put("instructions", instructions);
 
@@ -138,15 +156,86 @@ public abstract class SystemOneAdapterSupport {
             String operation,
             String fallbackText
     ) {
+        return executeChoices(
+                requestRoot,
+                List.of(questionId),
+                operation,
+                fallbackText)
+                .map(responses -> responses.get(questionId));
+    }
+
+    /**
+     * 用一次 HTTP 请求发送并解析多个 System One Choice 问题。
+     *
+     * <p>工具筛选会为每个候选工具创建一个 USE/SKIP 问题。如果任意问题缺失、
+     * 结构非法或概率不完整，本方法整体返回空，让调用方保留全部工具。</p>
+     *
+     * @param requestRoot  已构建完成且包含多个 questions 的请求根节点
+     * @param questionIds  期望从 answers 中读取的全部问题 ID
+     * @param operation    日志中的业务操作名
+     * @param fallbackText 失败时的降级说明
+     * @return 按 questionIds 顺序保存的 Choice 响应 Map；失败时返回空
+     */
+    protected final Optional<Map<String, ChoiceResponse>> executeChoices(
+            ObjectNode requestRoot,
+            Collection<String> questionIds,
+            String operation,
+            String fallbackText) {
         long startedAt = System.nanoTime();
 
         try {
+            Set<String> distinctQuestionIds = new LinkedHashSet<>(questionIds);
+
+            if (distinctQuestionIds.isEmpty()
+                    || distinctQuestionIds.size() != questionIds.size()
+                    || distinctQuestionIds.stream().anyMatch(String::isBlank)) {
+                throw new IllegalArgumentException("System One 问题 ID 不能为空或重复");
+            }
+
+            /*
+             * {
+             *   "model": "multilingual",
+             *   "state": {
+             *     "user_message": "查看服务器磁盘空间",
+             *     "recent_context": "user: 查看服务器磁盘空间",
+             *     "agent_name": "SshAgent",
+             *     "current_intent": "EXECUTE",
+             *     "candidate_tool_count": 3
+             *   },
+             *   "questions": {
+             *     "tool_0": {
+             *       "type": "choice",
+             *       "instructions": "判断下面这个工具是否应该出现在当前 Agent 的本轮模型请求中。\n工具名称：executeCommand\n工具说明：在远程服务器执行 Shell 命令\n请结合 state.user_message、state.recent_context、state.current_intent 和当前 Agent 判断。\n只在工具与当前任务及其合理后续步骤明显无关时选择 SKIP；不确定时选择 USE。\n",
+             *       "criteria": {
+             *         "USE": "当前任务、当前步骤或合理的后续步骤可能需要该工具；存在不确定性时也选择 USE",
+             *         "SKIP": "该工具与当前任务和合理后续步骤明显无关，本轮隐藏不会阻碍任务完成"
+             *       }
+             *     },
+             *     "tool_1": {
+             *       "type": "choice",
+             *       "instructions": "判断下面这个工具是否应该出现在当前 Agent 的本轮模型请求中。\n工具名称：readFile\n工具说明：读取远程服务器上的文件\n请结合 state.user_message、state.recent_context、state.current_intent 和当前 Agent 判断。\n只在工具与当前任务及其合理后续步骤明显无关时选择 SKIP；不确定时选择 USE。\n",
+             *       "criteria": {
+             *         "USE": "当前任务、当前步骤或合理的后续步骤可能需要该工具；存在不确定性时也选择 USE",
+             *         "SKIP": "该工具与当前任务和合理后续步骤明显无关，本轮隐藏不会阻碍任务完成"
+             *       }
+             *     },
+             *     "tool_2": {
+             *       "type": "choice",
+             *       "instructions": "判断下面这个工具是否应该出现在当前 Agent 的本轮模型请求中。\n工具名称：uploadFile\n工具说明：向远程服务器上传文件\n请结合 state.user_message、state.recent_context、state.current_intent 和当前 Agent 判断。\n只在工具与当前任务及其合理后续步骤明显无关时选择 SKIP；不确定时选择 USE。\n",
+             *       "criteria": {
+             *         "USE": "当前任务、当前步骤或合理的后续步骤可能需要该工具；存在不确定性时也选择 USE",
+             *         "SKIP": "该工具与当前任务和合理后续步骤明显无关，本轮隐藏不会阻碍任务完成"
+             *       }
+             *     }
+             *   }
+             * }
+             */
             String requestBody = objectMapper.writeValueAsString(requestRoot);
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(settings.endpoint())
                     .timeout(settings.timeout())
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8));
 
             /*
@@ -154,9 +243,43 @@ public abstract class SystemOneAdapterSupport {
              * 未启用鉴权的 Laya 可以保持为空，此时不添加 Authorization 请求头。
              */
             if (!settings.apiKey().isBlank()) {
-                requestBuilder.header("Authorization", "Bearer " + settings.apiKey());
+                requestBuilder.header(HttpHeaders.AUTHORIZATION, "Bearer " + settings.apiKey());
             }
 
+            /*
+             * {
+             *   "model": "jev-1.13.0",
+             *   "answers": {
+             *     "tool_0": {
+             *       "type": "choice",
+             *       "choice": "USE",
+             *       "confidence": 0.97,
+             *       "probabilities": {
+             *         "USE": 0.97,
+             *         "SKIP": 0.03
+             *       }
+             *     },
+             *     "tool_1": {
+             *       "type": "choice",
+             *       "choice": "SKIP",
+             *       "confidence": 0.91,
+             *       "probabilities": {
+             *         "USE": 0.09,
+             *         "SKIP": 0.91
+             *       }
+             *     },
+             *     "tool_2": {
+             *       "type": "choice",
+             *       "choice": "SKIP",
+             *       "confidence": 0.96,
+             *       "probabilities": {
+             *         "USE": 0.04,
+             *         "SKIP": 0.96
+             *       }
+             *     }
+             *   }
+             * }
+             */
             HttpResponse<String> response = httpClient.send(
                     requestBuilder.build(),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -170,9 +293,9 @@ public abstract class SystemOneAdapterSupport {
                 return Optional.empty();
             }
 
-            Optional<ChoiceResponse> parsed = parseChoiceResponse(
+            Optional<Map<String, ChoiceResponse>> parsed = parseChoiceResponses(
                     response.body(),
-                    questionId,
+                    distinctQuestionIds,
                     elapsedMillis);
 
             if (parsed.isEmpty()) {
@@ -213,17 +336,55 @@ public abstract class SystemOneAdapterSupport {
      * 解析所有 System One Choice 能力共享的响应字段。
      *
      * @param responseBody 原始 JSON 响应
-     * @param questionId   answers 下的问题 ID
+     * @param questionIds  本次批量请求中需要读取的全部问题 ID
      * @param elapsedMillis 从发送请求到收到响应的耗时
-     * @return choice、概率分布、原生 confidence、模型和原始响应
-     * @throws IOException JSON 语法非法时抛出，由 executeChoice 统一降级
+     * @return 按问题 ID 保存的 choice、概率分布、原生 confidence、模型和原始响应
+     * @throws IOException JSON 语法非法时抛出，由 executeChoices 统一降级
      */
-    private Optional<ChoiceResponse> parseChoiceResponse(
+    private Optional<Map<String, ChoiceResponse>> parseChoiceResponses(
             String responseBody,
-            String questionId,
+            Collection<String> questionIds,
             long elapsedMillis
     ) throws IOException {
         JsonNode root = objectMapper.readTree(responseBody);
+        Map<String, ChoiceResponse> responses = new LinkedHashMap<>();
+
+        for (String questionId : questionIds) {
+            Optional<ChoiceResponse> response = parseChoiceAnswer(
+                    root,
+                    responseBody,
+                    questionId,
+                    elapsedMillis);
+
+            /*
+             * 多问题决策必须完整。如果任意工具没有合法答案，整体 fail-open，
+             * 避免只过滤成功返回的部分工具产生不可预测能力缺失。
+             */
+            if (response.isEmpty()) {
+                return Optional.empty();
+            }
+
+            responses.put(questionId, response.get());
+        }
+
+        return Optional.of(Collections.unmodifiableMap(responses));
+    }
+
+    /**
+     * 从已经解析的响应根节点读取一个 Choice 答案。
+     *
+     * @param root           System One 响应根节点
+     * @param responseBody   原始 JSON 响应
+     * @param questionId     当前问题 ID
+     * @param elapsedMillis  整个 HTTP 请求耗时
+     * @return 单个完整 Choice 响应；结构或概率非法时返回空
+     */
+    private Optional<ChoiceResponse> parseChoiceAnswer(
+            JsonNode root,
+            String responseBody,
+            String questionId,
+            long elapsedMillis
+    ) {
         JsonNode answer = root.path("answers").path(questionId);
 
         if (!answer.isObject()

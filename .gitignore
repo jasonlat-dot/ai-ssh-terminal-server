@@ -44,3 +44,4 @@ build/
 /.codex-tmp/
 /logs/
 /LOG_DIR_IS_UNDEFINED/
+/docs/md/

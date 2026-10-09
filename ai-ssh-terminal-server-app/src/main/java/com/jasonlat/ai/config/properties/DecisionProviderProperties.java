@@ -6,6 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * System One 统一外部配置。
@@ -21,7 +23,7 @@ public class DecisionProviderProperties implements InitializingBean {
     /**
      * 是否启用 System One 结构化决策能力。
      *
-     * <p>false 时意图识别和工具结果判断均不会发送外部请求。</p>
+     * <p>false 时意图识别、工具筛选和工具结果判断均不会发送外部请求。</p>
      */
     private boolean enabled = false;
 
@@ -76,6 +78,14 @@ public class DecisionProviderProperties implements InitializingBean {
     private ToolOutcomeProperties toolOutcome = new ToolOutcomeProperties();
 
     /**
+     * 每轮模型请求工具筛选的独立配置。
+     *
+     * <p>该能力复用统一 System One 连接，只单独控制筛选门槛、安全保留策略
+     * 和发送给外部决策服务的工具信息规模。</p>
+     */
+    private ToolSelectionProperties toolSelection = new ToolSelectionProperties();
+
+    /**
      * 工具结果与意图偏差判断配置。
      */
     @Data
@@ -100,6 +110,37 @@ public class DecisionProviderProperties implements InitializingBean {
          * 单次发送给 System One 的工具结果最大字符数。
          */
         private int maxResultCharacters = 4_000;
+    }
+
+    /**
+     * 每轮工具筛选配置。
+     */
+    @Data
+    public static class ToolSelectionProperties {
+
+        /** 是否调用 System One 为当前模型请求筛选工具。 */
+        private boolean enabled = true;
+
+        /** true 时只记录建议，不真正删除 LlmRequest 中的工具。 */
+        private boolean shadowMode = false;
+
+        /** USE/SKIP 结论可以正式生效的最低答案概率。 */
+        private double minAnswerProbability = 0.78;
+
+        /** 即使所有工具都被判定 SKIP，也至少保留的工具数量。 */
+        private int minRetainedTools = 1;
+
+        /** 单次 System One 请求最多判断的工具数量，溢出部分自动保留。 */
+        private int maxToolsPerRequest = 32;
+
+        /** 每个工具说明允许发送的最大字符数。 */
+        private int maxDescriptionCharacters = 600;
+
+        /** 最近模型调用安全摘要允许发送的最大字符数。 */
+        private int maxContextCharacters = 2_000;
+
+        /** 永远保留且不交给 System One 判断的工具名称。 */
+        private List<String> alwaysKeepTools = new ArrayList<>();
     }
 
     /**
@@ -133,7 +174,8 @@ public class DecisionProviderProperties implements InitializingBean {
             throw new IllegalArgumentException("ai.decision.min-answer-probability 必须位于 0 到 1 之间");
         }
 
-        if (toolOutcome == null) {throw new IllegalArgumentException("ai.decision.tool-outcome 配置不能为空");
+        if (toolOutcome == null) {
+            throw new IllegalArgumentException("ai.decision.tool-outcome 配置不能为空");
         }
 
         double toolOutcomeThreshold = toolOutcome.getMinAnswerProbability();
@@ -146,6 +188,43 @@ public class DecisionProviderProperties implements InitializingBean {
 
         if (toolOutcome.getMaxResultCharacters() < 256) {
             throw new IllegalArgumentException("ai.decision.tool-outcome.max-result-characters 不能小于 256");
+        }
+
+        if (toolSelection == null) {
+            throw new IllegalArgumentException("ai.decision.tool-selection 配置不能为空");
+        }
+
+        double toolSelectionThreshold = toolSelection.getMinAnswerProbability();
+
+        if (!Double.isFinite(toolSelectionThreshold)
+                || toolSelectionThreshold < 0.0
+                || toolSelectionThreshold > 1.0) {
+            throw new IllegalArgumentException(
+                    "ai.decision.tool-selection.min-answer-probability 必须位于 0 到 1 之间");
+        }
+
+        if (toolSelection.getMinRetainedTools() < 1) {
+            throw new IllegalArgumentException(
+                    "ai.decision.tool-selection.min-retained-tools 不能小于 1");
+        }
+
+        if (toolSelection.getMaxToolsPerRequest() < 1) {
+            throw new IllegalArgumentException(
+                    "ai.decision.tool-selection.max-tools-per-request 不能小于 1");
+        }
+
+        if (toolSelection.getMaxDescriptionCharacters() < 64) {
+            throw new IllegalArgumentException(
+                    "ai.decision.tool-selection.max-description-characters 不能小于 64");
+        }
+
+        if (toolSelection.getMaxContextCharacters() < 256) {
+            throw new IllegalArgumentException(
+                    "ai.decision.tool-selection.max-context-characters 不能小于 256");
+        }
+
+        if (toolSelection.getAlwaysKeepTools() == null) {
+            toolSelection.setAlwaysKeepTools(new ArrayList<>());
         }
     }
 }

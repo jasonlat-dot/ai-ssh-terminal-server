@@ -50,26 +50,20 @@ ai:
     # 是否调用 System One。
     # 当前默认开启；没有配置可用服务时可设置为 false，完全回退原有流程。
     enabled: ${AI_DECISION_ENABLED:true}
-
     # 影子模式下会调用并记录结果，但不会接管意图分类。
     # 当前 false 表示正式使用；如需先观察准确率可设置为 true。
     shadow-mode: ${AI_DECISION_SHADOW_MODE:false}
-
     # 统一的 System One 地址。 https://api.typesafe.ai/v1/systemone
     # 填 Jev 托管地址就调用 Jev，填本地/私有地址就调用 Laya。
     url: ${AI_DECISION_URL:http://127.0.0.1:8100/v1/systemone}
-
     # 可选 Bearer API Key。Jev 需要配置；未启用鉴权的 Laya 可以留空。
     # 真实密钥只通过环境变量或外部配置注入，不能提交到 Git。
     api-key: ${AI_DECISION_API_KEY:}
-
     # Jev 通常填写 jev-latest，Laya 可填写 multilingual。
     # 留空时请求中不发送 model，由服务端自动选择。
     model: ${AI_DECISION_MODEL:multilingual}
-
     # HTTP 建连和完整请求超时。本地 CPU 运行 Laya 时可适当调大。
     timeout: ${AI_DECISION_TIMEOUT:10s}
-
     # 意图识别使用 probabilities[choice] 判断是否接受结果。
     min-answer-probability: ${AI_DECISION_MIN_ANSWER_PROBABILITY:0.72}
 
@@ -84,6 +78,24 @@ ai:
       min-answer-probability: ${AI_DECISION_TOOL_OUTCOME_MIN_ANSWER_PROBABILITY:0.78}
       # 最多发送给 Jev/Laya 的工具输出字符数，避免超长终端输出膨胀请求。
       max-result-characters: ${AI_DECISION_TOOL_OUTCOME_MAX_RESULT_CHARACTERS:4000}
+
+    # 每次主 Agent 或子 Agent 请求模型前，对本轮可见工具执行相关性筛选。
+    tool-selection:
+      # 关闭后插件保持挂载但不会发送外部请求，模型继续看到全部工具。
+      enabled: ${AI_DECISION_TOOL_SELECTION_ENABLED:true}
+      # true 时只记录 Jev/Laya 建议，不真正修改 LlmRequest.tools。
+      shadow-mode: ${AI_DECISION_TOOL_SELECTION_SHADOW_MODE:false}
+      # 只有高于该概率的 SKIP 才真正隐藏工具；低概率 SKIP 会安全保留。
+      min-answer-probability: ${AI_DECISION_TOOL_SELECTION_MIN_ANSWER_PROBABILITY:0.78}
+      # 无论判断结果如何，每轮至少保留一个工具，避免产生空工具请求。
+      min-retained-tools: ${AI_DECISION_TOOL_SELECTION_MIN_RETAINED_TOOLS:1}
+      # 一次请求最多判断的工具数；超出部分不删除，直接安全保留。
+      max-tools-per-request: ${AI_DECISION_TOOL_SELECTION_MAX_TOOLS_PER_REQUEST:32}
+      # 单个工具说明和最近安全上下文的发送长度上限。
+      max-description-characters: ${AI_DECISION_TOOL_SELECTION_MAX_DESCRIPTION_CHARACTERS:600}
+      max-context-characters: ${AI_DECISION_TOOL_SELECTION_MAX_CONTEXT_CHARACTERS:2000}
+      # 逗号分隔的工具名白名单；这些工具永远保留且不参与 System One 判断。
+      always-keep-tools: ${AI_DECISION_TOOL_SELECTION_ALWAYS_KEEP_TOOLS:}
 
 spring:
   servlet:

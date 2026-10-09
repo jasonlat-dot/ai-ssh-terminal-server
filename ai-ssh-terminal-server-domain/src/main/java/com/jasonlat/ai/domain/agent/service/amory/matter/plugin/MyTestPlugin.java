@@ -12,6 +12,7 @@ import com.google.adk.tools.ToolContext;
 import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Maybe;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.Ordered;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -24,7 +25,12 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service("myTestPlugin")
-public class MyTestPlugin extends BasePlugin {
+public class MyTestPlugin extends BasePlugin implements Ordered {
+
+    /**
+     * 日志插件在会修改请求的系统插件之后执行，读取最终将发送给模型的请求内容。
+     */
+    private static final int PLUGIN_ORDER = 1_000;
 
     /** 按 invocation 汇总各次模型请求的 token，等 Agent 完整结束后只打印一次。 */
     private final ConcurrentMap<String, InvocationUsage> invocationUsages = new ConcurrentHashMap<>();
@@ -35,6 +41,16 @@ public class MyTestPlugin extends BasePlugin {
 
     public MyTestPlugin() {
         super("MyTestPlugin");
+    }
+
+    /**
+     * 返回当前插件在 Runner 插件链中的执行顺序。
+     *
+     * @return {@code 1000}，晚于顺序为 {@code 100} 的工具筛选插件
+     */
+    @Override
+    public int getOrder() {
+        return PLUGIN_ORDER;
     }
 
     @Override
