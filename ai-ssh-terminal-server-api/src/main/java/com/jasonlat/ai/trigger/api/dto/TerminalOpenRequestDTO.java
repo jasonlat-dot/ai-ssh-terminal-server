@@ -14,6 +14,9 @@ public class TerminalOpenRequestDTO {
     /** SSH连接ID */
     private String connectionId;
 
+    /** 本次可取消建连请求的唯一 ID。 */
+    private String requestId;
+
     /** 终端列数 */
     private Integer cols;
 

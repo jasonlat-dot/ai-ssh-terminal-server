@@ -5,6 +5,7 @@ import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalTermination;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
+import com.jasonlat.ai.domain.ssh.service.terminal.SshTerminalConnectService;
 import com.jasonlat.ai.trigger.api.dto.*;
 import com.jasonlat.ai.trigger.api.response.Response;
 import com.jasonlat.ai.types.enums.ResponseCode;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CancellationException;
 
 /**
  * SSH终端操作 HTTP 控制器
@@ -30,60 +32,59 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
     @Resource
     private ISshTerminalService sshTerminalDomainService;
 
-    @RequestMapping(value = "open", method = RequestMethod.POST)
-    public Response<TerminalOpenResponseDTO> openTerminal(@RequestBody TerminalOpenRequestDTO requestDTO) {
+    @Resource
+    private SshTerminalConnectService sshTerminalConnectService;
+
+    @Override
+    @PostMapping("connect")
+    public Response<TerminalOpenResponseDTO> connectTerminal(@RequestBody TerminalOpenRequestDTO requestDTO) {
+        TerminalSessionEntity entity = null;
         try {
-            log.info("打开终端会话 connectionId={}", requestDTO.getConnectionId());
-
-            int cols = requestDTO.getCols() != null ? requestDTO.getCols() : 120;
-            int rows = requestDTO.getRows() != null ? requestDTO.getRows() : 24;
-
-            TerminalSessionEntity entity = sshTerminalDomainService.openTerminal(
-                    requestDTO.getConnectionId(), cols, rows);
-
-            // 等待 MOTD 积累完后 drain 缓冲区，作为 initialOutput 返回
-            // 这样前端不依赖轮询获取初始输出，避免时序问题导致"有时显示有时不显示"
-            String initialOutput = waitForInitialOutput(entity.getSessionId(), 2000);
-
-            TerminalOpenResponseDTO response = TerminalOpenResponseDTO.builder()
-                    .sessionId(entity.getSessionId())
-                    .connectionId(entity.getConnectionId())
-                    .initialOutput(initialOutput)
-                    .build();
-
+            entity = sshTerminalConnectService.connect(requestDTO.getRequestId(),
+                    requestDTO.getConnectionId(), requestDTO.getCols() == null ? 120 : requestDTO.getCols(),
+                    requestDTO.getRows() == null ? 24 : requestDTO.getRows());
             return Response.<TerminalOpenResponseDTO>builder()
-                    .code(ResponseCode.SUCCESS.getCode())
-                    .info(ResponseCode.SUCCESS.getInfo())
-                    .data(response)
+                    .code(ResponseCode.SUCCESS.getCode()).info(ResponseCode.SUCCESS.getInfo())
+                    .data(TerminalOpenResponseDTO.builder().sessionId(entity.getSessionId())
+                            .connectionId(entity.getConnectionId())
+                            .initialOutput(readInitialOutput(entity.getSessionId())).build())
                     .build();
-        } catch (AppException e) {
-            log.warn("打开终端会话参数异常: {}", e.getMessage());
-            return Response.<TerminalOpenResponseDTO>builder()
-                    .code(e.getCode())
-                    .info(e.getMessage())
-                    .build();
-        }catch (IllegalStateException | IllegalArgumentException e) {
-            log.warn("打开终端会话参数错误: {}", e.getMessage());
-            return Response.<TerminalOpenResponseDTO>builder()
-                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
-                    .info(e.getMessage())
-                    .build();
-        } catch (Exception e) {
-            log.error("打开终端会话失败", e);
-            return Response.<TerminalOpenResponseDTO>builder()
-                    .code(ResponseCode.UN_ERROR.getCode())
-                    .info("打开终端失败: " + e.getMessage())
-                    .build();
+        } catch (Exception exception) {
+            if (entity != null) sshTerminalConnectService.cancel(requestDTO.getRequestId(), requestDTO.getConnectionId());
+            if (exception instanceof AppException applicationException) {
+                return Response.<TerminalOpenResponseDTO>builder().code(applicationException.getCode())
+                        .info(applicationException.getMessage()).build();
+            }
+            if (exception instanceof IllegalArgumentException) {
+                return Response.<TerminalOpenResponseDTO>builder().code(ResponseCode.ILLEGAL_PARAMETER.getCode())
+                        .info(exception.getMessage()).build();
+            }
+            if (!(exception instanceof CancellationException)) {
+                log.warn("建立终端连接失败 connectionId={}", requestDTO.getConnectionId(), exception);
+            }
+            return Response.<TerminalOpenResponseDTO>builder().code(ResponseCode.UN_ERROR.getCode())
+                    .info(exception.getMessage()).build();
+        }
+    }
+
+    @Override
+    @PostMapping("cancel_connect")
+    public Response<Void> cancelConnect(@RequestParam("requestId") String requestId,
+                                       @RequestParam("connectionId") String connectionId) {
+        try {
+            sshTerminalConnectService.cancel(requestId, connectionId);
+            return Response.<Void>builder().code(ResponseCode.SUCCESS.getCode()).info("SSH 连接已取消").build();
+        } catch (IllegalArgumentException exception) {
+            return Response.<Void>builder().code(ResponseCode.ILLEGAL_PARAMETER.getCode()).info(exception.getMessage()).build();
         }
     }
 
     /**
-     * 等待并收集 Shell 初始输出（Last login + MOTD + prompt）
-     * openTerminal 已等首数据+200ms，这里只需 drain 缓冲区
+     * 收集当前已到达的 Shell 初始输出（Last login + MOTD + prompt）。
+     * 后续到达的内容由终端长轮询继续读取。
      * 不做换行符转换，xterm.js 自己处理 \r 和 \n
      */
-    private String waitForInitialOutput(String sessionId, long timeoutMs) {
-        // drain 缓冲区：openTerminal 已等待首数据+200ms，MOTD 应该已完整
+    private String readInitialOutput(String sessionId) {
         String output = sshTerminalDomainService.readTerminal(sessionId);
         if (output == null || output.isEmpty()) {
             return "";
@@ -100,38 +101,6 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
         }
 
         return output;
-    }
-
-    // 暂时不暴露给http调用
-//    @RequestMapping(value = "exec", method = RequestMethod.POST)
-    public Response<TerminalExecResponseDTO> execCommand(@RequestBody TerminalExecRequestDTO requestDTO) {
-        try {
-            log.info("执行SSH命令，sessionId:{} command:{}", requestDTO.getSessionId(), requestDTO.getCommand());
-            String output = sshTerminalDomainService.executeCommand(
-                    requestDTO.getSessionId(), requestDTO.getCommand());
-
-            TerminalExecResponseDTO response = TerminalExecResponseDTO.builder()
-                    .output(output)
-                    .build();
-
-            return Response.<TerminalExecResponseDTO>builder()
-                    .code(ResponseCode.SUCCESS.getCode())
-                    .info(ResponseCode.SUCCESS.getInfo())
-                    .data(response)
-                    .build();
-        } catch (AppException e) {
-            log.warn("执行命令参数错误: {}", e.getMessage());
-            return Response.<TerminalExecResponseDTO>builder()
-                    .code(e.getCode())
-                    .info(e.getMessage())
-                    .build();
-        } catch (Exception e) {
-            log.error("执行命令失败 sessionId={}", requestDTO.getSessionId(), e);
-            return Response.<TerminalExecResponseDTO>builder()
-                    .code(ResponseCode.UN_ERROR.getCode())
-                    .info("执行命令失败: " + e.getMessage())
-                    .build();
-        }
     }
 
     @RequestMapping(value = "write", method = RequestMethod.POST)
@@ -153,33 +122,6 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
             return Response.<Void>builder()
                     .code(ResponseCode.UN_ERROR.getCode())
                     .info("写入终端失败: " + e.getMessage())
-                    .build();
-        }
-    }
-
-    @RequestMapping(value = "read11", method = RequestMethod.GET)
-    public Response<TerminalReadResponseDTO> readFromTerminal(@RequestParam("sessionId") String sessionId) {
-        try {
-            String output = sshTerminalDomainService.readTerminal(sessionId);
-            TerminalReadResponseDTO response = TerminalReadResponseDTO.builder()
-                    .output(output != null ? output : "")
-                    .build();
-            return Response.<TerminalReadResponseDTO>builder()
-                    .code(ResponseCode.SUCCESS.getCode())
-                    .info(ResponseCode.SUCCESS.getInfo())
-                    .data(response)
-                    .build();
-        } catch (AppException appException) {
-            log.warn("读取终端参数错误: {}", appException.getMessage());
-            return Response.<TerminalReadResponseDTO>builder()
-                    .code(appException.getCode())
-                    .info(appException.getMessage())
-                    .build();
-        } catch (Exception e) {
-            log.error("读取终端失败 sessionId={}", sessionId, e);
-            return Response.<TerminalReadResponseDTO>builder()
-                    .code(ResponseCode.UN_ERROR.getCode())
-                    .info("读取终端失败: " + e.getMessage())
                     .build();
         }
     }
@@ -346,6 +288,7 @@ public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTe
                 .build();
     }
 
+    @Override
     @RequestMapping(value = "read", method = RequestMethod.GET)
     public CompletableFuture<Response<TerminalReadResultDTO>> readAsyncFromTerminal(@RequestParam("sessionId") String sessionId) {
         try {

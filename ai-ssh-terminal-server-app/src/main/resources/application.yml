@@ -97,6 +97,19 @@ ai:
       # 逗号分隔的工具名白名单；这些工具永远保留且不参与 System One 判断。
       always-keep-tools: ${AI_DECISION_TOOL_SELECTION_ALWAYS_KEEP_TOOLS:}
 
+    # AI 发起 SSH 命令时，在本地硬规则通过后执行 Jev/Laya 语义风险判断。
+    command-risk:
+      # 关闭后只保留现有本地正则安全策略，不发送 System One 请求。
+      enabled: ${AI_DECISION_COMMAND_RISK_ENABLED:true}
+      # true 时记录 ALLOW/REVIEW/BLOCK，但不真正执行 Jev/Laya 拦截。
+      shadow-mode: ${AI_DECISION_COMMAND_RISK_SHADOW_MODE:false}
+      # 只有达到该概率的结构化结论才正式生效；低概率或异常回退本地策略。
+      min-answer-probability: ${AI_DECISION_COMMAND_RISK_MIN_ANSWER_PROBABILITY:0.80}
+      # 命令在限制内完整发送；超限时不发送截断命令，直接回退本地硬规则。
+      max-command-characters: ${AI_DECISION_COMMAND_RISK_MAX_COMMAND_CHARACTERS:8192}
+      # 用户任务只用于辅助理解授权目标，可以安全截断。
+      max-user-message-characters: ${AI_DECISION_COMMAND_RISK_MAX_USER_MESSAGE_CHARACTERS:2000}
+
 spring:
   servlet:
     multipart:

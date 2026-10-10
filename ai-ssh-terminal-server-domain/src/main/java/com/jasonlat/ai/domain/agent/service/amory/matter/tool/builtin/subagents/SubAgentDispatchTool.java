@@ -149,7 +149,8 @@ public class SubAgentDispatchTool extends BaseTool implements AdkToolProvider {
                     AgentInvocationContext childInvocation = parentInvocation.forChild(
                             subAgent.name(),
                             functionCallId,
-                            functionCallId
+                            functionCallId,
+                            request
                     );
 
                     /*

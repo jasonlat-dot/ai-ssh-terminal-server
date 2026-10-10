@@ -8,7 +8,8 @@ import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.AgentInvocationSupport;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.register.AdkToolProvider;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentRunCancellation;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.valobj.CommandSafetyContext;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.valobj.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyPolicy;
 import com.jasonlat.ai.domain.agent.service.events.AgentEventPublisher;
 import com.jasonlat.ai.domain.ssh.service.ISshTerminalService;
@@ -55,7 +56,9 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
 
     @Resource
     private ISshTerminalService sshTerminalService;
-    @Resource
+
+    /** 统一的命令安全责任链入口，由 Spring 明确注入链组件。 */
+    @Resource(name = "commandSafetyPolicyChain")
     private CommandSafetyPolicy commandSafetyPolicy;
 
     public SshExecuteAdkTool() {
@@ -107,7 +110,11 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                 log.info("SSH 工具调用开始 agentName:{} invocationId={}, toolCallId={}, terminalSessionId={}, command={}",
                         agentName, toolContext.invocationId(), toolContext.functionCallId().orElse(""),
                         terminalSessionId, command);
-                Map<String, Object> executeResult = executeForTerminal(terminalSessionId, command);
+                Map<String, Object> executeResult = executeForTerminal(
+                        terminalSessionId,
+                        command,
+                        invocation,
+                        agentName);
                 if (cancellation != null) cancellation.throwIfCancelled();
 
                 // 使用相同 callId 发布 FunctionResponse，前端据此把 running 更新为 success/error。
@@ -123,35 +130,22 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
     /**
      * 真实业务执行入口。终端 ID 由 ADK 适配层提供，方法本身不感知 ToolContext。
      */
-    private Map<String, Object> executeForTerminal(String terminalSessionId, String command) throws InterruptedException {
+    private Map<String, Object> executeForTerminal(
+            String terminalSessionId,
+            String command,
+            AgentInvocationContext invocation,
+            String agentName
+    ) throws InterruptedException {
         String safeCommand = command == null ? "" : command;
-        CommandSafetyDecision decision = commandSafetyPolicy.evaluate(safeCommand);
-        if (!decision.isAllowed()) {
-            log.warn("SSH 命令被安全策略拦截 terminalSessionId={}, ruleId={}, reason={}, command={}",
-                    terminalSessionId, decision.getRuleId(), decision.getReason(), safeCommand);
-            return Map.of(
-                    "success", false,
-                    "blocked", true,
-                    "ruleId", decision.getRuleId(),
-                    "riskLevel", "DENIED",
-                    "output", "⚠️ 命令已被安全策略拦截：" + decision.getReason()
-                            + "\n如确认必须执行，请登录终端后人工操作。",
-                    "command", safeCommand);
-        }
 
-        if (terminalSessionId == null || terminalSessionId.isBlank()) {
-            log.warn("SSH 工具缺少请求级终端会话 ID，command={}", safeCommand);
-            return Map.of(
-                    "success", false,
-                    "output", "未绑定 SSH 终端会话。请先打开 SSH 终端连接。",
-                    "command", safeCommand);
-        }
-        if (!sshTerminalService.sessionExists(terminalSessionId)) {
-            log.warn("SSH 终端会话不存在 terminalSessionId={}", terminalSessionId);
-            return Map.of(
-                    "success", false,
-                    "output", "SSH 终端会话不存在或已关闭: " + terminalSessionId,
-                    "command", safeCommand);
+        /*
+         * 责任链统一执行本地硬规则、终端检查与 Jev/Laya 语义判断。
+         * 工具只处理最终结果；只有所有节点允许后才进入真实 SSH 执行通道。
+         */
+        CommandSafetyDecision decision = commandSafetyPolicy.evaluate(
+                CommandSafetyContext.of(safeCommand, terminalSessionId, invocation, agentName));
+        if (!decision.isAllowed()) {
+            return rejectedBySafetyPolicy(terminalSessionId, safeCommand, agentName, decision);
         }
 
         try {
@@ -179,6 +173,72 @@ public class SshExecuteAdkTool extends BaseTool implements AdkToolProvider {
                     "output", "命令执行异常: " + exception.getMessage(),
                     "command", safeCommand);
         }
+    }
+
+    /**
+     * 将责任链的拒绝结果转换成工具响应，供模型与前端统一展示。
+     *
+     * <p>终端前置条件失败仍按普通执行失败返回；安全策略拒绝附带 blocked、
+     * ruleId 和 riskLevel。外部语义拒绝额外携带概率与供应商信息，原始响应
+     * 不写入普通日志，也不返回给模型。</p>
+     *
+     * @param terminalSessionId 当前终端 ID，仅用于审计关联
+     * @param command 原始执行命令，保持与模型请求一致
+     * @param agentName 实际执行工具的 Agent 名称
+     * @param decision 责任链返回的首个拒绝结果
+     * @return 与原工具协议兼容的失败或拦截响应
+     */
+    private Map<String, Object> rejectedBySafetyPolicy(
+            String terminalSessionId,
+            String command,
+            String agentName,
+            CommandSafetyDecision decision
+    ) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        result.put("command", command);
+
+        // 未绑定或已关闭终端属于执行前置条件失败，不标记为危险命令。
+        if (!decision.isSafetyViolation()) {
+            log.warn("SSH 命令执行前置条件失败 command={} agentName={} ruleId={} terminalSessionId={}",
+                    truncateForLog(command), agentName, decision.getRuleId(), terminalSessionId);
+            result.put("output", decision.getReason());
+            return result;
+        }
+
+        result.put("blocked", true);
+        result.put("ruleId", decision.getRuleId());
+        var semanticDecision = decision.getSemanticDecision();
+        if (semanticDecision != null) {
+            // 审计证据由策略节点提供；工具只投影已有结果，不再次发起语义判断。
+            log.warn("SSH 命令被 System One 拦截 command={} agentName={} risk={} "
+                            + "answerProbability={} provider={} model={} terminalSessionId={}",
+                    truncateForLog(command), agentName, semanticDecision.choice(),
+                    semanticDecision.answerProbability(), semanticDecision.provider(),
+                    semanticDecision.model(), terminalSessionId);
+            result.put("riskLevel", semanticDecision.choice().name());
+            result.put("answerProbability", semanticDecision.answerProbability());
+            result.put("provider", semanticDecision.provider());
+            result.put("model", semanticDecision.model());
+            result.put("output", "⚠️ 命令已被智能安全策略拦截：" + decision.getReason()
+                    + "\n如确认必须执行，请登录终端后人工操作。");
+        } else {
+            log.warn("SSH 命令被安全策略拦截 command={} agentName={} ruleId={} reason={} terminalSessionId={}",
+                    truncateForLog(command), agentName, decision.getRuleId(),
+                    decision.getReason(), terminalSessionId);
+            result.put("riskLevel", "DENIED");
+            result.put("output", "⚠️ 命令已被安全策略拦截：" + decision.getReason()
+                    + "\n如确认必须执行，请登录终端后人工操作。");
+        }
+        return result;
+    }
+
+    /** 普通日志中的命令最多保留 512 个字符，避免超长载荷撑大日志。 */
+    private String truncateForLog(String command) {
+        if (command == null) {
+            return "";
+        }
+        return command.length() <= 512 ? command : command.substring(0, 512);
     }
 
     /**

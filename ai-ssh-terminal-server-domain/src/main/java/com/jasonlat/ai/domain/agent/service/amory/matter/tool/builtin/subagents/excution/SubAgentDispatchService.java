@@ -175,7 +175,11 @@ public class SubAgentDispatchService {
 
                 // 子 Runner 使用独立 ADK Session，继承取消句柄和父调用关联信息。
                 // SSH 终端绑定是可选的：存在时传递；实际执行 SSH 命令时再校验。
-                AgentInvocationContext childInvocation = getInvocationContext(context, agent, agentCallId);
+                AgentInvocationContext childInvocation = getInvocationContext(
+                        context,
+                        agent,
+                        agentCallId,
+                        task.getRequest());
 
                 /*
                  * 每次执行尝试创建独立观察会话。
@@ -265,7 +269,12 @@ public class SubAgentDispatchService {
 
     }
 
-    private static @NonNull AgentInvocationContext getInvocationContext(AgentExecutionContext context, BaseAgent agent, String agentCallId) {
+    private static @NonNull AgentInvocationContext getInvocationContext(
+            AgentExecutionContext context,
+            BaseAgent agent,
+            String agentCallId,
+            String delegatedRequest
+    ) {
         AgentInvocationContext parentInvocation = context.getInvocationContext();
         if (parentInvocation == null) {
             throw new IllegalStateException("子 Agent 派发缺少调用上下文");
@@ -274,7 +283,8 @@ public class SubAgentDispatchService {
         return parentInvocation.forChild(
                 agent.name(),
                 agentCallId,
-                context.getParentToolCallId()
+                context.getParentToolCallId(),
+                delegatedRequest
         );
     }
 

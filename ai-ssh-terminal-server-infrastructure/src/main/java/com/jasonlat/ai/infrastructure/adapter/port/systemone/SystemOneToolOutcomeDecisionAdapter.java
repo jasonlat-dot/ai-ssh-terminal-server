@@ -3,6 +3,7 @@ package com.jasonlat.ai.infrastructure.adapter.port.systemone;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
 import com.jasonlat.ai.infrastructure.model.settings.ToolOutcomeDecisionSettings;
 import lombok.extern.slf4j.Slf4j;
@@ -86,7 +87,7 @@ public class SystemOneToolOutcomeDecisionAdapter
      * @return 达到本地概率门槛且非影子模式时返回结构化结论，否则返回空
      */
     @Override
-    public Optional<ToolOutcomeDecision> assess(ToolOutcomeDecisionRequest request) {
+    public Optional<StructuredDecision<ToolOutcome>> assess(ToolOutcomeDecisionRequest request) {
         /*
          * System One 全局关闭，或工具结果判断子能力关闭时，不创建网络请求。
          * 调用方收到空值后会自动继续执行已有的本地判断规则。
@@ -107,7 +108,7 @@ public class SystemOneToolOutcomeDecisionAdapter
         }
 
         // 协议层只认识字符串，本适配器在这里把它转换为工具结果领域枚举。
-        Optional<ToolOutcomeDecision> mapped = mapToolOutcomeDecision(response.get());
+        Optional<StructuredDecision<ToolOutcome>> mapped = mapToolOutcomeDecision(response.get());
 
         if (mapped.isEmpty()) {
             log.warn(
@@ -121,7 +122,7 @@ public class SystemOneToolOutcomeDecisionAdapter
             return Optional.empty();
         }
 
-        ToolOutcomeDecision decision = mapped.get();
+        StructuredDecision<ToolOutcome> decision = mapped.get();
 
         /*
          * Jev 与 Laya 的 native confidence 计算方式可能不同。
@@ -136,7 +137,7 @@ public class SystemOneToolOutcomeDecisionAdapter
                 request.toolName(),
                 request.currentIntent(),
                 request.reportedSuccess(),
-                decision.outcome(),
+                decision.choice(),
                 accepted,
                 decision.answerProbability(),
                 decision.provider(),
@@ -198,7 +199,7 @@ public class SystemOneToolOutcomeDecisionAdapter
      * @param response 已完成公共 Choice 结构校验的协议响应
      * @return choice 和概率能够映射到 ToolOutcome 时返回领域结果，否则返回空
      */
-    private Optional<ToolOutcomeDecision> mapToolOutcomeDecision(ChoiceResponse response) {
+    private Optional<StructuredDecision<ToolOutcome>> mapToolOutcomeDecision(ChoiceResponse response) {
         ToolOutcome outcome;
 
         try {
@@ -232,7 +233,7 @@ public class SystemOneToolOutcomeDecisionAdapter
             return Optional.empty();
         }
 
-        return Optional.of(new ToolOutcomeDecision(
+        return Optional.of(new StructuredDecision<>(
                 outcome,
                 response.answerProbability(),
                 response.nativeConfidence(),

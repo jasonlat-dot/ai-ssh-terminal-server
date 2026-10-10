@@ -1,17 +1,24 @@
 package com.jasonlat.ai.infrastructure.adapter.port;
 
 import com.jasonlat.ai.domain.ssh.adapter.port.ISshSessionPort;
+import com.jasonlat.ai.domain.ssh.model.valobj.SshConnectionAttempt;
 import com.jasonlat.ai.infrastructure.model.settings.SshHttpProxySettings;
 import com.jasonlat.ai.types.utils.StringUtils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.ProxyHTTP;
 import com.jcraft.jsch.Session;
+import com.jcraft.jsch.SocketFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -109,6 +116,7 @@ public class SshSessionPort implements ISshSessionPort {
     @Override
     public boolean connect(String connectionId, String host, int port, String username, String password, String privateKey) {
         return withConnectionLock(connectionId, () -> {
+            SshConnectionAttempt.checkCurrent();
             Session previous = sshSessions.get(connectionId);
             // 健康 Session 上可以继续 openChannel("shell")，不能因新窗口接入而替换它。
             if (previous != null && previous.isConnected()) {
@@ -138,6 +146,8 @@ public class SshSessionPort implements ISshSessionPort {
                  */
                 JSch connectionJsch = new JSch();
                 session = connectionJsch.getSession(username, host, port);
+                SshConnectionAttempt attempt = SshConnectionAttempt.current();
+                if (attempt != null) session.setSocketFactory(cancellableSocketFactory(attempt));
                 configureHttpProxy(session, connectionId);
             /*
              * SSH 原生机制：第一次连接服务器，服务器会返回 host‑key（主机公钥指纹）。
@@ -164,6 +174,7 @@ public class SshSessionPort implements ISshSessionPort {
 
             // connect(int) 只控制建连阶段，避免网络不可达时无限等待。
             session.connect(CONNECT_TIMEOUT_MILLIS);
+            SshConnectionAttempt.checkCurrent();
 
             /*
              * 必须在连接成功后调用 JSch 的专用 API。setServerAliveInterval 会为
@@ -187,6 +198,7 @@ public class SshSessionPort implements ISshSessionPort {
 
             } catch (JSchException e) {
                 closeSession(connectionId, session);
+                SshConnectionAttempt.checkCurrent();
                 log.error("SSH{}失败 connectionId={} host={}:{} durationMs={} error={}",
                         reconnect ? "重连" : "连接",
                         connectionId,
@@ -196,8 +208,41 @@ public class SshSessionPort implements ISshSessionPort {
                         e.getMessage(),
                         e);
                 return false;
+            } catch (RuntimeException exception) {
+                closeSession(connectionId, session);
+                throw exception;
             }
         });
+    }
+
+    /** 将尚在 TCP 连接、代理协商或 SSH 握手中的 socket 纳入本次请求的取消范围。 */
+    private SocketFactory cancellableSocketFactory(SshConnectionAttempt attempt) {
+        return new SocketFactory() {
+            @Override
+            public Socket createSocket(String host, int port) throws IOException {
+                Socket socket = new Socket();
+                attempt.onCancel(() -> {
+                    try { socket.close(); }
+                    catch (IOException ignored) { }
+                });
+                try {
+                    attempt.checkCancelled();
+                    socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MILLIS);
+                    attempt.checkCancelled();
+                    return socket;
+                } catch (IOException | RuntimeException exception) {
+                    try { socket.close(); }
+                    catch (IOException ignored) { }
+                    throw exception;
+                }
+            }
+
+            @Override
+            public InputStream getInputStream(Socket socket) throws IOException { return socket.getInputStream(); }
+
+            @Override
+            public OutputStream getOutputStream(Socket socket) throws IOException { return socket.getOutputStream(); }
+        };
     }
 
     /**

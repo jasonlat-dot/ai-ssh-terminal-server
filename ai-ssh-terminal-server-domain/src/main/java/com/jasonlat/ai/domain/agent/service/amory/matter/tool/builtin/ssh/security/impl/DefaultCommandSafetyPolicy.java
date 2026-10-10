@@ -1,7 +1,7 @@
 package com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.impl;
 
 import com.jasonlat.ai.domain.agent.model.valobj.properties.SshCommandSafetyProperties;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.valobj.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyPolicy;
 import org.springframework.stereotype.Component;
 
@@ -128,6 +128,12 @@ public class DefaultCommandSafetyPolicy implements CommandSafetyPolicy {
         this.maxCommandLength = Math.max(1, properties.getMaxCommandLength());
         this.denyRules = new ArrayList<>(BUILT_IN_DENY_RULES);
         this.denyRules.addAll(compileAdditionalRules(properties.getAdditionalDenyRules()));
+    }
+
+    /** @return 本地命令检查的默认排序值，修改此值即可调整节点顺序 */
+    @Override
+    public int getOrder() {
+        return 10;
     }
 
     @Override

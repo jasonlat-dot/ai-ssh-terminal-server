@@ -3,6 +3,7 @@ package com.jasonlat.ai.infrastructure.adapter.port;
 import com.jasonlat.ai.domain.ssh.adapter.port.ITerminalSessionPort;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalDisconnectReason;
 import com.jasonlat.ai.domain.ssh.model.valobj.TerminalReadResult;
+import com.jasonlat.ai.domain.ssh.model.valobj.SshConnectionAttempt;
 import com.jasonlat.ai.infrastructure.model.settings.SshCommandSettings;
 import com.jasonlat.ai.infrastructure.model.settings.TerminalSessionSettings;
 import com.jasonlat.ai.types.enums.ResponseCode;
@@ -120,6 +121,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
 
 
         try {
+            SshConnectionAttempt.checkCurrent();
             /*
              * ================================
              * 2. 获取底层 SSH Session
@@ -136,6 +138,11 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * ================================
              */
             channel = (ChannelShell) sshSession.openChannel("shell");
+            SshConnectionAttempt attempt = SshConnectionAttempt.current();
+            if (attempt != null) {
+                ChannelShell pendingChannel = channel;
+                attempt.onCancel(pendingChannel::disconnect);
+            }
 
 
             /*
@@ -172,6 +179,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * ================================
              */
             channel.connect(5000);
+            SshConnectionAttempt.checkCurrent();
 
             /*
              * ================================
@@ -193,6 +201,7 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
              * ================================
              */
             startOutputReader(context);
+            SshConnectionAttempt.checkCurrent();
 
             /*
              * 注意：
@@ -210,8 +219,6 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
             return sessionId;
 
         } catch (Exception e) {
-            log.error("打开终端会话失败 connectionId={} sessionId={}", connectionId, sessionId, e);
-
             /*
              * 如果 context 已经成功加入 terminalSessions，
              * 使用统一 cleanup 清理。
@@ -229,6 +236,8 @@ public class TerminalSessionPort extends TerminalSessionPortSupport implements I
                 disconnectQuietly(channel);
                 releaseSessionQuota(userId, connectionId);
             }
+            SshConnectionAttempt.checkCurrent();
+            log.error("打开终端会话失败 connectionId={} sessionId={}", connectionId, sessionId, e);
             if (e instanceof AppException appException) {
                 throw appException;
             }

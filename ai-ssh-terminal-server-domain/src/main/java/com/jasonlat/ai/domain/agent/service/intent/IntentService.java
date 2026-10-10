@@ -3,8 +3,8 @@ package com.jasonlat.ai.domain.agent.service.intent;
 
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort;
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcome;
-import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecision;
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecisionRequest;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.*;
 import com.jasonlat.ai.domain.agent.service.IIntentService;
 import com.jasonlat.ai.domain.agent.service.intent.classifier.factory.DefaultClassifyFactory;
@@ -283,7 +283,7 @@ public class IntentService implements IIntentService {
             boolean reportedSuccess,
             String toolResult
     ) {
-        Optional<ToolOutcomeDecision> externalDecision;
+        Optional<StructuredDecision<ToolOutcome>> externalDecision;
 
         try {
             ToolOutcomeDecisionRequest request = new ToolOutcomeDecisionRequest(
@@ -314,10 +314,10 @@ public class IntentService implements IIntentService {
         }
 
         if (externalDecision.isPresent()) {
-            ToolOutcomeDecision decision = externalDecision.get();
+            StructuredDecision<ToolOutcome> decision = externalDecision.get();
 
             return new FeedbackAssessment(
-                    decision.outcome(),
+                    decision.choice(),
                     true,
                     decision.answerProbability(),
                     decision.provider());

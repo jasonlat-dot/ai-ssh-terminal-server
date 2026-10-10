@@ -1,6 +1,7 @@
 package com.jasonlat.ai.domain.agent.adapter.port;
 
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -37,7 +38,7 @@ public interface IIntentDecisionPort {
      * @param request 本次意图分类请求，包含用户消息、对话上下文和候选意图说明
      * @return 达到使用条件时返回结构化意图结果，否则返回 Optional.empty()
      */
-    Optional<IntentDecision> classify(IntentDecisionRequest request);
+    Optional<StructuredDecision<IntentTypeEnumVO>> classify(IntentDecisionRequest request);
 
     /**
      * 快速结构化意图分类请求。
@@ -78,51 +79,4 @@ public interface IIntentDecisionPort {
         }
     }
 
-    /**
-     * 快速结构化意图分类结果。
-     *
-     * @param intent             最终选中的意图
-     * @param answerProbability  被选中意图在 probabilities 中的概率
-     * @param nativeConfidence   Jev/Laya 原始 confidence，仅用于观测，不用于跨供应商统一门槛
-     * @param probabilities      每个合法意图对应的完整概率分布
-     * @param provider           实际使用的供应商标识，例如 jev 或 laya
-     * @param model              供应商返回的实际模型名称
-     * @param rawResponse        供应商返回的原始 JSON，供问题排查使用
-     */
-    record IntentDecision(
-            IntentTypeEnumVO intent,
-            double answerProbability,
-            double nativeConfidence,
-            Map<IntentTypeEnumVO, Double> probabilities,
-            String provider,
-            String model,
-            String rawResponse
-    ) {
-
-        /**
-         * Record 紧凑构造器。
-         *
-         * <p>确保领域层收到的结果始终包含合法意图和有效答案概率。</p>
-         */
-        public IntentDecision {
-            if (intent == null) {
-                throw new IllegalArgumentException("意图分类结果不能为空");
-            }
-
-            if (!Double.isFinite(answerProbability) || answerProbability < 0.0 || answerProbability > 1.0) {
-                throw new IllegalArgumentException("答案概率必须位于 0 到 1 之间");
-            }
-
-            /*
-             * 响应概率做防御性复制。
-             * 即使基础设施层后续复用了原 Map，也不能修改已经产生的领域结果。
-             */
-            probabilities = probabilities == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(probabilities));
-
-            // 可观测字段允许为空，但领域对象内部统一使用空字符串而不是 null。
-            provider = provider == null ? "" : provider;
-            model = model == null ? "" : model;
-            rawResponse = rawResponse == null ? "" : rawResponse;
-        }
-    }
 }

@@ -3,6 +3,7 @@ package com.jasonlat.ai.trigger.api;
 
 import com.jasonlat.ai.trigger.api.dto.*;
 import com.jasonlat.ai.trigger.api.response.Response;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * SSH 终端服务接口
@@ -11,14 +12,14 @@ import com.jasonlat.ai.trigger.api.response.Response;
 public interface ISshTerminalService {
 
     /**
-     * 打开终端会话
+     * 建立 SSH 连接并创建可取消的终端会话。
      */
-    Response<TerminalOpenResponseDTO> openTerminal(TerminalOpenRequestDTO requestDTO);
+    Response<TerminalOpenResponseDTO> connectTerminal(TerminalOpenRequestDTO requestDTO);
 
     /**
-     * 执行命令并获取输出
+     * 取消指定请求的终端建连。
      */
-    Response<TerminalExecResponseDTO> execCommand(TerminalExecRequestDTO requestDTO);
+    Response<Void> cancelConnect(String requestId, String connectionId);
 
     /**
      * 向终端写入原始输入（按键、粘贴等）
@@ -26,9 +27,9 @@ public interface ISshTerminalService {
     Response<Void> writeToTerminal(TerminalWriteRequestDTO requestDTO);
 
     /**
-     * 从终端读取输出数据
+     * 通过长轮询读取终端输出及连接状态。
      */
-    Response<TerminalReadResponseDTO> readFromTerminal(String sessionId);
+    CompletableFuture<Response<TerminalReadResultDTO>> readAsyncFromTerminal(String sessionId);
 
     /**
      * 查询某个页签自己的终端是否仍然连接。

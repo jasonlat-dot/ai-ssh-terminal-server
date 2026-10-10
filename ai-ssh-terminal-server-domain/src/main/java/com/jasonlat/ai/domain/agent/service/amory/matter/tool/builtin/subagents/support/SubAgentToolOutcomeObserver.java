@@ -5,9 +5,10 @@ import com.google.adk.events.Event;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort;
-import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecision;
+import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcome;
 import com.jasonlat.ai.domain.agent.adapter.port.IToolOutcomeDecisionPort.ToolOutcomeDecisionRequest;
 import com.jasonlat.ai.domain.agent.model.valobj.dynamic.AgentInvocationContext;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -250,7 +251,8 @@ public class SubAgentToolOutcomeObserver {
                         reportedSuccess,
                         output);
 
-                Optional<ToolOutcomeDecision> decision = toolOutcomeDecisionPort.assess(request);
+                Optional<StructuredDecision<ToolOutcome>> decision =
+                        toolOutcomeDecisionPort.assess(request);
 
                 /*
                  * 适配器已经记录所有成功解析结果，包括影子模式和低概率结果。
@@ -261,7 +263,7 @@ public class SubAgentToolOutcomeObserver {
                                 + "reportedSuccess={} answerProbability={} toolCallId={}",
                         toolName,
                         sourceAgent,
-                        value.outcome(),
+                        value.choice(),
                         reportedSuccess,
                         value.answerProbability(),
                         responseId));

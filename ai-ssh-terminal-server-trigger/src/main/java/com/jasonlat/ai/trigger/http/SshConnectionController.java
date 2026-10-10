@@ -183,39 +183,6 @@ public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISsh
         }
     }
 
-    @RequestMapping(value = "connect", method = RequestMethod.POST)
-    @Override
-    public Response<Void> connect(@RequestParam("connectionId") String connectionId) {
-        try {
-            log.info("建立SSH连接 connectionId={}", connectionId);
-            boolean success = sshConnectionDomainService.connect(connectionId);
-
-            if (success) {
-                return Response.<Void>builder()
-                        .code(ResponseCode.SUCCESS.getCode())
-                        .info("连接成功")
-                        .build();
-            } else {
-                return Response.<Void>builder()
-                        .code(ResponseCode.UN_ERROR.getCode())
-                        .info("连接失败，请检查主机地址、端口和认证信息")
-                        .build();
-            }
-        } catch (IllegalArgumentException e) {
-            log.warn("建立SSH连接参数错误: {}", e.getMessage());
-            return Response.<Void>builder()
-                    .code(ResponseCode.ILLEGAL_PARAMETER.getCode())
-                    .info(e.getMessage())
-                    .build();
-        } catch (Exception e) {
-            log.error("建立SSH连接失败 connectionId={}", connectionId, e);
-            return Response.<Void>builder()
-                    .code(ResponseCode.UN_ERROR.getCode())
-                    .info("连接失败: " + e.getMessage())
-                    .build();
-        }
-    }
-
     // ========== DTO <-> Entity 转换 ==========
 
     private SshConnectionEntity toEntity(SshConnectionRequestDTO dto) {

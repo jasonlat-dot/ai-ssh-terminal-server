@@ -23,7 +23,8 @@ public class DecisionProviderProperties implements InitializingBean {
     /**
      * 是否启用 System One 结构化决策能力。
      *
-     * <p>false 时意图识别、工具筛选和工具结果判断均不会发送外部请求。</p>
+     * <p>false 时意图识别、工具筛选、工具结果判断和 SSH 命令风险判断
+     * 均不会发送外部请求。</p>
      */
     private boolean enabled = false;
 
@@ -86,6 +87,14 @@ public class DecisionProviderProperties implements InitializingBean {
     private ToolSelectionProperties toolSelection = new ToolSelectionProperties();
 
     /**
+     * SSH 命令语义风险判断的独立配置。
+     *
+     * <p>本地命令硬规则始终生效；该配置只控制通过本地规则后的
+     * Jev/Laya 语义补充判断。</p>
+     */
+    private CommandRiskProperties commandRisk = new CommandRiskProperties();
+
+    /**
      * 工具结果与意图偏差判断配置。
      */
     @Data
@@ -141,6 +150,28 @@ public class DecisionProviderProperties implements InitializingBean {
 
         /** 永远保留且不交给 System One 判断的工具名称。 */
         private List<String> alwaysKeepTools = new ArrayList<>();
+    }
+
+    /**
+     * SSH 命令语义风险判断配置。
+     */
+    @Data
+    public static class CommandRiskProperties {
+
+        /** 是否调用 System One 执行命令语义风险判断。 */
+        private boolean enabled = true;
+
+        /** true 时只记录判断，不真正拦截 REVIEW/BLOCK。 */
+        private boolean shadowMode = false;
+
+        /** ALLOW/REVIEW/BLOCK 结论可以正式生效的最低答案概率。 */
+        private double minAnswerProbability = 0.80;
+
+        /** 最多发送给决策服务的命令字符数。 */
+        private int maxCommandCharacters = 8_192;
+
+        /** 最多发送给决策服务的用户任务或子 Agent 委派任务字符数。 */
+        private int maxUserMessageCharacters = 2_000;
     }
 
     /**
@@ -225,6 +256,28 @@ public class DecisionProviderProperties implements InitializingBean {
 
         if (toolSelection.getAlwaysKeepTools() == null) {
             toolSelection.setAlwaysKeepTools(new ArrayList<>());
+        }
+
+        if (commandRisk == null) {
+            throw new IllegalArgumentException("ai.decision.command-risk 配置不能为空");
+        }
+
+        double commandRiskThreshold = commandRisk.getMinAnswerProbability();
+        if (!Double.isFinite(commandRiskThreshold)
+                || commandRiskThreshold < 0.0
+                || commandRiskThreshold > 1.0) {
+            throw new IllegalArgumentException(
+                    "ai.decision.command-risk.min-answer-probability 必须位于 0 到 1 之间");
+        }
+
+        if (commandRisk.getMaxCommandCharacters() < 64) {
+            throw new IllegalArgumentException(
+                    "ai.decision.command-risk.max-command-characters 不能小于 64");
+        }
+
+        if (commandRisk.getMaxUserMessageCharacters() < 128) {
+            throw new IllegalArgumentException(
+                    "ai.decision.command-risk.max-user-message-characters 不能小于 128");
         }
     }
 }

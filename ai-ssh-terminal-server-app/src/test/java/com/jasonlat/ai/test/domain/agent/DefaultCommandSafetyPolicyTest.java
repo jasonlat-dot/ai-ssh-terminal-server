@@ -1,7 +1,7 @@
 package com.jasonlat.ai.test.domain.agent;
 
 import com.jasonlat.ai.domain.agent.model.valobj.properties.SshCommandSafetyProperties;
-import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.CommandSafetyDecision;
+import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.valobj.CommandSafetyDecision;
 import com.jasonlat.ai.domain.agent.service.amory.matter.tool.builtin.ssh.security.impl.DefaultCommandSafetyPolicy;
 import org.junit.jupiter.api.Test;
 

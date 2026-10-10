@@ -163,7 +163,12 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     Math.max(0, historySizeBeforeTrim - trimmedHistory.size()), elapsedMillis(trimStartNanos));
 
             // 同步覆盖 ADK 临时 Session：只投影裁剪后的历史和本次工具所需的终端会话 ID。
-            prepareAdkInvocation(runner, context, trimmedHistory, attachmentScope);
+            prepareAdkInvocation(
+                    runner,
+                    context,
+                    trimmedHistory,
+                    attachmentScope,
+                    userMessage);
 
             // 当前 user 原文写入业务历史 必须放在 prepareAdkInvocation 之后，避免当前消息被同时作为历史和 runAsync 参数发送两次
             context.appendUserMessage(historyMessage);
@@ -349,8 +354,13 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         }
     }
 
-    private void prepareAdkInvocation(Runner runner, DefaultReActFactory.DynamicContext context,
-                                      List<Map<String, Object>> priorHistory, InvocationAttachmentScope attachmentScope) {
+    private void prepareAdkInvocation(
+            Runner runner,
+            DefaultReActFactory.DynamicContext context,
+            List<Map<String, Object>> priorHistory,
+            InvocationAttachmentScope attachmentScope,
+            String userMessage
+    ) {
         long startNanos = System.nanoTime();
         log.info("ReAct链路-准备 ADK Session 投影 | sessionId:{} | appName:{} | historySize:{} | "
                         + "terminalSessionIdPresent:{}",
@@ -366,6 +376,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
         AgentInvocationContext invocation = AgentInvocationContext.builder()
                 .terminalSessionId(context.getTerminalSessionId())
                 .rootSessionId(context.getChatSessionId())
+                // 保留用户原文，供 SSH 命令执行前的 Jev/Laya 语义风险判断使用。
+                .currentTaskMessage(userMessage)
                 /*
                  * 子 Agent 不重复执行用户意图分类，只继承主 Agent 当前结果。
                  * 子 Runner 内部每个工具响应会使用该快照调用 Jev/Laya 工具结果判断。

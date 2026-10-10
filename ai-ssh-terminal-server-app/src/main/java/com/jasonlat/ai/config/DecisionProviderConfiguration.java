@@ -1,6 +1,7 @@
 package com.jasonlat.ai.config;
 
 import com.jasonlat.ai.config.properties.DecisionProviderProperties;
+import com.jasonlat.ai.infrastructure.model.settings.CommandRiskDecisionSettings;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
 import com.jasonlat.ai.infrastructure.model.settings.ToolOutcomeDecisionSettings;
 import com.jasonlat.ai.infrastructure.model.settings.ToolSelectionDecisionSettings;
@@ -82,6 +83,28 @@ public class DecisionProviderConfiguration {
                 toolSelection.getMaxDescriptionCharacters(),
                 toolSelection.getMaxContextCharacters(),
                 new LinkedHashSet<>(toolSelection.getAlwaysKeepTools())
+        );
+    }
+
+    /**
+     * 创建 SSH 命令语义风险能力的独立运行参数。
+     *
+     * @param properties Spring Boot 从 {@code ai.decision.command-risk} 读取的配置
+     * @return 命令风险适配器使用的不可变参数
+     */
+    @Bean
+    public CommandRiskDecisionSettings commandRiskDecisionSettings(
+            DecisionProviderProperties properties
+    ) {
+        DecisionProviderProperties.CommandRiskProperties commandRisk =
+                properties.getCommandRisk();
+
+        return new CommandRiskDecisionSettings(
+                commandRisk.isEnabled(),
+                commandRisk.isShadowMode(),
+                commandRisk.getMinAnswerProbability(),
+                commandRisk.getMaxCommandCharacters(),
+                commandRisk.getMaxUserMessageCharacters()
         );
     }
 }

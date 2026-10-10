@@ -56,7 +56,8 @@ public class MyTestPlugin extends BasePlugin implements Ordered {
     @Override
     public Maybe<Content> onUserMessageCallback(InvocationContext invocationContext, Content userMessage) {
         return Maybe.fromAction(() -> {
-            log.info("插件日志-🚀 用户输入信息 | invocationId:{} | userId:{} | partCount:{}",
+            log.info("插件日志-🚀 用户输入信息 | message:{} | invocationId:{} | userId:{} | partCount:{}",
+                    formatContent(invocationContext.userContent()),
                     invocationContext.invocationId(),
                     invocationContext.userId(),
                     userMessage.parts().map(java.util.List::size).orElse(0));

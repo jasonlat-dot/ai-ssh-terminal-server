@@ -1,10 +1,8 @@
 package com.jasonlat.ai.domain.agent.adapter.port;
 
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -35,7 +33,7 @@ public interface IToolOutcomeDecisionPort {
      * @param request 本次工具结果判断请求，包含用户目标、当前意图、工具信息和执行结果
      * @return 结果满足正式使用条件时返回结构化判断，否则返回 Optional.empty()
      */
-    Optional<ToolOutcomeDecision> assess(ToolOutcomeDecisionRequest request);
+    Optional<StructuredDecision<ToolOutcome>> assess(ToolOutcomeDecisionRequest request);
 
     /**
      * 工具结果的四种互斥结论。
@@ -115,52 +113,4 @@ public interface IToolOutcomeDecisionPort {
         }
     }
 
-    /**
-     * 工具结果偏差判断的结构化响应。
-     *
-     * @param outcome            最终选中的工具结果结论
-     * @param answerProbability  被选中结论在 probabilities 中对应的概率
-     * @param nativeConfidence   供应商原生 confidence，仅用于日志和校准分析
-     * @param probabilities      所有合法结论对应的完整概率分布
-     * @param provider           实际供应商标识，例如 jev 或 laya
-     * @param model              服务端实际返回的模型名称
-     * @param rawResponse        供应商原始 JSON，供调试和离线分析使用
-     */
-    record ToolOutcomeDecision(
-            ToolOutcome outcome,
-            double answerProbability,
-            double nativeConfidence,
-            Map<ToolOutcome, Double> probabilities,
-            String provider,
-            String model,
-            String rawResponse
-    ) {
-
-        /**
-         * Record 紧凑构造器。
-         *
-         * <p>保证进入领域服务的正式判断包含合法结论和有效答案概率，
-         * 同时对概率 Map 做防御性复制，避免结果产生后被外部代码修改。</p>
-         */
-        public ToolOutcomeDecision {
-            if (outcome == null) {
-                throw new IllegalArgumentException("工具结果判断结论不能为空");
-            }
-
-            if (!Double.isFinite(answerProbability)
-                    || answerProbability < 0.0
-                    || answerProbability > 1.0) {
-                throw new IllegalArgumentException("答案概率必须位于 0 到 1 之间");
-            }
-
-            probabilities = probabilities == null
-                    ? Map.of()
-                    : Collections.unmodifiableMap(new LinkedHashMap<>(probabilities));
-
-            // 可观测字段允许缺失，但领域对象内部统一使用空字符串而不是 null。
-            provider = provider == null ? "" : provider;
-            model = model == null ? "" : model;
-            rawResponse = rawResponse == null ? "" : rawResponse;
-        }
-    }
 }

@@ -3,6 +3,7 @@ package com.jasonlat.ai.infrastructure.adapter.port.systemone;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jasonlat.ai.domain.agent.adapter.port.IIntentDecisionPort;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentTypeEnumVO;
 import com.jasonlat.ai.infrastructure.model.settings.SystemOneDecisionSettings;
 import lombok.extern.slf4j.Slf4j;
@@ -60,7 +61,7 @@ public class SystemOneIntentDecisionAdapter
      * @return 结果达到门槛且非影子模式时返回意图，否则返回 Optional.empty()
      */
     @Override
-    public Optional<IntentDecision> classify(IntentDecisionRequest request) {
+    public Optional<StructuredDecision<IntentTypeEnumVO>> classify(IntentDecisionRequest request) {
         // 全局功能关闭时不构建请求，也不产生任何网络调用。
         if (!settings.enabled()) {
             return Optional.empty();
@@ -76,7 +77,7 @@ public class SystemOneIntentDecisionAdapter
             return Optional.empty();
         }
 
-        Optional<IntentDecision> mapped = mapIntentDecision(response.get());
+        Optional<StructuredDecision<IntentTypeEnumVO>> mapped = mapIntentDecision(response.get());
 
         if (mapped.isEmpty()) {
             log.warn(
@@ -88,13 +89,13 @@ public class SystemOneIntentDecisionAdapter
             return Optional.empty();
         }
 
-        IntentDecision decision = mapped.get();
+        StructuredDecision<IntentTypeEnumVO> decision = mapped.get();
         boolean accepted = decision.answerProbability() >= settings.minAnswerProbability();
 
         log.info(
                 "System One 意图分类 intent={} accepted={} answerProbability={} provider={} "
                         + "model={} nativeConfidence={} shadowMode={} elapsedMs={}",
-                decision.intent(),
+                decision.choice(),
                 accepted,
                 decision.answerProbability(),
                 decision.provider(),
@@ -141,7 +142,7 @@ public class SystemOneIntentDecisionAdapter
      * @param response 已完成公共协议校验的 Choice 响应
      * @return choice 和概率都能映射到 IntentTypeEnumVO 时返回领域结果
      */
-    private Optional<IntentDecision> mapIntentDecision(ChoiceResponse response) {
+    private Optional<StructuredDecision<IntentTypeEnumVO>> mapIntentDecision(ChoiceResponse response) {
         IntentTypeEnumVO intent;
 
         try {
@@ -167,7 +168,7 @@ public class SystemOneIntentDecisionAdapter
             return Optional.empty();
         }
 
-        return Optional.of(new IntentDecision(
+        return Optional.of(new StructuredDecision<>(
                 intent,
                 response.answerProbability(),
                 response.nativeConfidence(),

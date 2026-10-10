@@ -4,6 +4,7 @@ package com.jasonlat.ai.domain.agent.service.intent.classifier.node;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jasonlat.ai.domain.agent.adapter.port.IIntentDecisionPort;
+import com.jasonlat.ai.domain.agent.model.valobj.decision.StructuredDecision;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.ConversationContextVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentRequestVO;
 import com.jasonlat.ai.domain.agent.model.valobj.intent.IntentResultVO;
@@ -305,13 +306,16 @@ public class LLMIntentClassifierNode extends AbstractIntentClassifierSupport {
     }
 
     /**
-     * 把供应商无关的 IntentDecision 转换成系统现有 IntentResultVO。
+     * 把供应商无关的结构化决策转换成系统现有 IntentResultVO。
      *
      * @param decision         Jev/Laya 结构化意图决策结果
      * @param fallbackEntities 规则层已经提取的实体
      * @return 可供现有意图链路直接使用的结果
      */
-    private IntentResultVO toIntentResult(IIntentDecisionPort.IntentDecision decision, Map<String, String> fallbackEntities) {
+    private IntentResultVO toIntentResult(
+            StructuredDecision<IntentTypeEnumVO> decision,
+            Map<String, String> fallbackEntities
+    ) {
         /*
          * 从完整概率分布中选出三个次高意图。
          * 排除主意图和 UNKNOWN，避免候选项重复或没有业务价值。
@@ -322,7 +326,7 @@ public class LLMIntentClassifierNode extends AbstractIntentClassifierSupport {
                         .stream()
                         .filter(entry ->
                                 entry.getKey()
-                                        != decision.intent())
+                                        != decision.choice())
                         .filter(entry ->
                                 entry.getKey()
                                         != IntentTypeEnumVO.UNKNOWN)
@@ -348,7 +352,7 @@ public class LLMIntentClassifierNode extends AbstractIntentClassifierSupport {
                         : Map.copyOf(fallbackEntities);
 
         return IntentResultVO.builder()
-                .intent(decision.intent())
+                .intent(decision.choice())
                 /*
                  * 现有下游根据 confidence 做路由。
                  * 这里写入跨供应商统一的答案概率。

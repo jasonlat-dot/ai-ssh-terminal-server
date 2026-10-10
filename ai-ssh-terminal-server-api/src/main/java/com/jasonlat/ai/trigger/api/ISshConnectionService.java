@@ -36,9 +36,4 @@ public interface ISshConnectionService {
      */
     Response<List<SshConnectionResponseDTO>> getConnectionList(String userId);
 
-    /**
-     * 建立SSH连接
-     */
-    Response<Void> connect(String connectionId);
-
 }
