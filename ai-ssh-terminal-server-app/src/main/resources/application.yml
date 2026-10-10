@@ -1,6 +1,21 @@
 #file: noinspection SpringBootApplicationYaml
 server:
-  port: 8889
+  address: 127.0.0.1
+  forward-headers-strategy: framework
+  port: 8888
+  http2:
+    # TLS 下通过 ALPN 协商 h2；明文 h2c 不能解决 WebView 的 HTTP/1.1 连接限制。
+    enabled: ${SERVER_HTTP2_ENABLED:true}
+  ssl:
+    # Java 只接受 HTTPS，不能关闭；Nginx/Caddy 到 Java 的上游连接也必须使用 HTTPS。
+    enabled: true
+    # 应用自定义开关：仅自动管理统一数据目录/tls/local-backend.p12。
+    # 关闭后完全使用用户的 SSL 配置；自定义 key-store、PEM 或 bundle 始终不自动生成。
+    auto-generate: ${LOCAL_TLS_AUTO_GENERATE:true}
+    # 默认证书地址：Tomcat 启动前检查，缺失时生成，有效时复用，临近过期时续期。
+    # 自动管理时密码从同目录 keystore.password 读取，不在 YAML/安装包中共享私钥或密码。
+    # 正式证书部署：关闭 server.ssl.auto-generate，并配置自有 key-store/type/password 或 bundle。
+    key-store: ${SERVER_SSL_KEY_STORE:file:${app.config.data-directory}/tls/local-backend.p12}
   tomcat:
     threads:
       max: 200        # 设定处理客户请求的线程的最大数目，决定了服务器可以同时响应客户请求的数,默认200

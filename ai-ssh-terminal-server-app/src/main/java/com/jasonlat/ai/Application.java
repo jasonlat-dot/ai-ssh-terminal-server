@@ -21,7 +21,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class Application {
 
     public static void main(String[] args){
-        SpringApplication.run(Application.class);
+        // 接收桌面端传入的外置配置目录以及用户显式指定的 SSL/端口参数。
+        SpringApplication.run(Application.class, args);
         log.info("项目开始启动...");
     }
 

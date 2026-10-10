@@ -1,0 +1,3 @@
+# Keep this SPI registration ASCII-only, without BOM or NUL bytes.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.jasonlat.ai.config.LocalBackendTlsEnvironmentPostProcessor
