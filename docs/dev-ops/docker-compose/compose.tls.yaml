@@ -1,0 +1,17 @@
+# Optional: a custom PKCS12 certificate for a domain or LAN hostname.
+# Trust ca.crt and ensure server.p12 covers TLS_SERVER_NAME.
+services:
+  backend:
+    environment:
+      LOCAL_TLS_AUTO_GENERATE: "false"
+      SERVER_SSL_KEY_STORE: file:/certs/server.p12
+      SERVER_SSL_KEY_STORE_TYPE: PKCS12
+      SERVER_SSL_KEY_STORE_PASSWORD: "${SERVER_SSL_KEY_STORE_PASSWORD:?Set the custom keystore password in .env}"
+      SERVER_SSL_KEY_ALIAS: "${SERVER_SSL_KEY_ALIAS:-server}"
+      TLS_SERVER_NAME: "${TLS_SERVER_NAME:?Set the certificate DNS hostname in .env}"
+    volumes:
+      - ./certs:/certs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl --fail --silent --show-error --max-time 5 --cacert /certs/ca.crt --resolve "$$TLS_SERVER_NAME:8888:127.0.0.1" "https://$$TLS_SERVER_NAME:8888/api/health"'

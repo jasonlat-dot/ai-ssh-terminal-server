@@ -1,0 +1,39 @@
+# Use together with compose.yaml; initialize only a new MySQL volume.
+services:
+  backend:
+    environment:
+      DATABASE_TYPE: mysql
+      MYSQL_DATABASE_URL: "jdbc:mysql://mysql:13306/ssh_terminal?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true"
+      MYSQL_DATABASE_USERNAME: shellpilot
+      MYSQL_DATABASE_PASSWORD: "${MYSQL_PASSWORD:?Run bash init-env.sh first}"
+      MYSQL_MINIMUM_IDLE: "2"
+      MYSQL_MAXIMUM_POOL_SIZE: "10"
+    depends_on:
+      mysql:
+        condition: service_healthy
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ssh_terminal
+      MYSQL_USER: shellpilot
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Run bash init-env.sh first}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Run bash init-env.sh first}"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/001-schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      # TCP skips the temporary socket-only initialization server.
+      # SELECT checks both the app credentials and schema readiness.
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql --protocol=TCP -h 127.0.0.1 -u \"$$MYSQL_USER\" \"$$MYSQL_DATABASE\" -Nse 'SELECT COUNT(*) FROM file_asset' >/dev/null"]
+      start_period: 120s
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  mysql-data:

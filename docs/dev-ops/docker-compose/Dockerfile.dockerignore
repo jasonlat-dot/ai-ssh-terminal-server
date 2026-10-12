@@ -1,0 +1,16 @@
+# Allow only build inputs, not an entire developer checkout.
+**
+!pom.xml
+!ai-ssh-terminal-server-*/
+!ai-ssh-terminal-server-*/pom.xml
+!ai-ssh-terminal-server-*/src/
+!ai-ssh-terminal-server-*/src/main/
+!ai-ssh-terminal-server-*/src/main/**
+# Runtime config comes from the dedicated deployment template.
+**/src/main/resources/application*.yml
+!docs/
+!docs/dev-ops/
+!docs/dev-ops/docker-compose/
+!docs/dev-ops/docker-compose/config/
+!docs/dev-ops/docker-compose/config/application.yml
+!docs/dev-ops/docker-compose/maven-settings.xml

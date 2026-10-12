@@ -1,0 +1,115 @@
+# Dedicated container config. No local prod/sit credentials are inherited.
+server:
+  address: ${SERVER_ADDRESS:0.0.0.0}
+  port: ${SERVER_PORT:8888}
+  forward-headers-strategy: framework
+  http2:
+    enabled: true
+  ssl:
+    enabled: true
+    auto-generate: ${LOCAL_TLS_AUTO_GENERATE:true}
+    key-store: ${SERVER_SSL_KEY_STORE:file:${app.config.data-directory}/tls/local-backend.p12}
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    max-http-post-size: -1
+
+spring:
+  config:
+    import: classpath:agent/ssh-agent.yml
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
+      file-size-threshold: 0B
+      resolve-lazily: true
+
+app:
+  config:
+    api-version: v1
+    cross-origin: ${APP_CROSS_ORIGIN:http://tauri.localhost,tauri://localhost}
+    ssh-default-secret-key: ${SSH_DEFAULT_SECRET_KEY}
+    data-directory: ${AI_SSH_TERMINAL_HOME:/data}
+  database:
+    type: ${DATABASE_TYPE:sqlite}
+    sqlite:
+      file: ${SQLITE_DATABASE_FILE:/data/data/ai-ssh-terminal.db}
+      maximum-pool-size: 1
+      busy-timeout: 10000
+    mysql:
+      url: ${MYSQL_DATABASE_URL:jdbc:mysql://mysql:3306/ssh_terminal}
+      username: ${MYSQL_DATABASE_USERNAME:shellpilot}
+      password: ${MYSQL_DATABASE_PASSWORD:}
+      minimum-idle: ${MYSQL_MINIMUM_IDLE:2}
+      maximum-pool-size: ${MYSQL_MAXIMUM_POOL_SIZE:10}
+
+openai:
+  ai-api:
+    base-url: ${AI_MODEL_BASE_URL}
+    api-key: ${AI_MODEL_API_KEY}
+    completions-path: ${AI_MODEL_COMPLETIONS_PATH:v1/chat/completions}
+    embeddings-path: ${AI_MODEL_EMBEDDINGS_PATH:v1/embeddings}
+    proxy:
+      enabled: ${AI_MODEL_PROXY_ENABLED:false}
+      host: ${AI_MODEL_PROXY_HOST:host.docker.internal}
+      port: ${AI_MODEL_PROXY_PORT:7890}
+      non-proxy-hosts: localhost,127.0.0.1,host.docker.internal
+  chat-model:
+    model-name: ${AI_MODEL_NAME}
+    reasoning-effort: ${AI_MODEL_REASONING_EFFORT:medium}
+    supported-media-types: image/png,image/jpeg,image/webp,application/pdf
+
+ai:
+  decision:
+    enabled: ${AI_DECISION_ENABLED:false}
+    url: ${AI_DECISION_URL:http://host.docker.internal:8100/v1/systemone}
+    api-key: ${AI_DECISION_API_KEY:}
+    model: ${AI_DECISION_MODEL:multilingual}
+    tool-outcome:
+      enabled: ${AI_DECISION_TOOL_OUTCOME_ENABLED:false}
+    tool-selection:
+      enabled: ${AI_DECISION_TOOL_SELECTION_ENABLED:false}
+    command-risk:
+      enabled: ${AI_DECISION_COMMAND_RISK_ENABLED:false}
+  file:
+    storage:
+      default-id: ${FILE_STORAGE_DEFAULT_ID:local-main}
+      local:
+        enabled: ${LOCAL_FILE_STORAGE_ENABLED:true}
+        storage-id: local-main
+        root-directory: ${app.config.data-directory}/files
+        public-base-url: ${LOCAL_FILE_STORAGE_PUBLIC_BASE_URL:}
+        signing-secret: ${LOCAL_FILE_STORAGE_SIGNING_SECRET}
+      minio:
+        enabled: ${MINIO_ENABLED:false}
+  ssh:
+    http-proxy:
+      enabled: ${SSH_HTTP_PROXY_ENABLED:false}
+      host: host.docker.internal
+      port: 7890
+    sftp:
+      anonymous-user-id: ${SFTP_ANONYMOUS_USER_ID:default}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  mapper-locations: classpath:mybatis/mapper/*.xml
+
+logging:
+  path: ${app.config.data-directory}/logs
+  config: classpath:logback-spring.xml
+  level:
+    root: info
+    com.jasonlat.ai.infrastructure.dao: OFF
+
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy

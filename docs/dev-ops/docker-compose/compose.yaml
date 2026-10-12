@@ -1,0 +1,56 @@
+name: shellpilot-backend
+services:
+  backend:
+    image: shellpilot-backend:${BACKEND_IMAGE_TAG:-local}
+    build:
+      context: ../../..
+      dockerfile: docs/dev-ops/docker-compose/Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8889}:8888"
+    environment:
+      SERVER_ADDRESS: "0.0.0.0"
+      SERVER_PORT: "8888"
+      SPRING_CONFIG_LOCATION: "file:/app/config/application.yml"
+      AI_SSH_TERMINAL_HOME: /data
+      DATABASE_TYPE: sqlite
+      SQLITE_DATABASE_FILE: /data/data/ai-ssh-terminal.db
+      SSH_DEFAULT_SECRET_KEY: "${SSH_DEFAULT_SECRET_KEY:?Run bash init-env.sh first}"
+      LOCAL_FILE_STORAGE_SIGNING_SECRET: "${LOCAL_FILE_STORAGE_SIGNING_SECRET:?Run bash init-env.sh first}"
+      AI_MODEL_BASE_URL: "${AI_MODEL_BASE_URL:?Set the model API base URL in .env}"
+      AI_MODEL_API_KEY: "${AI_MODEL_API_KEY:?Set the model API key in .env}"
+      AI_MODEL_NAME: "${AI_MODEL_NAME:?Set the model name in .env}"
+      AI_MODEL_COMPLETIONS_PATH: "${AI_MODEL_COMPLETIONS_PATH:-v1/chat/completions}"
+      AI_MODEL_EMBEDDINGS_PATH: "${AI_MODEL_EMBEDDINGS_PATH:-v1/embeddings}"
+      AI_MODEL_PROXY_ENABLED: "false"
+      SSH_HTTP_PROXY_ENABLED: "false"
+      MINIO_ENABLED: "false"
+      LOCAL_FILE_STORAGE_ENABLED: "true"
+      FILE_STORAGE_DEFAULT_ID: local-main
+      LOCAL_FILE_STORAGE_PUBLIC_BASE_URL: "${LOCAL_FILE_STORAGE_PUBLIC_BASE_URL:-}"
+      APP_CROSS_ORIGIN: "${APP_CROSS_ORIGIN:-http://tauri.localhost,tauri://localhost}"
+      SFTP_ANONYMOUS_USER_ID: default
+      AI_DECISION_ENABLED: "false"
+      AI_DECISION_TOOL_OUTCOME_ENABLED: "false"
+      AI_DECISION_TOOL_SELECTION_ENABLED: "false"
+      AI_DECISION_COMMAND_RISK_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - backend-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--cacert", "/data/tls/local-backend.crt", "https://localhost:8888/api/health"]
+      start_period: 120s
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  backend-data:

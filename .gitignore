@@ -46,3 +46,10 @@ build/
 /LOG_DIR_IS_UNDEFINED/
 /docs/md/
 /docs/release-key/
+
+# Commit deployment templates; keep credentials and generated state local.
+/docs/dev-ops/docker-compose/.env
+/docs/dev-ops/docker-compose/.env.*
+!/docs/dev-ops/docker-compose/.env.example
+/docs/dev-ops/docker-compose/certs/
+/docs/dev-ops/docker-compose/backups/

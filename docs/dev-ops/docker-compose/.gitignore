@@ -1,0 +1,7 @@
+# Deployment templates are versioned; credentials and generated state are local.
+.env
+.env.*
+!.env.example
+certs/
+backups/
+*.log
