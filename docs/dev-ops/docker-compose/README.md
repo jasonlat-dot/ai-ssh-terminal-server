@@ -1,5 +1,7 @@
 # ShellPilot 后端：在 WSL 中用 Docker Compose 部署
 
+首次操作建议先阅读 [照着执行的快速教程](QUICKSTART.md)，本文件保留完整配置、证书、备份和排查说明。
+
 这套文件位于后端仓库的 `docs/dev-ops/docker-compose`，用于在 WSL 2 中部署 Java 后端。它与 Cloudflare Pages 上的静态官网是两个独立服务，更新后端不会更新官网。
 
 默认方案是 **一个后端容器 + SQLite + 本地附件存储**。另外提供 MySQL 和自定义 HTTPS 证书覆盖文件。当前代码不需要为此额外部署 Redis、RabbitMQ 或 MinIO。
