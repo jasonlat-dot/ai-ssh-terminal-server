@@ -462,6 +462,7 @@ sudo bash compose.sh sqlite exec backend curl \
 ```bash
 mkdir -p certs
 sudo bash compose.sh sqlite cp backend:/data/tls/local-backend.crt certs/local-backend.crt
+sudo chmod 644 certs/local-backend.crt
 curl --fail --cacert certs/local-backend.crt https://localhost:8889/api/health
 ```
 
@@ -476,7 +477,7 @@ WSL/容器生成的证书位于 Docker 数据卷中，Windows 桌面客户端不
 因此，只有“容器健康”不能保证“桌面客户端已经信任这个容器”：
 
 1. 使用客户端的自定义后端地址，并填实际可达的 HTTPS 地址。
-2. 按客户端支持的证书信任方式配置公开证书；自动本机证书固定信任依赖客户端能够读取匹配的证书。
+2. 支持证书导入的 Windows 客户端可选择「指定服务器自签证书（Windows 桌面）」，导入上面导出的 `certs/local-backend.crt`，测试通过后保存并使用连接。WSL 后端是独立连接，不能直接复用内置后端的证书信任。逐步操作见 [快速教程第 5 节](QUICKSTART.md#5-查看有没有正常启动)。
 3. 需要稳定的远程/域名连接时，使用下一节的匹配域名且受信任证书。
 4. 不要把当前只含 localhost/回环 IP 的自签证书拿去访问局域网 IP 或远程域名。
 
@@ -504,6 +505,14 @@ SERVER_SSL_KEY_ALIAS=server
 ```
 
 这是说明格式，填写时必须使用实际值。
+
+| 参数 | 具体含义 |
+| --- | --- |
+| `TLS_SERVER_NAME` | `server.p12` 证书覆盖的 DNS 主机名，用于容器内 HTTPS 健康检查；不含 `https://`、端口或路径，不负责创建 DNS 记录 |
+| `SERVER_SSL_KEY_STORE_PASSWORD` | 加载 `server.p12` 所需的证书库密码，与数据库、SSH、模型密钥无关 |
+| `SERVER_SSL_KEY_ALIAS` | `server.p12` 内的私钥/证书条目别名，默认 `server`；实际别名不同时须修改 |
+
+这些变量仅由 `compose.tls.yaml` 传入容器。使用自动生成本机自签证书的 `sqlite` / `mysql` 模式时，前两项留空，别名保留默认即可；不要为了使用自签证书而误选 `-tls` 模式。
 
 保证容器 UID `10001` 能读取证书文件，同时保护其中私钥。不要把私钥库或密码复制给客户端；客户端只需要适当的公开信任材料。
 

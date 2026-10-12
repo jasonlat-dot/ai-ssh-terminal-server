@@ -4,6 +4,36 @@
 
 > 当前文件与脚本已完成配置校验，但镜像构建曾被 Docker Hub 网络超时阻断，尚未完成后端实际启动验收。请以你执行命令后得到的结果为准。
 
+## 当前方案：自动自签证书 + SQLite + 本地附件
+
+直接使用下文的 `compose.sh sqlite`。这个模式已经开启 HTTPS：首次启动自动生成本机自签证书、随机证书库密码和 SQLite 数据库，附件保存在 Docker 数据卷中。不会启动 MySQL 或 MinIO。
+
+**不要选 `sqlite-tls`。** `-tls` 模式用于加载你自己准备的 `certs/server.p12` 和 `certs/ca.crt`，不负责自动生成本机证书。
+
+`.env` 中这三项保持下面这样即可：
+
+```dotenv
+TLS_SERVER_NAME=
+SERVER_SSL_KEY_STORE_PASSWORD=
+SERVER_SSL_KEY_ALIAS=server
+```
+
+| 参数 | 自定义证书模式下的含义 | 自动自签模式 |
+| --- | --- | --- |
+| `TLS_SERVER_NAME` | 证书覆盖的主机名，用于容器健康检查的 HTTPS 主机名验证，不含协议/端口；不会自动配置 DNS | 留空，不使用 |
+| `SERVER_SSL_KEY_STORE_PASSWORD` | 打开 `server.p12` 证书库的密码，不是数据库或 SSH 密码 | 留空，由后端自动管理 |
+| `SERVER_SSL_KEY_ALIAS` | `server.p12` 内私钥和证书条目的别名，必须与实际条目一致 | 保留 `server`，此变量不参与自动生成 |
+
+如果使用 Windows Tauri 客户端，另将 `.env` 的来源设置为：
+
+```dotenv
+APP_CROSS_ORIGIN=http://tauri.localhost,tauri://localhost
+```
+
+这允许桌面 WebView 调用后端。开发模式若从 `http://127.0.0.1:端口` 或 `http://localhost:端口` 加载页面，还需要将实际网页来源追加到该列表，见第 6 节。
+
+按第 1～5 节完成配置、启动和检查；第 5 节末尾说明如何导出公开证书并连接 Windows 客户端。已有 `.env` 就直接编辑，不重新生成密钥。
+
 ## 1. 进入 WSL 和部署目录
 
 在 Windows PowerShell 中运行：
@@ -142,6 +172,37 @@ https://localhost:8889
 ```
 
 **默认是 HTTPS，不是 HTTP。** 普通浏览器和 Windows 客户端未必自动信任容器生成的自签证书。证书信任与客户端连接步骤见 [详细教程第 8 节](README.md#8-https-验收和客户端连接)。
+
+### 导出公开证书并连接 Windows 客户端
+
+容器启动成功后，在同一个 WSL 部署目录执行：
+
+```bash
+mkdir -p certs
+sudo bash compose.sh sqlite cp backend:/data/tls/local-backend.crt certs/local-backend.crt
+sudo chmod 644 certs/local-backend.crt
+curl --fail --cacert certs/local-backend.crt https://localhost:8889/api/health
+```
+
+**效果：**复制公开证书供客户端信任，允许本机用户读取这张公开证书，再从 WSL 宿主机校验 HTTPS。正常响应包含 `"status":"UP"`。`certs/` 已被 Git 忽略；不要复制私钥库或证书库密码到客户端。
+
+公开证书对应的 Windows 路径是：
+
+```text
+E:\project\AIShellTerminal\ai-ssh-terminal-server\docs\dev-ops\docker-compose\certs\local-backend.crt
+```
+
+在支持此功能的 Windows 客户端中操作：
+
+1. 打开后端设置 →「客户端连接」→「新增远程连接」。这里的远程连接也可用于 WSL 中独立运行的后端。
+2. 名称填 `WSL SQLite`，根地址填 `https://localhost:8889`，不加 `/api/health` 等接口路径。
+3. 证书验证方式选择「指定服务器自签证书（Windows 桌面）」。
+4. 导入上面的 `local-backend.crt`，然后点击「测试连接」。
+5. 测试通过后保存，并点击「使用此连接」。单纯保存不会切换当前连接。
+
+当前客户端源码支持独立连接导入单张 PEM 公开证书，说明见 [客户端连接文档](../../../../ai-ssh-terminal-client/docs/backend-connections.md#连接远程-java-或-nginx)。如果已安装版本没有对应选项，需要使用支持该功能的客户端版本。
+
+默认证书只覆盖 `localhost`、`127.0.0.1`、`::1`，本方案用于这台电脑访问；不能直接用 WSL IP、局域网 IP 或网站域名替代。公开证书更新后，应重新导出并导入客户端。普通浏览器仍使用浏览器/系统的证书信任，不会因为客户端导入了证书而自动信任。
 
 ## 6. 配置修改位置与生效命令
 
