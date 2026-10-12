@@ -3,6 +3,9 @@ ARG BUILD_IMAGE=maven:3.10.0-eclipse-temurin-25-noble
 ARG RUNTIME_IMAGE=eclipse-temurin:25-jdk-noble
 
 FROM ${BUILD_IMAGE} AS build
+ARG MAVEN_PROXY_ENABLED=false
+ARG MAVEN_PROXY_HOST=127.0.0.1
+ARG MAVEN_PROXY_PORT=7890
 WORKDIR /workspace
 # Dockerfile.dockerignore excludes local application*.yml and all secrets/data.
 COPY . .

@@ -686,6 +686,41 @@ sudo docker pull eclipse-temurin:25-jdk-noble
 
 Dockerfile 使用 Docker 自带前端，已避免额外下载 `docker/dockerfile` 前端镜像。本次也用内置 default 构建器尝试过，基础镜像下载仍超时；没有修改全局代理、构建器或 Docker daemon 配置。
 
+#### 本机现有代理与构建器的处理方式
+
+2026-10-13 在本机 WSL 中确认：Docker Hub 直连超时，`http://127.0.0.1:7890` 的现有代理可以正常访问；已有 `laya-proxy` 构建器采用 host 网络，并为 BuildKit 配置了该代理。
+
+仅指定构建器仍可能在 `auth.docker.io` 超时，因为 Docker 客户端获取认证令牌也需要代理。对**本次构建命令**同时指定代理和构建器：
+
+```bash
+sudo env \
+  HTTP_PROXY=http://127.0.0.1:7890 \
+  HTTPS_PROXY=http://127.0.0.1:7890 \
+  NO_PROXY=localhost,127.0.0.1 \
+  bash compose.sh sqlite build --builder laya-proxy \
+    --build-arg HTTP_PROXY --build-arg HTTPS_PROXY \
+    --build-arg MAVEN_PROXY_ENABLED=true \
+    --build-arg MAVEN_PROXY_HOST=127.0.0.1 \
+    --build-arg MAVEN_PROXY_PORT=7890 backend
+```
+
+效果：客户端认证请求和已有 BuildKit 构建器使用可达代理；预定义 `HTTP_PROXY` / `HTTPS_PROXY` 构建参数用于 apt 等工具，Maven 则通过构建阶段的 `MAVEN_PROXY_*` 参数启用 `maven-settings.xml` 中的代理。Maven 不会仅因 shell 配置了 `HTTPS_PROXY` 就可靠地使用它。
+
+这些代理参数不写入运行镜像的环境变量，也不需要重启 Docker。`MAVEN_PROXY_ENABLED` 默认 false，能够直连的软件源不需要启用它。本机已验证代理解决了基础镜像认证和下载超时；后续编译阶段另需 Maven/系统软件源可达。构建代理与运行时模型/SSH 代理是独立配置。
+
+构建完成后再启动，避免重新触发未带代理的构建：
+
+```bash
+sudo bash compose.sh sqlite up -d --no-build
+sudo bash compose.sh sqlite ps
+```
+
+这段命令依赖本机**已经存在**的 `laya-proxy` 构建器和可达代理。其他机器先用 `sudo docker buildx ls` 确认构建器，用 `sudo docker buildx inspect laya-proxy` 检查代理和网络；不要原样套用本机端口/构建器名称。Docker daemon 的镜像拉取代理与构建器配置是不同环节，`docker pull` 仍可能需要 daemon 代理。
+
+官方说明：[Compose build 的 --builder 参数](https://docs.docker.com/reference/cli/docker/compose/build/)、[Docker daemon 代理](https://docs.docker.com/engine/daemon/proxy/)。
+
+本次在 Maven 3.10 下还遇到 POM 的重复依赖声明错误。根 POM 中 PostgreSQL 和 `jasonlat-wrench-starter-design-framework` 的重复条目已去除，保留原有版本；旧部署副本需同步修复后再构建。
+
 ### Maven 无法下载依赖
 
 配置默认通过 HTTPS Maven Central 解析依赖，避开原 POM 中的旧 HTTP 仓库地址。

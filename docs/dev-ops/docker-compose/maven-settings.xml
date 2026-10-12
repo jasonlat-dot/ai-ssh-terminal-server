@@ -3,6 +3,17 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
   <!-- Use HTTPS Central instead of the legacy HTTP repository in the root POM. -->
+  <!-- Docker build ARGs are available as env properties in the build stage only. -->
+  <proxies>
+    <proxy>
+      <id>deployment-build-proxy</id>
+      <active>${env.MAVEN_PROXY_ENABLED}</active>
+      <protocol>http</protocol>
+      <host>${env.MAVEN_PROXY_HOST}</host>
+      <port>${env.MAVEN_PROXY_PORT}</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+    </proxy>
+  </proxies>
   <mirrors>
     <mirror>
       <id>deployment-central</id>

@@ -138,6 +138,25 @@ sudo bash compose.sh sqlite up -d --build
 
 如果提示 `auth.docker.io ... TLS handshake timeout`，镜像还没下载成功；先处理 Docker 网络问题。排查步骤见 [详细教程](README.md)。
 
+本机已有 `http://127.0.0.1:7890` 代理和 `laya-proxy` 构建器时，可改为先显式构建，再启动：
+
+```bash
+sudo env \
+  HTTP_PROXY=http://127.0.0.1:7890 \
+  HTTPS_PROXY=http://127.0.0.1:7890 \
+  NO_PROXY=localhost,127.0.0.1 \
+  bash compose.sh sqlite build --builder laya-proxy \
+    --build-arg HTTP_PROXY --build-arg HTTPS_PROXY \
+    --build-arg MAVEN_PROXY_ENABLED=true \
+    --build-arg MAVEN_PROXY_HOST=127.0.0.1 \
+    --build-arg MAVEN_PROXY_PORT=7890 backend
+
+# 上一条构建成功后再执行
+sudo bash compose.sh sqlite up -d --no-build
+```
+
+**效果：**为本次客户端认证请求补充代理，指定已有的代理构建器，并让构建中的 apt 和 Maven 使用同一可达代理；构建完成后使用本地镜像启动，避免启动命令再次触发未带代理的构建。这不会更改后端的模型/SSH 代理设置，也不需要重启 Docker。其他机器需要换成其实际可达代理和构建器，详见完整教程的 Docker Hub 排查小节。
+
 ## 5. 查看有没有正常启动
 
 ```bash
