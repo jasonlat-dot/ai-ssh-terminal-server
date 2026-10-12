@@ -2,7 +2,7 @@
 
 这份教程说明**运行什么命令、命令会做什么、配置在哪里修改**。先采用 SQLite 方案；MySQL、自定义证书和备份的完整说明见 [详细教程](README.md)。
 
-> 当前文件与脚本已完成配置校验，但镜像构建曾被 Docker Hub 网络超时阻断，尚未完成后端实际启动验收。请以你执行命令后得到的结果为准。
+> 2026-10-13 已在本机 WSL Debian 实际完成镜像构建和 SQLite + 自动自签证书 + 本地存储模式启动，容器 healthy，Windows 验证 HTTPS 健康接口返回 UP。Docker Hub/Maven 超时通过本机可达代理解决，命令见第 4 节。模型对话、SSH、上传和 SFTP 业务尚未验收。
 
 ## 当前方案：自动自签证书 + SQLite + 本地附件
 
@@ -47,6 +47,14 @@ wsl -d debian
 ```bash
 cd /mnt/e/project/AIShellTerminal/ai-ssh-terminal-server/docs/dev-ops/docker-compose
 ```
+
+本次实际部署的副本位于 WSL 的 `/root/ai-ssh-terminal-server`，在 root 终端中进入：
+
+```bash
+cd ~/ai-ssh-terminal-server/docs/dev-ops/docker-compose
+```
+
+这是另一份仓库副本，运行时必须进入保存真实 `.env` 的那一份，不要混用两份副本的配置。
 
 **效果：**进入部署目录。Windows 的 E 盘在 WSL 中对应 `/mnt/e`。
 
@@ -210,6 +218,17 @@ curl --fail --cacert certs/local-backend.crt https://localhost:8889/api/health
 ```text
 E:\project\AIShellTerminal\ai-ssh-terminal-server\docs\dev-ops\docker-compose\certs\local-backend.crt
 ```
+
+上述 Windows 路径对应 E 盘部署目录。如果实际仓库位于 WSL 的 `~/ai-ssh-terminal-server`，相对 `certs/` 会在 Linux 仓库内；可以从该部署目录直接导出到 Windows 项目目录：
+
+```bash
+mkdir -p /mnt/e/project/AIShellTerminal/ai-ssh-terminal-server/docs/dev-ops/docker-compose/certs
+sudo bash compose.sh sqlite cp backend:/data/tls/local-backend.crt \
+  /mnt/e/project/AIShellTerminal/ai-ssh-terminal-server/docs/dev-ops/docker-compose/certs/local-backend.crt
+sudo chmod 644 /mnt/e/project/AIShellTerminal/ai-ssh-terminal-server/docs/dev-ops/docker-compose/certs/local-backend.crt
+```
+
+本次实际端口为 `.env` 的 `APP_PORT=14532`，因此客户端地址和健康检查地址分别使用 `https://localhost:14532` 和 `https://localhost:14532/api/health`。文中 `8889` 为模板默认端口，修改端口后相应替换。
 
 在支持此功能的 Windows 客户端中操作：
 

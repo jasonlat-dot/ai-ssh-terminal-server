@@ -12,7 +12,7 @@
 >
 > 2026-10-13 更新：本机 JDK 25 已完成全模块 Java 编译和测试编译；可配置 CORS 的 10 项 Spring MVC 请求测试全部通过。
 >
-> 镜像构建在拉取 Maven 基础镜像时被 Docker Hub TLS 握手超时阻断，尚未完成容器构建和启动验证。文末记录了验证范围和对应排查方法。此文不是“已经部署成功”的记录。
+> 初次镜像构建曾被 Docker Hub TLS 握手超时阻断。2026-10-13 已通过本机代理完成全部模块编译、镜像构建和 SQLite 模式启动：自动自签证书、本地附件配置、容器 healthy、Windows HTTPS 健康检查及配置来源校验均已确认。MySQL、自定义证书覆盖模式及模型/SSH/附件业务未完成实际验收；文末记录完整范围。
 
 ## 快速开始：运行哪些命令，分别有什么效果
 
@@ -675,14 +675,14 @@ TLS handshake timeout
 
 这是镜像下载阶段的网络错误，还没有进入 Java 编译，不是模型 API Key 的错误。
 
-可以单独验证：
+可以单独验证 Docker daemon 能否拉取（这不是独立代理构建器的必经步骤）：
 
 ```bash
 sudo docker pull maven:3.10.0-eclipse-temurin-25-noble
 sudo docker pull eclipse-temurin:25-jdk-noble
 ```
 
-两张基础镜像能拉取后，再构建。检查 Docker 的网络、代理和镜像访问策略；只给当前 Bash 设置代理，不一定会让 Docker daemon 或 BuildKit 使用该代理。不要为下载镜像关闭 TLS 证书验证。
+检查 Docker 的网络、代理和镜像访问策略；只给当前 Bash 设置代理，不一定会让 Docker daemon 或 BuildKit 使用该代理。独立代理构建器可按下面流程构建，daemon 的 `docker pull` 可能仍未配置代理。不要为下载镜像关闭 TLS 证书验证。
 
 Dockerfile 使用 Docker 自带前端，已避免额外下载 `docker/dockerfile` 前端镜像。本次也用内置 default 构建器尝试过，基础镜像下载仍超时；没有修改全局代理、构建器或 Docker daemon 配置。
 
@@ -706,7 +706,7 @@ sudo env \
 
 效果：客户端认证请求和已有 BuildKit 构建器使用可达代理；预定义 `HTTP_PROXY` / `HTTPS_PROXY` 构建参数用于 apt 等工具，Maven 则通过构建阶段的 `MAVEN_PROXY_*` 参数启用 `maven-settings.xml` 中的代理。Maven 不会仅因 shell 配置了 `HTTPS_PROXY` 就可靠地使用它。
 
-这些代理参数不写入运行镜像的环境变量，也不需要重启 Docker。`MAVEN_PROXY_ENABLED` 默认 false，能够直连的软件源不需要启用它。本机已验证代理解决了基础镜像认证和下载超时；后续编译阶段另需 Maven/系统软件源可达。构建代理与运行时模型/SSH 代理是独立配置。
+这些代理参数不写入运行镜像的环境变量，也不需要重启 Docker。`MAVEN_PROXY_ENABLED` 默认 false，能够直连的软件源不需要启用它。本机已实际完成全部模块编译、镜像构建和 SQLite 模式启动。构建代理与运行时模型/SSH 代理是独立配置。
 
 构建完成后再启动，避免重新触发未带代理的构建：
 
@@ -785,14 +785,17 @@ sudo bash compose.sh sqlite ps
 - 初始化 SQL 仅含 8 张表结构，无 DROP 或示例 INSERT。
 - 检查本地环境文件、证书、备份的忽略规则。
 - 2026-10-13：使用本机 JDK 25 完成全模块 Java 编译和测试编译；单独执行可配置 CORS 的 10 项 JUnit/Spring MVC 测试，验证默认来源、Tauri 自定义来源、localhost/域名/显式通配配置、预检、所有路由、同源 Origin、无 Origin 原生请求和配置收窄。没有启动数据库或调用模型。
+- 2026-10-13 后续部署：使用本机代理和 `laya-proxy` 构建器完成 Docker Hub 基础镜像下载、apt/Maven 依赖下载、JDK 25 / Maven 3.10 全模块编译打包和运行镜像构建。Docker 构建按 Dockerfile 跳过测试。
+- 在 WSL `/root/ai-ssh-terminal-server` 副本启动 SQLite 模式，确认本地附件存储启用、MinIO 关闭、SQLite 数据库文件已创建，容器状态 healthy。发布端口为 `127.0.0.1:14532`，运行时生成本机自签证书。
+- 导出公开 `local-backend.crt` 到 Windows 项目下被忽略的 `certs/`；Windows curl 使用该证书验证 `https://localhost:14532/api/health`，响应 UP。实际验证 `http://tauri.localhost` 来源返回 200、未配置来源返回 403。部署 `.env` 按客户端选择 Tauri 两个来源，其他密钥保留。
 
 未完成：
 
-- 从 Docker Hub 拉取 Java/Maven 基础镜像。
-- 容器内 Maven 编译与运行镜像构建。
-- Java 服务启动、SQLite/MySQL 业务、TLS 健康检查和桌面客户端连接的实际运行验收。
+- MySQL 模式和自定义证书覆盖模式的实际启动。
+- SQLite/MySQL 业务、模型对话、SSH、附件上传下载和 SFTP 的完整验收。
+- 桌面客户端中导入证书、切换连接、实际发起业务请求的界面验收。
 
-原因是本机 Docker Hub 认证请求 TLS 握手超时。没有启动本套后端，没有修改或停止已有的其他容器，也没有创建真实模型配置。部署文件的 Git 提交不等于后端已启动。
+原始网络阻塞已解决，本套 SQLite 后端现已启动。没有修改或停止其他已有容器；实际模型连接参数由用户现有 `.env` 提供。健康 UP 不等于模型、SSH 或文件业务已验收。
 
 ## 14. 官方参考
 
