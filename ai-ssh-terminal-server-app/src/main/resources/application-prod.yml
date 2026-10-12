@@ -1,17 +1,17 @@
 #file: noinspection SpringBootApplicationYaml
 openai:
   ai-api:
-    base-url: ${AI_MODEL_BASE_URL:http://127.0.0.1:8777/}
-    api-key: ${AI_MODEL_API_KEY:sk-waliapi-96cbfe096bdc4c08afa7667e9f8838b9}
+    base-url: ${AI_MODEL_BASE_URL:}
+    api-key: ${AI_MODEL_API_KEY:}
     completions-path: ${AI_MODEL_COMPLETIONS_PATH:v1/chat/completions}
     embeddings-path: ${AI_MODEL_EMBEDDINGS_PATH:v1/embeddings}
     proxy:
-      enabled: ${AI_MODEL_PROXY_ENABLED:true}
+      enabled: ${AI_MODEL_PROXY_ENABLED:false}
       host: ${AI_MODEL_PROXY_HOST:127.0.0.1}
       port: ${AI_MODEL_PROXY_PORT:7890}
       non-proxy-hosts: ${AI_MODEL_NON_PROXY_HOSTS:localhost,127.0.0.1,192.168.*}
   chat-model:
-    model-name: ${AI_MODEL_NAME:gpt-5.5}
+    model-name: ${AI_MODEL_NAME:}
     reasoning-effort: ${AI_MODEL_REASONING_EFFORT:medium}
     supported-media-types: ${AI_MODEL_SUPPORTED_MEDIA_TYPES:image/png,image/jpeg,image/webp,application/pdf}
 
@@ -33,7 +33,7 @@ ai:
         signing-secret: ${LOCAL_FILE_STORAGE_SIGNING_SECRET:}
       minio:
         # 默认不启用。未启用时上传接口返回 FILE_STORAGE_NOT_CONFIGURED，应用仍可启动。
-        enabled: ${MINIO_ENABLED:true}
+        enabled: ${MINIO_ENABLED:false}
         storage-id: minio-main
         endpoint: ${MINIO_ENDPOINT:http://192.168.3.16:9002}
         # 浏览器可访问的对象API地址；为空时使用endpoint。不能填写MinIO控制台地址。
