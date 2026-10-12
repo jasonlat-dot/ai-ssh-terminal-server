@@ -10,7 +10,7 @@
 >
 > 已实际验证：WSL Debian 的 Docker Compose v2.39.1 能解析四种组合；Shell 脚本语法检查通过。
 >
-> 2026-10-13 更新：本机 JDK 25 已完成全模块 Java 编译和测试编译；统一 CORS 的 8 项 Spring MVC 请求测试全部通过。
+> 2026-10-13 更新：本机 JDK 25 已完成全模块 Java 编译和测试编译；可配置 CORS 的 10 项 Spring MVC 请求测试全部通过。
 >
 > 镜像构建在拉取 Maven 基础镜像时被 Docker Hub TLS 握手超时阻断，尚未完成容器构建和启动验证。文末记录了验证范围和对应排查方法。此文不是“已经部署成功”的记录。
 
@@ -89,7 +89,7 @@ sudo bash compose.sh mysql ps
 | Windows/WSL 访问端口 | `.env` 的 `APP_PORT` | 对应模式 `up -d` |
 | 宿主机监听地址 | `.env` 的 `APP_BIND_ADDRESS` | 对应模式 `up -d`；对外访问另需认证、防火墙、证书 |
 | JVM 参数 | `.env` 的 `JAVA_TOOL_OPTIONS` | 对应模式 `up -d` |
-| CORS 允许来源（仅 `http(s)://127.0.0.1`） | `.env` 的 `APP_CROSS_ORIGIN` | 对应模式 `up -d`；首次更新 CORS Java 代码需 `up -d --build` |
+| CORS 允许来源 | `.env` 的 `APP_CROSS_ORIGIN` | 对应模式 `up -d`；首次更新 CORS Java 代码需 `up -d --build` |
 | 固定附件下载基础地址 | `.env` 的 `LOCAL_FILE_STORAGE_PUBLIC_BASE_URL` | 对应模式 `up -d` |
 | MySQL 初始密码 | `.env` 的 `MYSQL_PASSWORD` 等 | 仅新库初始化生效；已有数据库要先正确修改账号密码 |
 | SQLite 或 MySQL | 运行 `compose.sh sqlite` 或 `compose.sh mysql` | 切换前备份、停止；两套数据不会自动迁移 |
@@ -117,9 +117,9 @@ sudo bash compose.sh sqlite up -d --build
 
 `.env` 不等于“自动把所有变量送进容器”。只有 Compose 的 `environment` 显式引用或传入的变量才会生效。比如本套默认把代理和可选决策开关明确设为 false，不能只在 `.env` 新增一个同名 true 就当作已经启用，应修改 Compose/覆盖文件中的对应项。
 
-### 统一 CORS：仅允许 127.0.0.1 网页来源
+### 统一 CORS：由 APP_CROSS_ORIGIN 指定允许来源
 
-所有 HTTP 接口在进入 Controller 之前统一校验 Origin。默认配置：
+所有 HTTP 接口在进入 Controller 之前，按 `APP_CROSS_ORIGIN` 统一校验 Origin。默认配置仅放行本地 127.0.0.1 网页：
 
 ```dotenv
 APP_CROSS_ORIGIN=http://127.0.0.1:[*],https://127.0.0.1:[*]
@@ -127,9 +127,17 @@ APP_CROSS_ORIGIN=http://127.0.0.1:[*],https://127.0.0.1:[*]
 
 `:[*]` 兼容任意本地端口及默认端口。需要限制具体网页端口时，可以填 `http://127.0.0.1:4321,https://127.0.0.1:4322`。逗号分隔多个来源，值不要带路径或末尾 `/`；填写的是网页的来源，不是它调用的后端地址。
 
-已有 `.env` 的 Tauri 来源不会被模板自动替换：请手动修改这行，保留原有加密/签名密钥。然后执行对应模式 `up -d --build`，让新的 Java 校验代码生效；仅后续调整允许端口时，执行 `up -d` 即可。逐条命令与效果见 [快速教程第 6 节](QUICKSTART.md#6-配置修改位置与生效命令)。
+允许 Tauri 桌面 WebView 时，在 `.env` 设置：
 
-携带其他 Origin 的请求返回 HTTP 403，预检请求也受限制；不允许通过 Controller 局部通配注解扩大范围。`localhost`、Tauri 来源、其他 IP、外部域名均不放行，配置为这些来源或 `*` 会导致后端启动失败。原有 Tauri WebView 若发送这些 Origin，将无法调用接口；不携带 Origin 的原生客户端请求不受 CORS 限制。
+```dotenv
+APP_CROSS_ORIGIN=http://tauri.localhost,tauri://localhost
+```
+
+需要同时支持本地开发网页时，将它们追加到同一行；也可以配置 `http://localhost:4321` 或实际网站来源。配置 `*` 会允许所有网页来源。参数为普通逗号分隔文本，不使用 Markdown 链接或包住整个列表的方括号。
+
+已有 `.env` 时保留或修改需要的来源，不重新生成加密/签名密钥。首次更新到可配置 CORS 代码，执行对应模式 `up -d --build`；仅后续调整允许来源时，执行 `up -d` 即可。逐条命令与效果见 [快速教程第 6 节](QUICKSTART.md#6-配置修改位置与生效命令)。
+
+携带未列入配置的 Origin 的请求返回 HTTP 403，预检请求也受限制；不允许通过 Controller 局部通配注解扩大参数指定的范围。不携带 Origin 的原生客户端请求不受 CORS 限制。
 
 CORS 校验网页来源，不校验连接来源 IP，不替代身份认证。宿主机端口绑定仍由 `APP_BIND_ADDRESS` 控制（默认 `127.0.0.1`）；容器内部 `SERVER_ADDRESS=0.0.0.0` 是 Docker 端口映射所需，不要误改成容器内部回环地址。后端 HTTPS 地址和证书信任规则不变。
 
@@ -732,7 +740,7 @@ Dockerfile 使用 Docker 自带前端，已避免额外下载 `docker/dockerfile
 - 在 WSL 临时目录实际运行环境生成脚本，确认四项随机密钥独立、文件权限为 0600、再次执行不覆盖已有密钥，并清理临时文件。
 - 初始化 SQL 仅含 8 张表结构，无 DROP 或示例 INSERT。
 - 检查本地环境文件、证书、备份的忽略规则。
-- 2026-10-13：使用本机 JDK 25 完成全模块 Java 编译和测试编译；单独执行统一 CORS 的 8 项 JUnit/Spring MVC 测试，验证允许/拒绝的来源、预检、所有路由、同源 Origin、无 Origin 原生请求和配置收窄。没有启动数据库或调用模型。
+- 2026-10-13：使用本机 JDK 25 完成全模块 Java 编译和测试编译；单独执行可配置 CORS 的 10 项 JUnit/Spring MVC 测试，验证默认来源、Tauri 自定义来源、localhost/域名/显式通配配置、预检、所有路由、同源 Origin、无 Origin 原生请求和配置收窄。没有启动数据库或调用模型。
 
 未完成：
 

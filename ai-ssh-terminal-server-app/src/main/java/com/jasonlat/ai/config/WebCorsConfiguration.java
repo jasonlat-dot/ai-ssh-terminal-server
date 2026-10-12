@@ -15,12 +15,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
 import java.io.IOException;
-import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * 所有 HTTP 入口共用的 CORS 策略，仅接受 http(s)://127.0.0.1 网页来源。
+ * 所有 HTTP 入口共用的 CORS 策略，由 app.config.cross-origin 配置允许来源。
  * CORS 校验的是 Origin，不是连接来源 IP；没有 Origin 的原生客户端请求不受它限制。
  */
 @Configuration(proxyBeanMethods = false)
@@ -37,16 +36,15 @@ public class WebCorsConfiguration {
                 .map(String::trim)
                 .distinct()
                 .toList();
-        if (originPatterns.isEmpty() || originPatterns.stream().anyMatch(origin -> !isLoopbackOrigin(origin))) {
+        if (originPatterns.stream().anyMatch(String::isEmpty)) {
             throw new IllegalArgumentException(
-                    "app.config.cross-origin 只允许 http(s)://127.0.0.1 来源；"
-                            + "端口可写为具体端口或 [*]，不允许 *、localhost、Tauri 或外部域名");
+                    "app.config.cross-origin 不能为空；多个来源使用逗号分隔");
         }
     }
 
     /** 注册在 Controller 之前，避免局部注解将全局来源限制扩大。 */
     @Bean
-    public FilterRegistrationBean<CorsFilter> loopbackCorsFilter() {
+    public FilterRegistrationBean<CorsFilter> appCorsFilter() {
         CorsConfiguration policy = new CorsConfiguration();
         policy.setAllowedOriginPatterns(originPatterns);
         policy.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
@@ -72,24 +70,10 @@ public class WebCorsConfiguration {
             }
         };
         FilterRegistrationBean<CorsFilter> registration = new FilterRegistrationBean<>(filter);
-        registration.setName("loopbackCorsFilter");
+        registration.setName("appCorsFilter");
         registration.addUrlPatterns("/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         return registration;
     }
 
-    private static boolean isLoopbackOrigin(String origin) {
-        if (origin.equals("http://127.0.0.1:[*]") || origin.equals("https://127.0.0.1:[*]")) {
-            return true;
-        }
-        if (!origin.matches("https?://127\\.0\\.0\\.1(?::[0-9]{1,5})?")) {
-            return false;
-        }
-        try {
-            int port = URI.create(origin).getPort();
-            return port == -1 || (port >= 1 && port <= 65535);
-        } catch (IllegalArgumentException exception) {
-            return false;
-        }
-    }
 }

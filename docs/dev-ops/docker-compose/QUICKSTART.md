@@ -153,7 +153,7 @@ https://localhost:8889
 | 模型请求路径 | `.env → AI_MODEL_COMPLETIONS_PATH` 等 | 同上 |
 | 访问端口 | `.env → APP_PORT`，默认 `8889` | 同上 |
 | JVM 参数 | `.env → JAVA_TOOL_OPTIONS` | 同上 |
-| CORS 来源（仅 `http(s)://127.0.0.1`） | `.env → APP_CROSS_ORIGIN` | 同上；本次 Java 代码升级需先 `up -d --build` |
+| CORS 允许来源 | `.env → APP_CROSS_ORIGIN` | 同上；本次 Java 代码升级需先 `up -d --build` |
 | 固定附件下载地址 | `.env → LOCAL_FILE_STORAGE_PUBLIC_BASE_URL` | 同上 |
 | 上传大小、SFTP 配额、线程数 | [config/application.yml](config/application.yml) | `sudo bash compose.sh sqlite up -d --build` |
 | 代理、可选决策服务开关 | [compose.yaml](compose.yaml) 的 `environment` 或另加覆盖文件 | 对应模式 `up -d` |
@@ -162,9 +162,15 @@ https://localhost:8889
 
 ### CORS 怎么设置，已有部署怎么更新
 
-`APP_CROSS_ORIGIN` 控制的是**网页请求的 Origin 来源**。统一规则只允许 `http://127.0.0.1` 和 `https://127.0.0.1`，默认兼容任意本地端口。
+`APP_CROSS_ORIGIN` 控制的是**网页请求的 Origin 来源**。后端按这个参数放行来源，不再将可配置值限制为 `127.0.0.1`。多个来源用逗号分隔，下面按实际客户端选择一行配置。
 
-如果已有 `.env`，将原来的 Tauri 来源替换为这一整行；不需要重新运行 `init-env.sh`，也不要更换已有密钥：
+**允许 Tauri 桌面 WebView：**
+
+```dotenv
+APP_CROSS_ORIGIN=http://tauri.localhost,tauri://localhost
+```
+
+**仅允许本地 127.0.0.1 网页（模板默认值）：**
 
 ```dotenv
 APP_CROSS_ORIGIN=http://127.0.0.1:[*],https://127.0.0.1:[*]
@@ -176,18 +182,26 @@ APP_CROSS_ORIGIN=http://127.0.0.1:[*],https://127.0.0.1:[*]
 APP_CROSS_ORIGIN=http://127.0.0.1:4321,https://127.0.0.1:4322
 ```
 
+**同时允许 Tauri 和本地开发网页：**
+
+```dotenv
+APP_CROSS_ORIGIN=http://tauri.localhost,tauri://localhost,http://127.0.0.1:[*],https://127.0.0.1:[*]
+```
+
+也可以添加实际网页来源，例如 `http://localhost:4321` 或 `https://shellpilot.jasonlat.cc`。配置 `*` 会允许所有网页来源；需要白名单时逐项列出。直接在 `.env` 写普通文本，不要加 Markdown 链接或包住整个列表的方括号。
+
 这里填的是**网页地址的来源**，不是后端地址。比如网页在 `http://127.0.0.1:4321`，调用 `https://localhost:8889` 后端，Origin 是前者；后端 HTTPS 证书仍需正常信任。
 
-首次更新到这版 CORS 代码，保存 `.env` 后执行：
+已有 `.env` 时直接修改这行；如果已经是你需要的 Tauri 来源，可以保留。不要重新生成 `.env` 或更换已有密钥。首次更新到这版可配置 CORS 代码，保存 `.env` 后执行：
 
 ```bash
 sudo bash compose.sh sqlite config --quiet
 sudo bash compose.sh sqlite up -d --build
 ```
 
-**效果：**检查部署参数，重新编译包含统一 CORS 校验的后端，并替换容器。MySQL 部署将 `sqlite` 换成 `mysql`；TLS 部署使用原来的 `sqlite-tls` / `mysql-tls` 模式。之后仅修改允许端口，执行对应模式 `up -d` 即可。
+**效果：**检查部署参数，重新编译包含可配置 CORS 校验的后端，并替换容器。MySQL 部署将 `sqlite` 换成 `mysql`；TLS 部署使用原来的 `sqlite-tls` / `mysql-tls` 模式。之后仅修改允许来源，执行对应模式 `up -d` 即可。
 
-`localhost`、`http://tauri.localhost`、`tauri://localhost`、其他 IP 和外部域名均不放行。使用这些来源的 Tauri WebView 请求会被拒绝；不携带 Origin 的 Rust/原生客户端请求不受 CORS 限制。配置成 `*` 或上述不允许来源时，后端会拒绝启动，避免误放开所有网页。
+未列入配置的 Origin 会收到 HTTP 403，预检请求同样受限制。不携带 Origin 的 Rust/原生客户端请求不受 CORS 限制。
 
 CORS 不限制连接来源 IP，也不是认证机制。Docker 宿主机端口默认仍绑定 `127.0.0.1`；容器内部监听 `0.0.0.0` 用于端口映射，两者与 CORS 是不同配置。
 

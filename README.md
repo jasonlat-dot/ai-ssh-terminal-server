@@ -455,7 +455,7 @@ java -jar ai-ssh-terminal-server-app.jar --spring.profiles.active=prod
 - 附件默认存储实例，以及本地目录或 MinIO 参数
 - `SFTP_ANONYMOUS_USER_ID`，或接入真实 Spring Security Principal
 
-CORS 已统一接入所有 HTTP 接口，只允许 `http(s)://127.0.0.1` 网页来源。`APP_CROSS_ORIGIN` 默认值为 `http://127.0.0.1:[*],https://127.0.0.1:[*]`，兼容不同端口；也可以收窄为具体端口。`*`、`localhost`、Tauri 和外部域名配置会被拒绝。没有 Origin 的原生请求不受此规则限制，CORS 不等于来源 IP 限制。Docker 部署的修改位置和更新命令见 [部署快速教程](docs/dev-ops/docker-compose/QUICKSTART.md#6-配置修改位置与生效命令)。
+CORS 已统一接入所有 HTTP 接口，允许来源由 `APP_CROSS_ORIGIN` 指定，多个来源用逗号分隔。默认值为 `http://127.0.0.1:[*],https://127.0.0.1:[*]`，兼容不同端口；部署桌面客户端时可设置为 `http://tauri.localhost,tauri://localhost`，也可以显式配置 localhost 或实际网站域名。未列入配置的 Origin 返回 HTTP 403。没有 Origin 的原生请求不受此规则限制，CORS 不等于来源 IP 限制。Docker 部署的修改位置和更新命令见 [部署快速教程](docs/dev-ops/docker-compose/QUICKSTART.md#6-配置修改位置与生效命令)。
 
 生产环境不要使用数据库 root 用户，也不要保留示例密钥和示例 SSH 连接。
 

@@ -55,7 +55,7 @@ class WebCorsConfigurationTest {
         }
         context.register(WebCorsConfiguration.class, TestMvcConfiguration.class);
         context.refresh();
-        var filter = context.getBean(WebCorsConfiguration.class).loopbackCorsFilter().getFilter();
+        var filter = context.getBean(WebCorsConfiguration.class).appCorsFilter().getFilter();
         assertNotNull(filter);
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .addFilter(filter, "/*")
@@ -80,7 +80,7 @@ class WebCorsConfigurationTest {
     }
 
     @Test
-    void rejectsOtherHostsTauriNullAndLookalikeOrigins() throws Exception {
+    void defaultPolicyRejectsOtherHostsTauriNullAndLookalikeOrigins() throws Exception {
         for (String origin : new String[]{"https://outside.example", "http://localhost:4321",
                 "http://tauri.localhost", "tauri://localhost", "null", "https://[::1]:4321",
                 "http://127.0.0.2:4321", "http://127.0.0.1.evil.example:4321",
@@ -159,13 +159,48 @@ class WebCorsConfigurationTest {
     }
 
     @Test
-    void refusesConfigurationThatWidensTheOriginPolicy() {
-        for (String origins : new String[]{"*", "", "http://localhost", "http://tauri.localhost,tauri://localhost",
-                "https://outside.example", "http://127.0.0.1,https://outside.example",
-                "http://127.0.0.1/", "http://127.0.0.1:0", "http://127.0.0.1:65536",
-                "http://127.0.0.1:999999999999"}) {
+    void refusesEmptyOriginConfiguration() {
+        for (String origins : new String[]{"", "  ", ",", "http://127.0.0.1,", ",http://127.0.0.1"}) {
             assertThrows(IllegalArgumentException.class, () -> new WebCorsConfiguration(origins), origins);
         }
+    }
+
+    @Test
+    void allowsConfiguredTauriOriginsAndRejectsUnlistedOrigins() throws Exception {
+        createMvc("http://tauri.localhost,tauri://localhost");
+        for (String origin : new String[]{"http://tauri.localhost", "tauri://localhost"}) {
+            mvc.perform(post("/api/v1/files/probe").header("Origin", origin))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", origin));
+            mvc.perform(options("/api/v1/files/probe")
+                            .header("Origin", origin)
+                            .header("Access-Control-Request-Method", "POST")
+                            .header("Access-Control-Request-Headers", "Content-Type"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", origin));
+        }
+        for (String origin : new String[]{"http://127.0.0.1:4321", "https://outside.example",
+                "http://tauri.localhost.evil.example", "tauri://outside.example"}) {
+            mvc.perform(post("/api/v1/files/probe").header("Origin", origin))
+                    .andExpect(status().isForbidden());
+        }
+        assertEquals(2, context.getBean(ProbeController.class).calls.get());
+    }
+
+    @Test
+    void supportsConfiguredLocalhostDomainsAndExplicitWildcard() throws Exception {
+        createMvc("http://localhost:4321,https://shellpilot.jasonlat.cc");
+        for (String origin : new String[]{"http://localhost:4321", "https://shellpilot.jasonlat.cc"}) {
+            mvc.perform(get("/api/health").header("Origin", origin))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", origin));
+        }
+        mvc.perform(get("/api/health").header("Origin", "https://outside.example"))
+                .andExpect(status().isForbidden());
+        createMvc("*");
+        mvc.perform(get("/api/health").header("Origin", "https://outside.example"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "https://outside.example"));
     }
 
     @Configuration(proxyBeanMethods = false)
