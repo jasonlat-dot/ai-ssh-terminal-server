@@ -45,6 +45,14 @@ TLS 目录和默认私钥文件限制为当前运行用户访问；Windows 使�
 
 ## Windows 桌面客户端
 
+Windows ACL 授权使用当前进程身份的完整 `域或计算机名\用户名`，不能直接查找 Java
+`user.name` 的短用户名；短用户名在本地账号与域账号重名时可能解析到错误 SID，
+导致创建 `tls/generation.lock` 报 `AccessDeniedException`，此时尚未执行 keytool。
+启动时会重设 TLS 目录及已有锁、密码、私钥库、公开证书的 ACL，以恢复旧版错误授权；
+文件仍须允许当前用户修改 ACL（例如当前用户为文件所有者）。恢复权限不替换有效证书或密码。
+此逻辑使用 `jdk.security.auth` 中的 Windows 身份 API；客户端的 `ALL-MODULE-PATH`
+jlink 运行时包含该模块。修复后需重新构建后端并打包客户端，旧安装包内的 JAR 不会自动更新。
+
 主窗口安装 WebView2 证书事件后，启动后台线程从上述目录读取公开证书。
 仅当请求为当前本机后端的 HTTPS 回环地址、端口一致、证书内容完全一致且在有效期内时，
 才接受这张自签证书。WebView2 在会话中缓存主机与证书的允许决定；

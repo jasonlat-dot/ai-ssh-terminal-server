@@ -1,5 +1,7 @@
 package com.jasonlat.ai.config;
 
+import com.sun.security.auth.module.NTSystem;
+
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.Ordered;
@@ -108,8 +110,10 @@ public final class LocalBackendTlsEnvironmentPostProcessor implements Environmen
         try {
             Files.createDirectories(directory);
             restrictPermissions(directory, "rwx------");
+            Path lockFile = directory.resolve("generation.lock");
+            restrictPermissionsIfPresent(lockFile);
             // 同一数据目录只能有一个进程生成/续期证书，避免密码与私钥文件不匹配。
-            try (FileChannel channel = FileChannel.open(directory.resolve("generation.lock"),
+            try (FileChannel channel = FileChannel.open(lockFile,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                  var ignored = channel.lock()) {
                 configureCertificate(environment, directory);
@@ -149,6 +153,11 @@ public final class LocalBackendTlsEnvironmentPostProcessor implements Environmen
     private void configureCertificate(ConfigurableEnvironment environment, Path directory) throws Exception {
         Path store = directory.resolve("local-backend.p12");
         Path passwordFile = directory.resolve("keystore.password");
+        Path publicCertificate = directory.resolve("local-backend.crt");
+        // 修改目录 ACL 不会修复已有文件上独立保存的 ACL；读取之前修复应用管理的文件。
+        restrictPermissionsIfPresent(store);
+        restrictPermissionsIfPresent(passwordFile);
+        restrictPermissionsIfPresent(publicCertificate);
         if (Files.exists(store) && !Files.isRegularFile(passwordFile)) {
             // 丢失密码不应覆盖现有私钥；用户需显式备份/移走损坏的 TLS 文件后重建。
             throw new IOException("已有密钥库但缺少 keystore.password");
@@ -177,7 +186,6 @@ public final class LocalBackendTlsEnvironmentPostProcessor implements Environmen
         String pem = "-----BEGIN CERTIFICATE-----\n"
                 + Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(certificate.getEncoded())
                 + "\n-----END CERTIFICATE-----\n";
-        Path publicCertificate = directory.resolve("local-backend.crt");
         if (!Files.exists(publicCertificate) || !pem.equals(Files.readString(publicCertificate))) {
             Path temporary = Files.createTempFile(directory, "certificate-", ".crt");
             try {
@@ -281,8 +289,12 @@ public final class LocalBackendTlsEnvironmentPostProcessor implements Environmen
         } else {
             AclFileAttributeView view = Files.getFileAttributeView(path, AclFileAttributeView.class);
             if (view != null) {
+                // user.name 是短用户名；域/本地重名时 LookupAccountName 可能解析到另一个 SID。
+                // 使用当前进程 Windows 身份的限定账号，不依赖可被 -D 覆盖的 Java 属性。
+                var identity = new NTSystem();
+                String account = identity.getDomain() + "\\" + identity.getName();
                 var user = path.getFileSystem().getUserPrincipalLookupService()
-                        .lookupPrincipalByName(System.getProperty("user.name"));
+                        .lookupPrincipalByName(account);
                 var entry = AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(user)
                         .setPermissions(EnumSet.allOf(AclEntryPermission.class));
                 if (Files.isDirectory(path)) {
@@ -291,6 +303,13 @@ public final class LocalBackendTlsEnvironmentPostProcessor implements Environmen
                 // 只调整自动生成的 tls 目录及默认私钥文件，不修改整个数据目录或用户自定义证书。
                 view.setAcl(List.of(entry.build()));
             }
+        }
+    }
+
+    /** 已有文件可能保留旧版写入的错误 ACL；未知可访问性不能当作文件不存在。 */
+    private void restrictPermissionsIfPresent(Path path) throws IOException {
+        if (!Files.notExists(path)) {
+            restrictPermissions(path, "rw-------");
         }
     }
 
