@@ -15,8 +15,8 @@ app:
   config:
     # 版本，方便通过接口版本升级
     api-version: v1
-    # 跨域，开发阶段可以设置为 * 不限制
-    cross-origin: '*'
+    # 统一 CORS：仅允许 http(s)://127.0.0.1 网页来源，[*] 兼容本地不同端口。
+    cross-origin: ${APP_CROSS_ORIGIN:http://127.0.0.1:[*],https://127.0.0.1:[*]}
 
 # 线程池配置
 thread:

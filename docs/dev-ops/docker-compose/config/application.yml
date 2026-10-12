@@ -28,7 +28,7 @@ spring:
 app:
   config:
     api-version: v1
-    cross-origin: ${APP_CROSS_ORIGIN:http://tauri.localhost,tauri://localhost}
+    cross-origin: ${APP_CROSS_ORIGIN:http://127.0.0.1:[*],https://127.0.0.1:[*]}
     ssh-default-secret-key: ${SSH_DEFAULT_SECRET_KEY}
     data-directory: ${AI_SSH_TERMINAL_HOME:/data}
   database:

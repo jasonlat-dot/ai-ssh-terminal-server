@@ -26,7 +26,6 @@ import java.util.concurrent.CancellationException;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/ssh/terminal")
-@CrossOrigin(origins = "*")
 public class SshTerminalController implements com.jasonlat.ai.trigger.api.ISshTerminalService {
 
     @Resource

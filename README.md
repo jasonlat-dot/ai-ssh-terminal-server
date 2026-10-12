@@ -168,7 +168,7 @@ server:
 app:
   config:
     api-version: v1
-    cross-origin: "*"
+    cross-origin: ${APP_CROSS_ORIGIN:http://127.0.0.1:[*],https://127.0.0.1:[*]}
     ssh-default-secret-key: ${SSH_DEFAULT_SECRET_KEY}
 
 spring:
@@ -455,7 +455,9 @@ java -jar ai-ssh-terminal-server-app.jar --spring.profiles.active=prod
 - 附件默认存储实例，以及本地目录或 MinIO 参数
 - `SFTP_ANONYMOUS_USER_ID`，或接入真实 Spring Security Principal
 
-生产环境不要使用 `cross-origin: "*"`，不要使用数据库 root 用户，也不要保留示例密钥和示例 SSH 连接。
+CORS 已统一接入所有 HTTP 接口，只允许 `http(s)://127.0.0.1` 网页来源。`APP_CROSS_ORIGIN` 默认值为 `http://127.0.0.1:[*],https://127.0.0.1:[*]`，兼容不同端口；也可以收窄为具体端口。`*`、`localhost`、Tauri 和外部域名配置会被拒绝。没有 Origin 的原生请求不受此规则限制，CORS 不等于来源 IP 限制。Docker 部署的修改位置和更新命令见 [部署快速教程](docs/dev-ops/docker-compose/QUICKSTART.md#6-配置修改位置与生效命令)。
+
+生产环境不要使用数据库 root 用户，也不要保留示例密钥和示例 SSH 连接。
 
 ## 九、常见问题
 

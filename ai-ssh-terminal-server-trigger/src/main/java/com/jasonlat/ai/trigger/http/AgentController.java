@@ -27,7 +27,6 @@ import java.security.Principal;
 @Slf4j
 @RestController
 @RequestMapping("/agent")
-@CrossOrigin(origins = "*", allowedHeaders = "*")
 public class AgentController implements IAgentService {
 
     @Resource

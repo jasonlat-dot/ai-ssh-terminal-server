@@ -7,7 +7,6 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,7 +22,6 @@ import java.nio.charset.StandardCharsets;
  */
 @RestController
 @RequestMapping("/api/v1/files/local")
-@CrossOrigin("*")
 public class LocalFileDownloadController {
     /** 负责选择存储实例、验签并打开下载文件流的应用门面。 */
     private final ILocalFileDownloadCase downloadCase;

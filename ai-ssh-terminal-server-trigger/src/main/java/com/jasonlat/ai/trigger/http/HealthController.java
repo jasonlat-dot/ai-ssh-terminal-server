@@ -7,12 +7,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import java.time.Instant;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
 @RestController
-@CrossOrigin(origins = "*", allowedHeaders = "*")
 public class HealthController {
 
     /**

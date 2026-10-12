@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/ssh")
-@CrossOrigin(origins = "*")
 public class SshConnectionController implements com.jasonlat.ai.trigger.api.ISshConnectionService {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");

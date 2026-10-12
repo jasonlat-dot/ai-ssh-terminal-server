@@ -30,7 +30,7 @@ services:
       LOCAL_FILE_STORAGE_ENABLED: "true"
       FILE_STORAGE_DEFAULT_ID: local-main
       LOCAL_FILE_STORAGE_PUBLIC_BASE_URL: "${LOCAL_FILE_STORAGE_PUBLIC_BASE_URL:-}"
-      APP_CROSS_ORIGIN: "${APP_CROSS_ORIGIN:-http://tauri.localhost,tauri://localhost}"
+      APP_CROSS_ORIGIN: "${APP_CROSS_ORIGIN:-http://127.0.0.1:[*],https://127.0.0.1:[*]}"
       SFTP_ANONYMOUS_USER_ID: default
       AI_DECISION_ENABLED: "false"
       AI_DECISION_TOOL_OUTCOME_ENABLED: "false"
